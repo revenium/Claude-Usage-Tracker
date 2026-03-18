@@ -201,6 +201,7 @@ struct PopoverContentView: View {
         .padding(.bottom, 8)
         .frame(width: 280)
         .background(VisualEffectBackground())
+        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 }
 

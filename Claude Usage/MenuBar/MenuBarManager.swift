@@ -33,13 +33,14 @@ class MenuBarManager: NSObject, ObservableObject {
     // Track if a reset was just recorded to prevent duplicate periodic snapshots
     private var resetJustRecorded: [UUID: (session: Bool, weekly: Bool)] = [:]
 
-    // Popover for beautiful SwiftUI interface
-    private var popover: NSPopover?
+    // Panel for beautiful SwiftUI interface (replaces NSPopover for reliable positioning)
+    private var popoverPanel: NSPanel?
 
-    // Event monitor for closing popover on outside click
+    // Event monitors for closing panel on outside click
     private var eventMonitor: Any?
+    private var localEventMonitor: Any?
 
-    // Detached window reference (when popover is detached)
+    // Detached window reference (when panel is detached)
     private var detachedWindow: NSWindow?
 
     // Settings window reference
@@ -51,8 +52,11 @@ class MenuBarManager: NSObject, ObservableObject {
     // Feedback prompt window reference
     private var feedbackWindow: NSWindow?
 
-    // Track which button is currently showing the popover
+    // Track which button is currently showing the panel
     private weak var currentPopoverButton: NSStatusBarButton?
+
+    // Track popover panel's original position for drag-to-detach
+    private var popoverPanelOriginalOrigin: NSPoint?
 
     private let apiService = ClaudeAPIService()
     private let statusService = ClaudeStatusService()
@@ -376,22 +380,32 @@ class MenuBarManager: NSObject, ObservableObject {
     }
 
     private func recreatePopover() {
-        // Close existing popover if open
-        if popover?.isShown == true {
+        // Close existing panel if visible
+        if popoverPanel?.isVisible == true {
             closePopover()
         }
 
-        // Recreate popover with fresh content
-        let newPopover = NSPopover()
-        newPopover.contentSize = Constants.WindowSizes.popoverSize
-        newPopover.behavior = .semitransient
-        newPopover.animates = true
-        newPopover.delegate = self
-        newPopover.contentViewController = createContentViewController()
+        // Recreate panel with fresh content
+        let panel = NSPanel(
+            contentRect: NSRect(origin: .zero, size: Constants.WindowSizes.popoverSize),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.isFloatingPanel = true
+        panel.level = .popUpMenu
+        panel.backgroundColor = .clear
+        panel.isOpaque = false
+        panel.hasShadow = true
+        panel.isMovableByWindowBackground = true
+        panel.isReleasedWhenClosed = false
+        panel.hidesOnDeactivate = false
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.contentViewController = createContentViewController()
+        panel.delegate = self
+        self.popoverPanel = panel
 
-        self.popover = newPopover
-
-        LoggingService.shared.log("MenuBarManager: Popover recreated for profile switch")
+        LoggingService.shared.log("MenuBarManager: Popover panel recreated for profile switch")
     }
 
     private func updateMenuBarDisplay(with config: MenuBarIconConfiguration) {
@@ -446,14 +460,24 @@ class MenuBarManager: NSObject, ObservableObject {
     }
 
     private func setupPopover() {
-        let popover = NSPopover()
-        popover.contentSize = Constants.WindowSizes.popoverSize
-        popover.behavior = .semitransient  // Changed to allow detaching
-        popover.animates = true
-        popover.delegate = self
-
-        popover.contentViewController = createContentViewController()
-        self.popover = popover
+        let panel = NSPanel(
+            contentRect: NSRect(origin: .zero, size: Constants.WindowSizes.popoverSize),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.isFloatingPanel = true
+        panel.level = .popUpMenu
+        panel.backgroundColor = .clear
+        panel.isOpaque = false
+        panel.hasShadow = true
+        panel.isMovableByWindowBackground = true
+        panel.isReleasedWhenClosed = false
+        panel.hidesOnDeactivate = false
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.contentViewController = createContentViewController()
+        panel.delegate = self
+        self.popoverPanel = panel
     }
 
     private func createContentViewController() -> NSHostingController<PopoverContentView> {
@@ -470,6 +494,48 @@ class MenuBarManager: NSObject, ObservableObject {
         )
 
         return NSHostingController(rootView: contentView)
+    }
+
+    private func createDetachedContentViewController() -> NSViewController {
+        let contentView = PopoverContentView(
+            manager: self,
+            onRefresh: { [weak self] in
+                self?.refreshUsage()
+            },
+            onPreferences: { [weak self] in
+                self?.closePopoverOrWindow()
+                self?.preferencesClicked()
+            }
+        )
+
+        let buttonSize: CGFloat = 20
+        let overlap: CGFloat = 8 // how much the button hangs outside
+
+        let wrappedView = VStack(spacing: 0) {
+            ZStack(alignment: .topLeading) {
+                contentView
+                    .padding(.top, overlap)
+                    .padding(.leading, overlap)
+
+                Button(action: { [weak self] in
+                    self?.detachedWindow?.close()
+                    self?.detachedWindow = nil
+                }) {
+                    ZStack {
+                        Circle()
+                            .fill(.ultraThinMaterial)
+                            .frame(width: buttonSize, height: buttonSize)
+                        Image(systemName: "xmark")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(.secondary)
+                    }
+                    .shadow(color: .black.opacity(0.15), radius: 3, x: 0, y: 1)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+
+        return NSHostingController(rootView: wrappedView)
     }
 
     @objc private func togglePopover(_ sender: Any?) {
@@ -513,51 +579,124 @@ class MenuBarManager: NSObject, ObservableObject {
             return
         }
 
-        // Otherwise toggle the popover
-        if let popover = popover {
-            if popover.isShown {
+        // Otherwise toggle the panel
+        if let panel = popoverPanel {
+            if panel.isVisible {
                 // Check if clicking the same button or a different one
                 if currentPopoverButton === button {
-                    // Same button - close the popover
+                    // Same button - close the panel
                     closePopover()
                 } else {
                     // Different button - close current and show at new position
-                    popover.performClose(nil)
+                    popoverPanelOriginalOrigin = nil
+                    panel.orderOut(nil)
                     stopMonitoringForOutsideClicks()
                     // Update content view controller for new profile data
-                    popover.contentViewController = createContentViewController()
-                    popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+                    panel.contentViewController = createContentViewController()
+                    showPanel(from: button)
                     currentPopoverButton = button
-                    startMonitoringForOutsideClicks()
+                    DispatchQueue.main.async { [weak self] in
+                        self?.startMonitoringForOutsideClicks()
+                    }
                 }
             } else {
-                // Popover not shown - show it
+                // Panel not shown - show it
                 // Stop any existing monitor first
                 stopMonitoringForOutsideClicks()
                 // Update content view controller for current profile data
-                popover.contentViewController = createContentViewController()
-                popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+                panel.contentViewController = createContentViewController()
+                showPanel(from: button)
                 currentPopoverButton = button
-                startMonitoringForOutsideClicks()
+                // Defer monitor installation to next run loop so the current
+                // button click event doesn't immediately trigger a close
+                DispatchQueue.main.async { [weak self] in
+                    self?.startMonitoringForOutsideClicks()
+                }
             }
         }
     }
 
+    private func showPanel(from button: NSStatusBarButton) {
+        guard let panel = popoverPanel,
+              let buttonWindow = button.window else { return }
+
+        // Use the known popover size (not panel.frame which may not be laid out yet)
+        let panelSize = Constants.WindowSizes.popoverSize
+
+        // Get button's rect in screen coordinates
+        let buttonFrameInWindow = button.convert(button.bounds, to: nil)
+        let buttonRect = buttonWindow.convertToScreen(buttonFrameInWindow)
+
+        // Find the screen containing the button's center point
+        let buttonCenter = NSPoint(x: buttonRect.midX, y: buttonRect.midY)
+        guard let screen = NSScreen.screens.first(where: { NSMouseInRect(buttonCenter, $0.frame, false) })
+                ?? NSScreen.main
+                ?? NSScreen.screens.first else { return }
+
+        let visibleFrame = screen.visibleFrame
+
+        // Center horizontally on button, clamp to screen edges
+        var x = buttonRect.midX - panelSize.width / 2
+        x = max(visibleFrame.minX + 4, min(x, visibleFrame.maxX - panelSize.width - 4))
+
+        // Place below the menu bar button with standard gap, clamp to screen bottom
+        var y = buttonRect.minY - panelSize.height - 8
+        y = max(visibleFrame.minY + 4, y)
+
+        let panelFrame = NSRect(x: x, y: y, width: panelSize.width, height: panelSize.height)
+        panel.setFrame(panelFrame, display: true)
+        popoverPanelOriginalOrigin = panelFrame.origin
+        panel.alphaValue = 0
+        panel.orderFrontRegardless()
+
+        // Fade in smoothly
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.15
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            panel.animator().alphaValue = 1
+        }
+    }
+
     private func closePopover() {
-        popover?.performClose(nil)
+        guard let panel = popoverPanel else { return }
         stopMonitoringForOutsideClicks()
         currentPopoverButton = nil
+        popoverPanelOriginalOrigin = nil
+
+        // Fade out smoothly
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.12
+            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            panel.animator().alphaValue = 0
+        }, completionHandler: { [weak panel] in
+            panel?.orderOut(nil)
+        })
     }
 
     private func startMonitoringForOutsideClicks() {
-        // Only monitor when popover is shown (not detached)
-        // Stop monitoring if popover gets detached
+        // Global monitor: catches clicks outside the app (other apps, desktop, etc.)
         eventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
             guard let self = self,
-                  let popover = self.popover,
-                  popover.isShown,
+                  self.popoverPanel?.isVisible == true,
                   self.detachedWindow == nil else { return }
             self.closePopover()
+        }
+
+        // Local monitor: catches clicks inside the app but outside the panel
+        // (e.g. clicking the status bar button area — NSPanel with nonactivatingPanel
+        //  doesn't trigger the global monitor for clicks on status items)
+        localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+            guard let self = self,
+                  let panel = self.popoverPanel,
+                  panel.isVisible,
+                  self.detachedWindow == nil else { return event }
+
+            // If click is inside the panel, let it through
+            if event.window == panel { return event }
+
+            // Click is outside panel (e.g. status bar button) — close
+            self.closePopover()
+            return event
         }
     }
 
@@ -566,6 +705,10 @@ class MenuBarManager: NSObject, ObservableObject {
             NSEvent.removeMonitor(monitor)
             eventMonitor = nil
         }
+        if let monitor = localEventMonitor {
+            NSEvent.removeMonitor(monitor)
+            localEventMonitor = nil
+        }
     }
 
     private func closePopoverOrWindow() {
@@ -573,7 +716,7 @@ class MenuBarManager: NSObject, ObservableObject {
             window.close()
             detachedWindow = nil
         } else {
-            popover?.performClose(nil)
+            closePopover()
         }
     }
 
@@ -1618,43 +1761,39 @@ class MenuBarManager: NSObject, ObservableObject {
     }
 }
 
-// MARK: - NSPopoverDelegate
-extension MenuBarManager: NSPopoverDelegate {
-    func popoverShouldDetach(_ popover: NSPopover) -> Bool {
-        // Allow popover to be detached by dragging
-        return true
-    }
+// MARK: - Detach Panel to Floating Window
 
-    func detachableWindow(for popover: NSPopover) -> NSWindow? {
-        // Stop monitoring for outside clicks when detaching
-        stopMonitoringForOutsideClicks()
+extension MenuBarManager {
+    /// Detaches the popover panel into a standalone floating window.
+    /// Called automatically when the user drags the panel away from the menu bar.
+    /// Can also be triggered programmatically from the content view.
+    func detachToWindow() {
+        let currentFrame = popoverPanel?.frame ?? NSRect(x: 0, y: 0, width: 320, height: 600)
 
-        // Create a new window with NEW content view controller
-        // This prevents the popover from losing its content
-        let newContentViewController = createContentViewController()
+        // Close the popover panel first
+        closePopover()
 
         let window = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 320, height: 600),
-            styleMask: [.titled, .closable, .fullSizeContentView, .nonactivatingPanel, .hudWindow],
+            contentRect: currentFrame,
+            styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
-        window.contentViewController = newContentViewController
-        window.title = ""
-        window.titlebarAppearsTransparent = true
-        window.titleVisibility = .hidden
+        window.contentViewController = createDetachedContentViewController()
+        window.isFloatingPanel = true
         window.isMovableByWindowBackground = true
-        window.setContentSize(NSSize(width: 320, height: 600))
         window.isReleasedWhenClosed = false
         window.level = .floating
         window.isRestorable = false
+        window.hasShadow = true
         window.delegate = self
         window.backgroundColor = .clear
+        window.isOpaque = false
 
-        // Store reference to the detached window
+        window.setFrame(currentFrame, display: true)
+        window.makeKeyAndOrderFront(nil)
+
         detachedWindow = window
-
-        return window
     }
 }
 
@@ -1687,6 +1826,51 @@ extension MenuBarManager: NSWindowDelegate {
                 NSApp.setActivationPolicy(.accessory)
                 githubPromptWindow = nil
             }
+        }
+    }
+
+    func windowDidMove(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow,
+              window == popoverPanel,
+              let originalOrigin = popoverPanelOriginalOrigin else { return }
+
+        // Check if panel was dragged far enough from original position to detach
+        let dx = window.frame.origin.x - originalOrigin.x
+        let dy = window.frame.origin.y - originalOrigin.y
+        let distance = sqrt(dx * dx + dy * dy)
+
+        if distance > 30 {
+            // Detach: convert popover panel into a floating window at current position
+            let currentFrame = window.frame
+            popoverPanelOriginalOrigin = nil
+
+            // Hide the popover panel
+            window.orderOut(nil)
+            stopMonitoringForOutsideClicks()
+            currentPopoverButton = nil
+
+            // Create the detached floating window at the dragged position
+            let detached = NSPanel(
+                contentRect: currentFrame,
+                styleMask: [.borderless, .nonactivatingPanel],
+                backing: .buffered,
+                defer: false
+            )
+            detached.contentViewController = createDetachedContentViewController()
+            detached.isFloatingPanel = true
+            detached.isMovableByWindowBackground = true
+            detached.isReleasedWhenClosed = false
+            detached.level = .floating
+            detached.isRestorable = false
+            detached.hasShadow = true
+            detached.delegate = self
+            detached.backgroundColor = .clear
+            detached.isOpaque = false
+
+            detached.setFrame(currentFrame, display: true)
+            detached.makeKeyAndOrderFront(nil)
+
+            detachedWindow = detached
         }
     }
 }
