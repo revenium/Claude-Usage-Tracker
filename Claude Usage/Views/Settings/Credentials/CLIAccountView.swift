@@ -606,11 +606,7 @@ struct CLIAccountView: View {
                                     Image(systemName: "checkmark.circle.fill")
                                         .foregroundColor(.green)
                                         .font(.system(size: DesignTokens.Icons.small))
-                                    Text(String(
-                                        format: "cli.mcp_sync_added".localized,
-                                        change.addedServers.joined(separator: ", "),
-                                        change.accountName
-                                    ))
+                                    Text("\(change.addedServers.joined(separator: ", ")) \u{2192} \(change.accountName)")
                                     .font(DesignTokens.Typography.caption)
                                     .foregroundColor(.secondary)
                                 }

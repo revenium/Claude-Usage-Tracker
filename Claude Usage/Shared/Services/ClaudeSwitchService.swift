@@ -265,6 +265,7 @@ class ClaudeSwitchService {
     /// back to every source. Returns a detailed result of what changed where.
     func bidirectionalMcpSync() -> McpSyncResult {
         // 1. Collect MCPs from all sources
+        let accountNames = availableAccountNames()  // snapshot once — avoid TOCTOU
         var unionMcps: [String: Any] = [:]
         var sourceMcpSets: [(label: String, url: URL, mcps: [String: Any])] = []
 
@@ -277,7 +278,7 @@ class ClaudeSwitchService {
         }
 
         // Each account directory
-        for accountName in availableAccountNames() {
+        for accountName in accountNames {
             let accountJson = accountDirectoryPath(for: accountName)
                 .appendingPathComponent(".claude.json")
             if let mcps = readMcpServers(from: accountJson) {
@@ -319,7 +320,7 @@ class ClaudeSwitchService {
                 ))
             }
         }
-        for accountName in availableAccountNames() {
+        for accountName in accountNames {
             if !sourceMcpSets.contains(where: { $0.label == accountName }) {
                 let accountJson = accountDirectoryPath(for: accountName)
                     .appendingPathComponent(".claude.json")
@@ -359,13 +360,20 @@ class ClaudeSwitchService {
 
     /// Writes the union of MCP servers into a .claude.json file, preserving all other keys.
     /// Only adds servers that are missing. Returns the number of servers added.
+    /// Skips the write entirely if an existing file cannot be parsed (avoids clobbering).
     @discardableResult
     private func writeMcpServers(_ unionMcps: [String: Any], into url: URL) -> Int {
-        // Read or initialize destination
+        // Read or initialize destination — abort if file exists but can't be parsed
         var destDict: [String: Any] = [:]
-        if FileManager.default.fileExists(atPath: url.path),
-           let data = try? Data(contentsOf: url),
-           let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+        let fileExists = FileManager.default.fileExists(atPath: url.path)
+        if fileExists {
+            guard let data = try? Data(contentsOf: url),
+                  let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                LoggingService.shared.log(
+                    "ClaudeSwitchService: Skipping MCP write to \(url.lastPathComponent) "
+                    + "— file exists but could not be parsed")
+                return 0
+            }
             destDict = parsed
         }
 
