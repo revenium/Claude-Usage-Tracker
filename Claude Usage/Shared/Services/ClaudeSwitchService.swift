@@ -212,9 +212,12 @@ class ClaudeSwitchService {
            let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
            let oauthAccount = parsed["oauthAccount"] as? [String: Any],
            let accessToken = oauthAccount["accessToken"] as? String {
-            // Build a minimal credentials JSON for usage tracking
-            let minimalJSON = "{\"claudeAiOauth\":{\"accessToken\":\"\(accessToken)\"}}"
-            return minimalJSON
+            // Build credentials JSON safely using JSONSerialization (not string interpolation)
+            let dict: [String: Any] = ["claudeAiOauth": ["accessToken": accessToken]]
+            if let jsonData = try? JSONSerialization.data(withJSONObject: dict),
+               let jsonString = String(data: jsonData, encoding: .utf8) {
+                return jsonString
+            }
         }
 
         return nil
@@ -248,9 +251,12 @@ class ClaudeSwitchService {
 
     private func hasCredentialFiles(in dir: URL) -> Bool {
         let credFile = dir.appendingPathComponent(".credentials.json")
+        if FileManager.default.fileExists(atPath: credFile.path) {
+            return true
+        }
+        // For .claude.json, verify it actually contains oauthAccount (not just a copied template)
         let claudeJson = dir.appendingPathComponent(".claude.json")
-        return FileManager.default.fileExists(atPath: credFile.path)
-            || FileManager.default.fileExists(atPath: claudeJson.path)
+        return hasOAuthAccountInClaudeJson(at: claudeJson)
     }
 
     private func hasOAuthAccountInClaudeJson(at url: URL) -> Bool {
@@ -267,14 +273,23 @@ class ClaudeSwitchService {
             return baseName
         }
 
-        // Directory exists — check if it has credentials (already linked by another profile)
-        if hasCredentialFiles(in: baseDir) {
-            // Already set up, reuse it
+        // Directory exists but has no credentials — safe to reuse (e.g., previous failed link)
+        if !hasCredentialFiles(in: baseDir) {
             return baseName
         }
 
-        // Empty directory, reuse it
-        return baseName
+        // Directory exists with credentials — find a unique suffix
+        for suffix in 2...99 {
+            let candidate = "\(baseName)-\(suffix)"
+            let candidateDir = accountDirectoryPath(for: candidate)
+            if !FileManager.default.fileExists(atPath: candidateDir.path) {
+                return candidate
+            }
+        }
+
+        throw ClaudeSwitchError.directoryCreationFailed(
+            "Could not find a unique directory name for '\(baseName)'"
+        )
     }
 
     private func createSymlinks(from source: URL, to destination: URL) throws -> (Int, [String]) {
@@ -336,24 +351,27 @@ class ClaudeSwitchService {
             return
         }
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: tmuxPath)
-        process.arguments = ["set-environment", "-g", "CLAUDE_CONFIG_DIR", configDir]
-        process.standardOutput = Pipe()
-        process.standardError = Pipe()
+        // Fire-and-forget: don't block the calling thread waiting for tmux
+        DispatchQueue.global(qos: .utility).async {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: tmuxPath)
+            process.arguments = ["set-environment", "-g", "CLAUDE_CONFIG_DIR", configDir]
+            process.standardOutput = Pipe()
+            process.standardError = Pipe()
 
-        do {
-            try process.run()
-            process.waitUntilExit()
-            if process.terminationStatus == 0 {
-                LoggingService.shared.log("ClaudeSwitchService: tmux environment propagated")
-            } else {
-                LoggingService.shared.log(
-                    "ClaudeSwitchService: tmux set-environment failed "
-                    + "(exit \(process.terminationStatus)) — ignored")
+            do {
+                try process.run()
+                process.waitUntilExit()
+                if process.terminationStatus == 0 {
+                    LoggingService.shared.log("ClaudeSwitchService: tmux environment propagated")
+                } else {
+                    LoggingService.shared.log(
+                        "ClaudeSwitchService: tmux set-environment failed "
+                        + "(exit \(process.terminationStatus)) — ignored")
+                }
+            } catch {
+                LoggingService.shared.log("ClaudeSwitchService: tmux command failed — ignored")
             }
-        } catch {
-            LoggingService.shared.log("ClaudeSwitchService: tmux command failed — ignored")
         }
     }
 }

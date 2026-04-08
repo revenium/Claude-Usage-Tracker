@@ -723,6 +723,7 @@
 "cli.check_credentials" = "Check for Credentials";
 "cli.credentials_found" = "Credentials detected! Account is ready.";
 "cli.credentials_not_found" = "No credentials found yet. Run the login command above first.";
+"cli.credentials_unreadable" = "Credentials found but could not be read. Try running the login command again.";
 "cli.copied" = "Copied!";
 "cli.switching_enabled" = "Account switching enabled. When you change the Active Profile, this CLI account will activate for all new terminal sessions.";
 "cli.shell_integration_title" = "Shell Integration (One-Time Setup)";

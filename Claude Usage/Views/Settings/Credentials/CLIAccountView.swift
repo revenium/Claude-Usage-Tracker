@@ -766,6 +766,8 @@ struct CLIAccountView: View {
                     profileManager.updateProfile(updated)
                     loadCLIAccountInfo()
                 }
+            } else {
+                syncError = "cli.credentials_unreadable".localized
             }
 
             // Show shell integration instructions on first success
