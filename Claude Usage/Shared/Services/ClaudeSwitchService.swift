@@ -50,18 +50,22 @@ class ClaudeSwitchService {
                 FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
                 guard isDir.boolValue else { return false }
                 let credFile = url.appendingPathComponent(".credentials.json")
+                let claudeJson = url.appendingPathComponent(".claude.json")
                 return FileManager.default.fileExists(atPath: credFile.path)
+                    || FileManager.default.fileExists(atPath: claudeJson.path)
             }
             .map { $0.lastPathComponent }
             .sorted()
     }
 
-    /// Checks whether an account name has a valid directory with credentials
+    /// Checks whether an account name has a valid directory with credentials.
+    /// Supports both .credentials.json (legacy) and .claude.json with oauthAccount (v2.1.52+).
     func isValidAccountName(_ name: String) -> Bool {
-        let credFile = accountsDir
-            .appendingPathComponent(name)
-            .appendingPathComponent(".credentials.json")
+        let dir = accountsDir.appendingPathComponent(name)
+        let credFile = dir.appendingPathComponent(".credentials.json")
+        let claudeJson = dir.appendingPathComponent(".claude.json")
         return FileManager.default.fileExists(atPath: credFile.path)
+            || FileManager.default.fileExists(atPath: claudeJson.path)
     }
 
     /// Returns the currently persisted account name, if any

@@ -228,6 +228,7 @@ class ProfileManager: ObservableObject {
         }
 
         // Switch CLI account if profile has a mapped account name
+        LoggingService.shared.log("CLI account check for '\(updatedProfile.name)': cliAccountName=\(updatedProfile.cliAccountName ?? "nil")")
         if let accountName = updatedProfile.cliAccountName {
             do {
                 try ClaudeSwitchService.shared.switchToAccount(accountName)
