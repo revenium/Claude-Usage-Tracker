@@ -452,7 +452,9 @@ struct ProfileRow: View {
     private var profileInfo: String {
         var parts: [String] = []
 
-        if profile.hasCliAccount {
+        if let accountName = profile.cliAccountName {
+            parts.append("CLI: \(accountName)")
+        } else if profile.hasCliAccount {
             parts.append("profiles.cli_synced".localized)
         }
 

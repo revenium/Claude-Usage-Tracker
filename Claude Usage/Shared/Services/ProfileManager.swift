@@ -227,6 +227,16 @@ class ProfileManager: ObservableObject {
             LoggingService.shared.log("⚠️ Profile '\(updatedProfile.name)' has no CLI credentials JSON")
         }
 
+        // Switch CLI account if profile has a mapped account name
+        if let accountName = updatedProfile.cliAccountName {
+            do {
+                try ClaudeSwitchService.shared.switchToAccount(accountName)
+                LoggingService.shared.log("✓ Switched CLI account to: \(accountName)")
+            } catch {
+                LoggingService.shared.logError("Failed to switch CLI account (non-fatal)", error: error)
+            }
+        }
+
         // Update last used timestamp
         var updated = updatedProfile
         updated.lastUsedAt = Date()

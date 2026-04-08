@@ -12,6 +12,7 @@ struct CLIAccountView: View {
     @State private var isSyncing = false
     @State private var syncError: String?
     @State private var cliAccountInfo: CLIAccountInfo?
+    @State private var availableAccounts: [String] = []
 
     var body: some View {
         ScrollView {
@@ -189,6 +190,35 @@ struct CLIAccountView: View {
                         }
                     }
 
+                    // CLI Account Switching
+                    if !availableAccounts.isEmpty {
+                        SettingsSectionCard(
+                            title: "CLI Account Switching",
+                            subtitle: "Switch the active CLI account when this profile is activated"
+                        ) {
+                            VStack(alignment: .leading, spacing: DesignTokens.Spacing.cardPadding) {
+                                Picker("CLI Account", selection: Binding(
+                                    get: { profile.cliAccountName ?? "" },
+                                    set: { newValue in
+                                        var updated = profile
+                                        updated.cliAccountName = newValue.isEmpty ? nil : newValue
+                                        profileManager.updateProfile(updated)
+                                    }
+                                )) {
+                                    Text("None").tag("")
+                                    ForEach(availableAccounts, id: \.self) { name in
+                                        Text(name).tag(name)
+                                    }
+                                }
+                                .pickerStyle(.menu)
+
+                                Text("When you switch to this profile, CLAUDE_CONFIG_DIR will be set to ~/.claude-accounts/<name> for all new terminal sessions.")
+                                    .font(DesignTokens.Typography.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
+
                     // Info Card
                     SettingsContentCard {
                         VStack(alignment: .leading, spacing: DesignTokens.Spacing.medium) {
@@ -229,6 +259,7 @@ struct CLIAccountView: View {
         }
         .onAppear {
             loadCLIAccountInfo()
+            availableAccounts = ClaudeSwitchService.shared.availableAccountNames()
         }
         .onChange(of: profileManager.activeProfile?.id) { _, _ in
             // Reload when profile changes

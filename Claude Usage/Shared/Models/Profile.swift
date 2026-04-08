@@ -24,6 +24,7 @@ struct Profile: Codable, Identifiable, Equatable {
     // MARK: - CLI Account Sync Metadata
     var hasCliAccount: Bool
     var cliAccountSyncedAt: Date?
+    var cliAccountName: String?  // Maps to a claude-switch account directory name
 
     // MARK: - Usage Data (Per-Profile)
     var claudeUsage: ClaudeUsage?
@@ -58,6 +59,7 @@ struct Profile: Codable, Identifiable, Equatable {
         cliCredentialsJSON: String? = nil,
         hasCliAccount: Bool = false,
         cliAccountSyncedAt: Date? = nil,
+        cliAccountName: String? = nil,
         claudeUsage: ClaudeUsage? = nil,
         apiUsage: APIUsage? = nil,
         iconConfig: MenuBarIconConfiguration = .default,
@@ -79,6 +81,7 @@ struct Profile: Codable, Identifiable, Equatable {
         self.cliCredentialsJSON = cliCredentialsJSON
         self.hasCliAccount = hasCliAccount
         self.cliAccountSyncedAt = cliAccountSyncedAt
+        self.cliAccountName = cliAccountName
         self.claudeUsage = claudeUsage
         self.apiUsage = apiUsage
         self.iconConfig = iconConfig
