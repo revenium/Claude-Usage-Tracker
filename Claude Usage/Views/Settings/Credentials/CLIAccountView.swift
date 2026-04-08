@@ -678,21 +678,18 @@ struct CLIAccountView: View {
         isSyncing = true
         syncError = nil
 
-        // If linked to an account directory, read from there
-        if let accountName = profile.cliAccountName {
-            if let json = ClaudeSwitchService.shared.readLinkedAccountCredentials(directoryName: accountName) {
-                var updated = profile
-                updated.cliCredentialsJSON = json
-                updated.hasCliAccount = true
-                updated.cliAccountSyncedAt = Date()
-                profileManager.updateProfile(updated)
-                loadCLIAccountInfo()
-                LoggingService.shared.log("CLIAccountView: Re-synced from linked account directory")
-            } else {
-                syncError = "No credentials found in ~/.claude-accounts/\(accountName). Run the login command first."
-            }
+        // Try linked account directory first, then fall back to system keychain
+        if let accountName = profile.cliAccountName,
+           let json = ClaudeSwitchService.shared.readLinkedAccountCredentials(directoryName: accountName) {
+            var updated = profile
+            updated.cliCredentialsJSON = json
+            updated.hasCliAccount = true
+            updated.cliAccountSyncedAt = Date()
+            profileManager.updateProfile(updated)
+            loadCLIAccountInfo()
+            LoggingService.shared.log("CLIAccountView: Re-synced from linked account directory")
         } else {
-            // Fall back to system keychain sync
+            // Fall back to system keychain (works for both linked and unlinked profiles)
             do {
                 try ClaudeCodeSyncService.shared.syncToProfile(profile.id)
                 profileManager.loadProfiles()
@@ -703,7 +700,7 @@ struct CLIAccountView: View {
                     profileManager.updateProfile(updated)
                 }
                 loadCLIAccountInfo()
-                LoggingService.shared.log("CLIAccountView: CLI sync complete from system keychain")
+                LoggingService.shared.log("CLIAccountView: Re-synced from system keychain")
             } catch {
                 syncError = error.localizedDescription
                 LoggingService.shared.logError("CLIAccountView: CLI sync failed - \(error.localizedDescription)")
