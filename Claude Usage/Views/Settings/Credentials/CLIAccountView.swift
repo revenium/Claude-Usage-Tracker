@@ -162,21 +162,36 @@ struct CLIAccountView: View {
     }
 
     private func linkedStatusCard(accountName: String, hasCredentials: Bool) -> some View {
-        HStack(spacing: DesignTokens.Spacing.medium) {
-            Circle()
-                .fill(hasCredentials ? Color.green : Color.orange)
-                .frame(width: DesignTokens.StatusDot.standard, height: DesignTokens.StatusDot.standard)
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.small) {
+            HStack(spacing: DesignTokens.Spacing.medium) {
+                Circle()
+                    .fill(hasCredentials ? Color.green : Color.orange)
+                    .frame(width: DesignTokens.StatusDot.standard, height: DesignTokens.StatusDot.standard)
 
-            VStack(alignment: .leading, spacing: DesignTokens.Spacing.extraSmall) {
-                Text(hasCredentials ? "cli.status_linked".localized : "cli.status_linked_pending".localized)
-                    .font(DesignTokens.Typography.bodyMedium)
+                VStack(alignment: .leading, spacing: DesignTokens.Spacing.extraSmall) {
+                    Text(hasCredentials ? "cli.status_linked".localized : "cli.status_linked_pending".localized)
+                        .font(DesignTokens.Typography.bodyMedium)
 
-                Text("~/.claude-accounts/\(accountName)")
-                    .font(DesignTokens.Typography.monospaced)
-                    .foregroundColor(.secondary)
+                    Text("~/.claude-accounts/\(accountName)")
+                        .font(DesignTokens.Typography.monospaced)
+                        .foregroundColor(.secondary)
+                }
+
+                Spacer()
             }
 
-            Spacer()
+            if hasCredentials {
+                Divider()
+
+                HStack(spacing: DesignTokens.Spacing.small) {
+                    Image(systemName: "arrow.triangle.2.circlepath.circle.fill")
+                        .foregroundColor(.green)
+                        .font(.system(size: DesignTokens.Icons.standard))
+                    Text("cli.switching_enabled".localized)
+                        .font(DesignTokens.Typography.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
         }
         .padding(DesignTokens.Spacing.medium)
         .background(DesignTokens.Colors.cardBackground)
@@ -232,57 +247,89 @@ struct CLIAccountView: View {
             subtitle: "cli.setup_complete_subtitle".localized
         ) {
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.cardPadding) {
-                Text("cli.setup_run_command".localized)
-                    .font(DesignTokens.Typography.body)
-                    .foregroundColor(.secondary)
+                // Step 1
+                HStack(alignment: .top, spacing: DesignTokens.Spacing.small) {
+                    Text("1.")
+                        .font(DesignTokens.Typography.bodyMedium)
+                        .foregroundColor(.accentColor)
+                        .frame(width: 20, alignment: .trailing)
+                    VStack(alignment: .leading, spacing: DesignTokens.Spacing.extraSmall) {
+                        Text("cli.setup_step1".localized)
+                            .font(DesignTokens.Typography.body)
+                            .foregroundColor(.secondary)
 
-                // Command display
-                HStack {
-                    Text("CLAUDE_CONFIG_DIR=~/.claude-accounts/\(accountName) claude login")
-                        .font(DesignTokens.Typography.monospaced)
-                        .foregroundColor(.primary)
-                        .padding(DesignTokens.Spacing.small)
+                        // Command display
+                        HStack {
+                            Text("CLAUDE_CONFIG_DIR=~/.claude-accounts/\(accountName) claude login")
+                                .font(DesignTokens.Typography.monospaced)
+                                .foregroundColor(.primary)
+                                .padding(DesignTokens.Spacing.small)
 
-                    Spacer()
+                            Spacer()
 
-                    Button(action: {
-                        copyToClipboard("CLAUDE_CONFIG_DIR=~/.claude-accounts/\(accountName) claude login")
-                    }) {
-                        Image(systemName: copiedToClipboard ? "checkmark" : "doc.on.doc")
-                            .font(.system(size: DesignTokens.Icons.small))
-                    }
-                    .buttonStyle(.borderless)
-                    .padding(.trailing, DesignTokens.Spacing.small)
-                }
-                .background(Color.primary.opacity(0.06))
-                .cornerRadius(DesignTokens.Radius.small)
-
-                Text("cli.setup_login_explain".localized)
-                    .font(DesignTokens.Typography.caption)
-                    .foregroundColor(.secondary)
-
-                // Check for credentials button
-                HStack(spacing: DesignTokens.Spacing.iconText) {
-                    Button(action: checkCredentials) {
-                        HStack(spacing: DesignTokens.Spacing.extraSmall) {
-                            Image(systemName: "magnifyingglass")
-                                .font(.system(size: DesignTokens.Icons.small))
-                            Text("cli.check_credentials".localized)
-                                .font(DesignTokens.Typography.body)
+                            Button(action: {
+                                copyToClipboard("CLAUDE_CONFIG_DIR=~/.claude-accounts/\(accountName) claude login")
+                            }) {
+                                HStack(spacing: DesignTokens.Spacing.extraSmall) {
+                                    Image(systemName: copiedToClipboard ? "checkmark" : "doc.on.doc")
+                                        .font(.system(size: DesignTokens.Icons.small))
+                                    Text(copiedToClipboard ? "cli.copied".localized : "cli.copy_command".localized)
+                                        .font(DesignTokens.Typography.caption)
+                                }
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .padding(.trailing, DesignTokens.Spacing.small)
                         }
+                        .background(Color.primary.opacity(0.06))
+                        .cornerRadius(DesignTokens.Radius.small)
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.regular)
+                }
 
-                    // Credential check result
-                    if credentialCheckResult.hasCredentials {
-                        HStack(spacing: DesignTokens.Spacing.extraSmall) {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundColor(.green)
-                                .font(.system(size: DesignTokens.Icons.small))
-                            Text("cli.credentials_found".localized)
-                                .font(DesignTokens.Typography.caption)
-                                .foregroundColor(.green)
+                // Step 2
+                HStack(alignment: .top, spacing: DesignTokens.Spacing.small) {
+                    Text("2.")
+                        .font(DesignTokens.Typography.bodyMedium)
+                        .foregroundColor(.accentColor)
+                        .frame(width: 20, alignment: .trailing)
+                    Text("cli.setup_step2".localized)
+                        .font(DesignTokens.Typography.body)
+                        .foregroundColor(.secondary)
+                }
+
+                // Step 3
+                HStack(alignment: .top, spacing: DesignTokens.Spacing.small) {
+                    Text("3.")
+                        .font(DesignTokens.Typography.bodyMedium)
+                        .foregroundColor(.accentColor)
+                        .frame(width: 20, alignment: .trailing)
+                    VStack(alignment: .leading, spacing: DesignTokens.Spacing.small) {
+                        Text("cli.setup_step3".localized)
+                            .font(DesignTokens.Typography.body)
+                            .foregroundColor(.secondary)
+
+                        HStack(spacing: DesignTokens.Spacing.iconText) {
+                            Button(action: checkCredentials) {
+                                HStack(spacing: DesignTokens.Spacing.extraSmall) {
+                                    Image(systemName: "magnifyingglass")
+                                        .font(.system(size: DesignTokens.Icons.small))
+                                    Text("cli.check_credentials".localized)
+                                        .font(DesignTokens.Typography.body)
+                                }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.regular)
+
+                            if credentialCheckResult.hasCredentials {
+                                HStack(spacing: DesignTokens.Spacing.extraSmall) {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundColor(.green)
+                                        .font(.system(size: DesignTokens.Icons.small))
+                                    Text("cli.credentials_found".localized)
+                                        .font(DesignTokens.Typography.caption)
+                                        .foregroundColor(.green)
+                                }
+                            }
                         }
                     }
                 }
@@ -342,7 +389,7 @@ struct CLIAccountView: View {
                         .font(DesignTokens.Typography.sectionTitle)
                 }
 
-                Text("cli.shell_integration_explain".localized)
+                Text(String(format: "cli.shell_integration_explain".localized, shellConfigFile))
                     .font(DesignTokens.Typography.caption)
                     .foregroundColor(.secondary)
 
@@ -373,11 +420,15 @@ struct CLIAccountView: View {
                         SharedDataStore.shared.markCLIShellIntegrationShown()
                         showShellIntegration = false
                     }) {
-                        Text("cli.shell_integration_dismiss".localized)
-                            .font(DesignTokens.Typography.body)
+                        HStack(spacing: DesignTokens.Spacing.extraSmall) {
+                            Image(systemName: "checkmark.circle")
+                                .font(.system(size: DesignTokens.Icons.small))
+                            Text("cli.shell_integration_dismiss".localized)
+                                .font(DesignTokens.Typography.body)
+                        }
                     }
-                    .buttonStyle(.borderless)
-                    .foregroundColor(.secondary)
+                    .buttonStyle(.bordered)
+                    .controlSize(.regular)
                 }
             }
         }
@@ -530,9 +581,23 @@ struct CLIAccountView: View {
         return ClaudeSwitchService.shared.sanitizeProfileName(name)
     }
 
+    /// Detects the user's shell and returns the appropriate config file name
+    private var shellConfigFile: String {
+        let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+        if shell.contains("zsh") {
+            return "~/.zshrc"
+        } else if shell.contains("bash") {
+            // macOS uses .bash_profile for login shells, .bashrc for non-login
+            return "~/.bashrc or ~/.bash_profile"
+        } else if shell.contains("fish") {
+            return "~/.config/fish/config.fish"
+        }
+        return "your shell configuration file"
+    }
+
     private var shellSnippet: String {
         """
-        # Claude CLI account auto-switch
+        # Claude CLI account auto-switch (one-time setup, applies to all accounts)
         if [ -f ~/.claude-tokens/.last-account ]; then
           export CLAUDE_CONFIG_DIR="$HOME/.claude-accounts/$(cat ~/.claude-tokens/.last-account)"
         fi
