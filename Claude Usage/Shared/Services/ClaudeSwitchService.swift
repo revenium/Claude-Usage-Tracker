@@ -18,6 +18,10 @@ class ClaudeSwitchService {
     /// Files that are per-account and should NOT be symlinked from ~/.claude/
     private let perAccountFiles: Set<String> = [".credentials.json", ".claude.json"]
 
+    /// Serial queue for all tmux operations — prevents race conditions when unlink
+    /// and switch dispatch concurrently (unpropagate could otherwise win over propagate).
+    private let tmuxQueue = DispatchQueue(label: "io.revenium.claude-usage.tmux", qos: .utility)
+
     private init() {}
 
     // MARK: - Paths
@@ -53,6 +57,16 @@ class ClaudeSwitchService {
         accountsDir.appendingPathComponent(name)
     }
 
+    /// Validates that the resolved account directory is within accountsDir.
+    /// Throws if the name contains path traversal components.
+    private func validatedAccountDir(for name: String) throws -> URL {
+        let dir = accountsDir.appendingPathComponent(name).standardized
+        guard dir.path.hasPrefix(accountsDir.standardized.path + "/") || dir == accountsDir.standardized else {
+            throw ClaudeSwitchError.invalidAccountName(name)
+        }
+        return dir
+    }
+
     // MARK: - Name Sanitization
 
     /// Converts a profile name to a filesystem-safe directory name.
@@ -79,7 +93,9 @@ class ClaudeSwitchService {
 
     // MARK: - Discovery
 
-    /// Lists available account names from ~/.claude-accounts/ that have credentials
+    /// Lists available account names from ~/.claude-accounts/ that have credentials.
+    /// Note: this is credential-filtered — directories without credentials are excluded.
+    /// Use `allAccountDirectoryNames()` when credential state should not matter (e.g., MCP sync).
     func availableAccountNames() -> [String] {
         guard let contents = try? FileManager.default.contentsOfDirectory(
             at: accountsDir,
@@ -95,6 +111,24 @@ class ClaudeSwitchService {
                 FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
                 guard isDir.boolValue else { return false }
                 return hasCredentialFiles(in: url)
+            }
+            .map { $0.lastPathComponent }
+            .sorted()
+    }
+
+    /// Returns the names of all account directories, regardless of credential state.
+    /// Use for MCP sync which should propagate to all linked dirs, not just authenticated ones.
+    private func allAccountDirectoryNames() -> [String] {
+        guard let contents = try? FileManager.default.contentsOfDirectory(
+            at: accountsDir,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else { return [] }
+        return contents
+            .filter { url in
+                var isDir: ObjCBool = false
+                FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
+                return isDir.boolValue
             }
             .map { $0.lastPathComponent }
             .sorted()
@@ -165,6 +199,16 @@ class ClaudeSwitchService {
             try FileManager.default.copyItem(at: sourceClaudeJson, to: destClaudeJson)
         }
 
+        // Strip oauthAccount from the copy — user hasn't logged in to this account yet
+        if FileManager.default.fileExists(atPath: destClaudeJson.path),
+           let data = try? Data(contentsOf: destClaudeJson),
+           var json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            json.removeValue(forKey: "oauthAccount")
+            if let cleaned = try? JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys]) {
+                try? cleaned.write(to: destClaudeJson, options: .atomic)
+            }
+        }
+
         // Merge mcpServers from ~/.claude.json (where `claude mcp add` stores config)
         // into the account's .claude.json so MCP servers carry over seamlessly.
         mergeMcpServersFromHome(into: destClaudeJson)
@@ -183,7 +227,7 @@ class ClaudeSwitchService {
 
     /// Removes an account directory and clears .last-account if it references this account.
     func unlinkAccount(directoryName: String) throws {
-        let dir = accountDirectoryPath(for: directoryName)
+        let dir = try validatedAccountDir(for: directoryName)
 
         if FileManager.default.fileExists(atPath: dir.path) {
             try FileManager.default.removeItem(at: dir)
@@ -203,7 +247,7 @@ class ClaudeSwitchService {
 
     /// Checks whether the linked directory has valid credentials.
     func checkForCredentials(directoryName: String) -> CredentialCheckResult {
-        let dir = accountDirectoryPath(for: directoryName)
+        let dir = (try? validatedAccountDir(for: directoryName)) ?? accountDirectoryPath(for: directoryName)
         let credFile = dir.appendingPathComponent(".credentials.json")
         let claudeJson = dir.appendingPathComponent(".claude.json")
 
@@ -221,7 +265,7 @@ class ClaudeSwitchService {
     /// Reads credentials JSON from the linked account directory.
     /// Tries .credentials.json first, falls back to extracting from .claude.json.
     func readLinkedAccountCredentials(directoryName: String) -> String? {
-        let dir = accountDirectoryPath(for: directoryName)
+        let dir = (try? validatedAccountDir(for: directoryName)) ?? accountDirectoryPath(for: directoryName)
 
         // Try .credentials.json first
         let credFile = dir.appendingPathComponent(".credentials.json")
@@ -254,7 +298,7 @@ class ClaudeSwitchService {
     /// 1. Writing the account name to ~/.claude-tokens/.last-account (shell auto-restore)
     /// 2. Setting CLAUDE_CONFIG_DIR in tmux global environment (propagates to new panes)
     func switchToAccount(_ accountName: String) throws {
-        let configDir = accountDirectoryPath(for: accountName).path
+        let configDir = try validatedAccountDir(for: accountName).path
 
         // Verify directory exists (don't require credentials — user may not have logged in yet)
         guard accountDirectoryExists(accountName) else {
@@ -279,7 +323,8 @@ class ClaudeSwitchService {
     /// back to every source. Returns a detailed result of what changed where.
     func bidirectionalMcpSync() -> McpSyncResult {
         // 1. Collect MCPs from all sources
-        let accountNames = availableAccountNames()  // snapshot once — avoid TOCTOU
+        // Use allAccountDirectoryNames so pre-login dirs (no credentials yet) are included.
+        let accountNames = allAccountDirectoryNames()  // snapshot once — avoid TOCTOU
         var unionMcps: [String: Any] = [:]
         var sourceMcpSets: [(label: String, url: URL, mcps: [String: Any])] = []
 
@@ -525,7 +570,7 @@ class ClaudeSwitchService {
             return
         }
 
-        DispatchQueue.global(qos: .utility).async {
+        tmuxQueue.async {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: tmuxPath)
             process.arguments = ["set-environment", "-gu", "CLAUDE_CONFIG_DIR"]
@@ -568,8 +613,8 @@ class ClaudeSwitchService {
             return
         }
 
-        // Fire-and-forget: don't block the calling thread waiting for tmux
-        DispatchQueue.global(qos: .utility).async {
+        // Fire-and-forget on serial queue: don't block the calling thread waiting for tmux
+        tmuxQueue.async {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: tmuxPath)
             process.arguments = ["set-environment", "-g", "CLAUDE_CONFIG_DIR", configDir]
