@@ -293,6 +293,7 @@ struct ManageProfilesView: View {
                             BulletPoint("profiles.about_appearance".localized)
                             BulletPoint("profiles.about_notifications".localized)
                             BulletPoint("profiles.about_refresh".localized)
+                            BulletPoint("profiles.about_cli_switching".localized)
                         }
                         .font(DesignTokens.Typography.caption)
                         .foregroundColor(.secondary)

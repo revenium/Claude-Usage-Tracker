@@ -39,6 +39,7 @@ class SharedDataStore {
         // Setup State
         static let hasCompletedSetup = "hasCompletedSetup"
         static let hasShownWizardOnce = "hasShownWizardOnce"
+        static let hasShownCLIShellIntegration = "hasShownCLIShellIntegration"
 
         // GitHub Star Tracking
         static let firstLaunchDate = "firstLaunchDate"
@@ -300,6 +301,14 @@ class SharedDataStore {
 
     func markWizardShown() {
         defaults.set(true, forKey: Keys.hasShownWizardOnce)
+    }
+
+    func hasShownCLIShellIntegration() -> Bool {
+        return defaults.bool(forKey: Keys.hasShownCLIShellIntegration)
+    }
+
+    func markCLIShellIntegrationShown() {
+        defaults.set(true, forKey: Keys.hasShownCLIShellIntegration)
     }
 
     // MARK: - GitHub Star Prompt Tracking
