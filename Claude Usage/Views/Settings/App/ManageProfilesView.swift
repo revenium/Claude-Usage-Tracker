@@ -293,6 +293,7 @@ struct ManageProfilesView: View {
                             BulletPoint("profiles.about_appearance".localized)
                             BulletPoint("profiles.about_notifications".localized)
                             BulletPoint("profiles.about_refresh".localized)
+                            BulletPoint("profiles.about_cli_switching".localized)
                         }
                         .font(DesignTokens.Typography.caption)
                         .foregroundColor(.secondary)
@@ -452,7 +453,9 @@ struct ProfileRow: View {
     private var profileInfo: String {
         var parts: [String] = []
 
-        if profile.hasCliAccount {
+        if let accountName = profile.cliAccountName {
+            parts.append("CLI: \(accountName)")
+        } else if profile.hasCliAccount {
             parts.append("profiles.cli_synced".localized)
         }
 

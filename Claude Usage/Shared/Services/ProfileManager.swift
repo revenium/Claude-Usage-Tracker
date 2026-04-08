@@ -227,6 +227,27 @@ class ProfileManager: ObservableObject {
             LoggingService.shared.log("⚠️ Profile '\(updatedProfile.name)' has no CLI credentials JSON")
         }
 
+        // Switch CLI account if profile has a mapped account name
+        LoggingService.shared.log("CLI account check for '\(updatedProfile.name)': cliAccountName=\(updatedProfile.cliAccountName ?? "nil")")
+        if let accountName = updatedProfile.cliAccountName {
+            do {
+                try ClaudeSwitchService.shared.switchToAccount(accountName)
+                LoggingService.shared.log("✓ Switched CLI account to: \(accountName)")
+
+                // Auto-sync MCP servers across all accounts after switch
+                if SharedDataStore.shared.loadAutoSyncMCPEnabled() {
+                    let result = ClaudeSwitchService.shared.bidirectionalMcpSync()
+                    if result.hasChanges {
+                        LoggingService.shared.log(
+                            "Auto-synced MCP servers: \(result.totalSynced) server(s) "
+                            + "across \(result.changes.count) target(s)")
+                    }
+                }
+            } catch {
+                LoggingService.shared.logError("Failed to switch CLI account (non-fatal)", error: error)
+            }
+        }
+
         // Update last used timestamp
         var updated = updatedProfile
         updated.lastUsedAt = Date()

@@ -495,6 +495,7 @@
 "profiles.about_appearance" = "Menu bar appearance";
 "profiles.about_notifications" = "Notification settings";
 "profiles.about_refresh" = "Refresh interval";
+"profiles.about_cli_switching" = "CLI account switching: Link CLI accounts in each profile's CLI Account settings";
 "profiles.active_badge" = "Active";
 "profiles.created" = "Created";
 "profiles.cli_synced" = "CLI Synced";
@@ -687,7 +688,7 @@
 /* MARK: - CLI Account Sync */
 /* ==================== */
 "cli.title" = "CLI Account";
-"cli.subtitle" = "Sync your Claude Code logged-in account";
+"cli.subtitle" = "Link a dedicated CLI account to this profile";
 "cli.synced" = "CLI Account Synced";
 "cli.not_synced" = "Not Synced";
 "cli.account_details" = "Account Details";
@@ -698,6 +699,69 @@
 "cli.benefit_1" = "Auto-switch Claude Code login with profiles";
 "cli.benefit_2" = "Keep CLI and app accounts in sync";
 "cli.benefit_3" = "Auto-refresh credentials on profile switch";
+
+/* CLI Account Linking */
+"cli.status_not_linked" = "Not Linked";
+"cli.status_linked" = "CLI Account Linked";
+"cli.status_linked_pending" = "Linked — Awaiting Login";
+"cli.last_synced" = "Last synced:";
+"cli.link_title" = "Link CLI Account";
+"cli.link_subtitle" = "Create a dedicated CLI configuration for this profile";
+"cli.link_button" = "Link CLI Account";
+"cli.link_benefit_1" = "Each profile gets its own Claude CLI login";
+"cli.link_benefit_2" = "Settings are shared via symlinks from ~/.claude/";
+"cli.link_benefit_3" = "Automatic switching when you change the active profile";
+"cli.link_confirm_title" = "Link CLI Account";
+"cli.link_confirm_action" = "Create & Link";
+"cli.link_confirm_message" = "This will create a dedicated CLI configuration directory at ~/.claude-accounts/%@.\n\nFiles from ~/.claude/ will be symlinked so settings are shared. Only credentials will be unique to this profile.\n\nNote: New files added to ~/.claude/ later will not be automatically symlinked.";
+"cli.setup_complete_title" = "Directory Created";
+"cli.setup_complete_subtitle" = "Complete setup by logging in with your Claude account";
+"cli.setup_step1" = "Copy and run this command in your terminal:";
+"cli.setup_step2" = "Log in with the Claude account you want to use for this profile.";
+"cli.setup_step3" = "After logging in, click below to verify credentials were saved:";
+"cli.copy_command" = "Copy";
+"cli.check_credentials" = "Check for Credentials";
+"cli.credentials_found" = "Credentials detected! Account is ready.";
+"cli.credentials_not_found" = "No credentials found yet. Run the login command above first.";
+"cli.credentials_unreadable" = "Credentials found but could not be read. Try running the login command again.";
+"cli.copied" = "Copied!";
+"cli.switching_enabled" = "Account switching enabled. When you change the Active Profile, this CLI account will activate for all new terminal sessions.";
+"cli.shell_integration_title" = "Shell Integration (One-Time Setup)";
+"cli.shell_integration_explain" = "Add this snippet to %@ once. It applies to all linked accounts — you do not need to repeat this step for other profiles.";
+"cli.shell_integration_copy" = "Copy to Clipboard";
+"cli.shell_integration_dismiss" = "Got it";
+"cli.unlink" = "Unlink";
+"cli.unlink_title" = "Unlink CLI Account";
+"cli.unlink_action" = "Unlink & Remove";
+"cli.unlink_confirm" = "This will remove the CLI account directory at ~/.claude-accounts/%@. Your main ~/.claude/ directory and credentials will not be affected.";
+"cli.multi_profile_required_title" = "Multi-Profile Mode Required";
+"cli.multi_profile_required" = "Enable multi-profile display in Manage Profiles to use CLI account switching.";
+
+/* CLI Setup Guide */
+"cli.guide_button" = "Multi-Account Switching Guide";
+"cli.guide_title" = "Multi-Account CLI Switching";
+"cli.guide_subtitle" = "How profile switching controls your Claude Code CLI account";
+"cli.guide_how_title" = "How It Works";
+"cli.guide_how_subtitle" = "Each profile gets its own CLI credentials";
+"cli.guide_step1" = "Link a CLI account to each profile using the Link CLI Account button. This creates a dedicated configuration directory.";
+"cli.guide_step2" = "Log in to each linked account from your terminal using the provided command. This is a one-time step per account.";
+"cli.guide_step3" = "Add the shell snippet (below) to your shell configuration. This is a one-time step per computer that enables all accounts.";
+"cli.guide_step4" = "Switch the Active Profile in the app. All new terminal sessions will automatically use the corresponding CLI account.";
+"cli.guide_shell_note" = "This snippet only needs to be added once, regardless of how many accounts you link. It reads the active account and sets the environment automatically.";
+"cli.guide_notes_title" = "Good to Know";
+"cli.guide_note1" = "Switching profiles does not affect already-open terminal sessions. Open a new terminal or tmux pane after switching.";
+"cli.guide_note2" = "OAuth tokens refresh automatically. You should not need to re-login unless tokens are revoked.";
+"cli.guide_note3" = "Settings, scripts, and plugins are shared across accounts via symlinks. Only credentials are unique per account.";
+"cli.guide_note4" = "Files added to ~/.claude/ after linking will not be automatically symlinked to account directories.";
+
+/* CLI MCP Server Sync */
+"cli.mcp_sync_title" = "MCP Server Sync";
+"cli.mcp_sync_subtitle" = "Keep MCP servers consistent across all CLI accounts";
+"cli.mcp_auto_sync_title" = "Auto-sync on account switch";
+"cli.mcp_auto_sync_description" = "Automatically distribute new MCP server configs to all linked accounts when switching";
+"cli.mcp_sync_button" = "Sync MCP Servers Now";
+"cli.mcp_sync_no_changes" = "All accounts already in sync";
+"cli.mcp_sync_added" = "Added %@ to %@";
 
 /* ==================== */
 /* MARK: - Additional Keys */

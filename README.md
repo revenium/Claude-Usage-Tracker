@@ -316,6 +316,39 @@ Access profile switcher in multiple places:
    - Or use settings sidebar picker
    - CLI credentials apply automatically
 
+### MCP Server Sync
+
+When using multi-account CLI switching, MCP servers configured via `claude mcp add` are stored in the active account's `.claude.json`. This means an MCP added while one account is active won't be available when you switch to another account. MCP Server Sync solves this by keeping MCP configurations consistent across all linked accounts.
+
+#### How It Works
+
+The sync performs a **bidirectional merge**:
+1. Collects `mcpServers` from `~/.claude.json` (home config) and every linked account's `.claude.json`
+2. Builds the union of all MCP servers found across all sources
+3. Writes any missing servers back to each source that doesn't have them
+
+Existing per-account MCP configurations are never overwritten — the sync only adds servers that are missing from a given account. Project-scoped MCPs (added with `claude mcp add` to a specific project) are not affected.
+
+#### Auto-Sync (Default: Enabled)
+
+When enabled, MCP servers are automatically synced across all accounts every time you switch profiles. This means:
+- Add an MCP to any account → switch profiles → all accounts have it
+- No manual intervention needed
+
+To disable: Settings → CLI Account → toggle off "Auto-sync on account switch"
+
+#### Manual Sync
+
+A "Sync MCP Servers Now" button is always available in Settings → CLI Account. After syncing, the app shows exactly what changed:
+- Which MCP servers were added
+- Which accounts received them
+
+This is useful after adding multiple MCPs or when you want to verify all accounts are in sync without switching profiles.
+
+#### Trust Model
+
+Bidirectional sync means MCP configs from any linked account can propagate to all other accounts and to `~/.claude.json`. If you need strict isolation between accounts' MCP configurations, disable auto-sync and use manual sync selectively.
+
 
 ---
 

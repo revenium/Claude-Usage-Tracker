@@ -238,7 +238,11 @@ struct ProfileSwitcherCompact: View {
                         Spacer()
 
                         HStack(spacing: 4) {
-                            if profile.hasCliAccount {
+                            if profile.cliAccountName != nil {
+                                Image(systemName: "arrow.triangle.2.circlepath")
+                                    .font(.system(size: 9))
+                                    .foregroundColor(.purple)
+                            } else if profile.hasCliAccount {
                                 Image(systemName: "terminal.fill")
                                     .font(.system(size: 9))
                                     .foregroundColor(.adaptiveGreen)
@@ -306,7 +310,11 @@ struct ProfileSwitcherBar: View {
                         Spacer()
 
                         HStack(spacing: 4) {
-                            if profile.hasCliAccount {
+                            if profile.cliAccountName != nil {
+                                Image(systemName: "arrow.triangle.2.circlepath")
+                                    .font(.system(size: 9))
+                                    .foregroundColor(.purple)
+                            } else if profile.hasCliAccount {
                                 Image(systemName: "terminal.fill")
                                     .font(.system(size: 9))
                                     .foregroundColor(.adaptiveGreen)

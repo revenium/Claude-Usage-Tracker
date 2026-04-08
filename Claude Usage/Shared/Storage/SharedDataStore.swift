@@ -39,6 +39,7 @@ class SharedDataStore {
         // Setup State
         static let hasCompletedSetup = "hasCompletedSetup"
         static let hasShownWizardOnce = "hasShownWizardOnce"
+        static let hasShownCLIShellIntegration = "hasShownCLIShellIntegration"
 
         // GitHub Star Tracking
         static let firstLaunchDate = "firstLaunchDate"
@@ -62,6 +63,9 @@ class SharedDataStore {
 
         // Auto-Switch Profile
         static let autoSwitchProfileEnabled = "autoSwitchProfileEnabled"
+
+        // MCP Server Sync
+        static let autoSyncMCPEnabled = "autoSyncMCPEnabled"
 
         // Popover Settings
         static let popoverShowRemainingTime = "popoverShowRemainingTime" // legacy bool key
@@ -302,6 +306,14 @@ class SharedDataStore {
         defaults.set(true, forKey: Keys.hasShownWizardOnce)
     }
 
+    func hasShownCLIShellIntegration() -> Bool {
+        return defaults.bool(forKey: Keys.hasShownCLIShellIntegration)
+    }
+
+    func markCLIShellIntegrationShown() {
+        defaults.set(true, forKey: Keys.hasShownCLIShellIntegration)
+    }
+
     // MARK: - GitHub Star Prompt Tracking
 
     func saveFirstLaunchDate(_ date: Date) {
@@ -471,6 +483,18 @@ class SharedDataStore {
 
     func loadAutoSwitchProfileEnabled() -> Bool {
         return defaults.bool(forKey: Keys.autoSwitchProfileEnabled)
+    }
+
+    // MARK: - MCP Server Sync
+
+    func saveAutoSyncMCPEnabled(_ enabled: Bool) {
+        defaults.set(enabled, forKey: Keys.autoSyncMCPEnabled)
+    }
+
+    func loadAutoSyncMCPEnabled() -> Bool {
+        // Default to true (enabled) for new installs — UserDefaults.bool returns false for unset keys
+        if defaults.object(forKey: Keys.autoSyncMCPEnabled) == nil { return true }
+        return defaults.bool(forKey: Keys.autoSyncMCPEnabled)
     }
 
     // MARK: - Popover Settings
