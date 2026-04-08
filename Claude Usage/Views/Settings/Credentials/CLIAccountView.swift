@@ -24,6 +24,10 @@ struct CLIAccountView: View {
     @State private var copiedToClipboard = false
     @State private var copiedShellSnippet = false
 
+    // MCP sync state
+    @State private var mcpSyncResult: McpSyncResult?
+    @State private var mcpSyncInProgress = false
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.section) {
@@ -44,6 +48,11 @@ struct CLIAccountView: View {
                     // Account details (shown when credentials exist, regardless of mode)
                     if profile.hasCliAccount {
                         accountDetailsCard(profile: profile)
+                    }
+
+                    // MCP Server Sync (only in multi-profile mode)
+                    if profileManager.displayMode == .multi {
+                        mcpSyncSection
                     }
 
                     // Error display
@@ -535,6 +544,91 @@ struct CLIAccountView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.red.opacity(0.08))
         .cornerRadius(DesignTokens.Radius.small)
+    }
+
+    // MARK: - MCP Server Sync
+
+    private var mcpSyncSection: some View {
+        SettingsSectionCard(
+            title: "cli.mcp_sync_title".localized,
+            subtitle: "cli.mcp_sync_subtitle".localized
+        ) {
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.medium) {
+                SettingToggle(
+                    title: "cli.mcp_auto_sync_title".localized,
+                    description: "cli.mcp_auto_sync_description".localized,
+                    badge: .new,
+                    isOn: Binding(
+                        get: { SharedDataStore.shared.loadAutoSyncMCPEnabled() },
+                        set: { enabled in
+                            SharedDataStore.shared.saveAutoSyncMCPEnabled(enabled)
+                        }
+                    )
+                )
+
+                Divider()
+
+                HStack {
+                    Button(action: {
+                        mcpSyncInProgress = true
+                        mcpSyncResult = nil
+                        // Run sync off the main thread to keep UI responsive
+                        DispatchQueue.global(qos: .userInitiated).async {
+                            let result = ClaudeSwitchService.shared.bidirectionalMcpSync()
+                            DispatchQueue.main.async {
+                                mcpSyncResult = result
+                                mcpSyncInProgress = false
+                            }
+                        }
+                    }) {
+                        HStack(spacing: DesignTokens.Spacing.small) {
+                            if mcpSyncInProgress {
+                                ProgressView()
+                                    .scaleEffect(0.7)
+                                    .frame(width: 14, height: 14)
+                            } else {
+                                Image(systemName: "arrow.triangle.2.circlepath")
+                            }
+                            Text("cli.mcp_sync_button".localized)
+                        }
+                    }
+                    .disabled(mcpSyncInProgress)
+
+                    Spacer()
+                }
+
+                // Results display (shown after manual sync)
+                if let result = mcpSyncResult {
+                    if result.hasChanges {
+                        VStack(alignment: .leading, spacing: DesignTokens.Spacing.extraSmall) {
+                            ForEach(result.changes) { change in
+                                HStack(spacing: DesignTokens.Spacing.small) {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundColor(.green)
+                                        .font(.system(size: DesignTokens.Icons.small))
+                                    Text(String(
+                                        format: "cli.mcp_sync_added".localized,
+                                        change.addedServers.joined(separator: ", "),
+                                        change.accountName
+                                    ))
+                                    .font(DesignTokens.Typography.caption)
+                                    .foregroundColor(.secondary)
+                                }
+                            }
+                        }
+                    } else {
+                        HStack(spacing: DesignTokens.Spacing.small) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundColor(.green)
+                                .font(.system(size: DesignTokens.Icons.small))
+                            Text("cli.mcp_sync_no_changes".localized)
+                                .font(DesignTokens.Typography.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // MARK: - Setup Guide Button & Sheet

@@ -233,6 +233,16 @@ class ProfileManager: ObservableObject {
             do {
                 try ClaudeSwitchService.shared.switchToAccount(accountName)
                 LoggingService.shared.log("✓ Switched CLI account to: \(accountName)")
+
+                // Auto-sync MCP servers across all accounts after switch
+                if SharedDataStore.shared.loadAutoSyncMCPEnabled() {
+                    let result = ClaudeSwitchService.shared.bidirectionalMcpSync()
+                    if result.hasChanges {
+                        LoggingService.shared.log(
+                            "Auto-synced MCP servers: \(result.totalSynced) server(s) "
+                            + "across \(result.changes.count) target(s)")
+                    }
+                }
             } catch {
                 LoggingService.shared.logError("Failed to switch CLI account (non-fatal)", error: error)
             }

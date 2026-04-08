@@ -754,6 +754,15 @@
 "cli.guide_note3" = "Settings, scripts, and plugins are shared across accounts via symlinks. Only credentials are unique per account.";
 "cli.guide_note4" = "Files added to ~/.claude/ after linking will not be automatically symlinked to account directories.";
 
+/* CLI MCP Server Sync */
+"cli.mcp_sync_title" = "MCP Server Sync";
+"cli.mcp_sync_subtitle" = "Keep MCP servers consistent across all CLI accounts";
+"cli.mcp_auto_sync_title" = "Auto-sync on account switch";
+"cli.mcp_auto_sync_description" = "Automatically distribute new MCP server configs to all linked accounts when switching";
+"cli.mcp_sync_button" = "Sync MCP Servers Now";
+"cli.mcp_sync_no_changes" = "All accounts already in sync";
+"cli.mcp_sync_added" = "Added %@ to %@";
+
 /* ==================== */
 /* MARK: - Additional Keys */
 /* ==================== */

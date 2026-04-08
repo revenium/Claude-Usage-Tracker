@@ -64,6 +64,9 @@ class SharedDataStore {
         // Auto-Switch Profile
         static let autoSwitchProfileEnabled = "autoSwitchProfileEnabled"
 
+        // MCP Server Sync
+        static let autoSyncMCPEnabled = "autoSyncMCPEnabled"
+
         // Popover Settings
         static let popoverShowRemainingTime = "popoverShowRemainingTime" // legacy bool key
         static let popoverTimeDisplay = "popoverTimeDisplay"
@@ -480,6 +483,18 @@ class SharedDataStore {
 
     func loadAutoSwitchProfileEnabled() -> Bool {
         return defaults.bool(forKey: Keys.autoSwitchProfileEnabled)
+    }
+
+    // MARK: - MCP Server Sync
+
+    func saveAutoSyncMCPEnabled(_ enabled: Bool) {
+        defaults.set(enabled, forKey: Keys.autoSyncMCPEnabled)
+    }
+
+    func loadAutoSyncMCPEnabled() -> Bool {
+        // Default to true (enabled) for new installs — UserDefaults.bool returns false for unset keys
+        if defaults.object(forKey: Keys.autoSyncMCPEnabled) == nil { return true }
+        return defaults.bool(forKey: Keys.autoSyncMCPEnabled)
     }
 
     // MARK: - Popover Settings

@@ -154,7 +154,7 @@ class ClaudeSwitchService {
 
         // Merge mcpServers from ~/.claude.json (where `claude mcp add` stores config)
         // into the account's .claude.json so MCP servers carry over seamlessly.
-        mergeMcpServers(into: destClaudeJson)
+        mergeMcpServersFromHome(into: destClaudeJson)
 
         LoggingService.shared.log(
             "ClaudeSwitchService: Linked account '\(finalDirName)' "
@@ -260,77 +260,145 @@ class ClaudeSwitchService {
 
     // MARK: - MCP Server Sync
 
-    /// Syncs mcpServers from ~/.claude.json into a single account's .claude.json.
-    /// Safe to call repeatedly — merges without overwriting existing per-account MCPs.
-    func syncMcpServers(forAccount name: String) -> Int {
-        let destJson = accountDirectoryPath(for: name).appendingPathComponent(".claude.json")
-        return mergeMcpServers(into: destJson)
-    }
+    /// Performs bidirectional MCP server sync: collects mcpServers from ~/.claude.json
+    /// and ALL linked account directories, builds the union, and writes missing servers
+    /// back to every source. Returns a detailed result of what changed where.
+    func bidirectionalMcpSync() -> McpSyncResult {
+        // 1. Collect MCPs from all sources
+        var unionMcps: [String: Any] = [:]
+        var sourceMcpSets: [(label: String, url: URL, mcps: [String: Any])] = []
 
-    /// Syncs mcpServers from ~/.claude.json into ALL linked accounts.
-    /// Returns the number of accounts updated.
-    func syncMcpServersToAllAccounts() -> Int {
-        var updatedCount = 0
-        for name in availableAccountNames() {
-            let merged = syncMcpServers(forAccount: name)
-            if merged > 0 { updatedCount += 1 }
+        // Home ~/.claude.json
+        if let mcps = readMcpServers(from: homeClaudeJson) {
+            sourceMcpSets.append((label: "~/.claude.json", url: homeClaudeJson, mcps: mcps))
+            for (name, config) in mcps where unionMcps[name] == nil {
+                unionMcps[name] = config
+            }
         }
-        if updatedCount > 0 {
+
+        // Each account directory
+        for accountName in availableAccountNames() {
+            let accountJson = accountDirectoryPath(for: accountName)
+                .appendingPathComponent(".claude.json")
+            if let mcps = readMcpServers(from: accountJson) {
+                sourceMcpSets.append((label: accountName, url: accountJson, mcps: mcps))
+                for (name, config) in mcps where unionMcps[name] == nil {
+                    unionMcps[name] = config
+                }
+            }
+        }
+
+        guard !unionMcps.isEmpty else {
+            return McpSyncResult(changes: [])
+        }
+
+        // 2. Write missing servers back to each source
+        var changes: [McpSyncResult.AccountChange] = []
+
+        for source in sourceMcpSets {
+            let missing = unionMcps.keys.filter { source.mcps[$0] == nil }
+            guard !missing.isEmpty else { continue }
+
+            let addedCount = writeMcpServers(unionMcps, into: source.url)
+            if addedCount > 0 {
+                changes.append(McpSyncResult.AccountChange(
+                    accountName: source.label,
+                    addedServers: missing.sorted()
+                ))
+            }
+        }
+
+        // Also handle sources that had NO mcpServers at all (not in sourceMcpSets)
+        // — e.g., ~/.claude.json didn't exist or had no mcpServers key
+        if !sourceMcpSets.contains(where: { $0.label == "~/.claude.json" }) {
+            let added = writeMcpServers(unionMcps, into: homeClaudeJson)
+            if added > 0 {
+                changes.append(McpSyncResult.AccountChange(
+                    accountName: "~/.claude.json",
+                    addedServers: unionMcps.keys.sorted()
+                ))
+            }
+        }
+        for accountName in availableAccountNames() {
+            if !sourceMcpSets.contains(where: { $0.label == accountName }) {
+                let accountJson = accountDirectoryPath(for: accountName)
+                    .appendingPathComponent(".claude.json")
+                let added = writeMcpServers(unionMcps, into: accountJson)
+                if added > 0 {
+                    changes.append(McpSyncResult.AccountChange(
+                        accountName: accountName,
+                        addedServers: unionMcps.keys.sorted()
+                    ))
+                }
+            }
+        }
+
+        if !changes.isEmpty {
             LoggingService.shared.log(
-                "ClaudeSwitchService: Synced MCP servers to \(updatedCount) account(s)")
+                "ClaudeSwitchService: Bidirectional MCP sync — "
+                + "\(changes.reduce(0) { $0 + $1.addedServers.count }) server(s) across "
+                + "\(changes.count) target(s)")
         }
-        return updatedCount
+
+        return McpSyncResult(changes: changes)
     }
 
     // MARK: - Private Helpers
 
-    /// Reads mcpServers from ~/.claude.json and merges them into a destination .claude.json.
-    /// Returns the number of MCP servers merged (0 if nothing to merge or source missing).
-    @discardableResult
-    private func mergeMcpServers(into destClaudeJson: URL) -> Int {
-        // Read source mcpServers from ~/.claude.json
-        guard FileManager.default.fileExists(atPath: homeClaudeJson.path),
-              let sourceData = try? Data(contentsOf: homeClaudeJson),
-              let sourceDict = try? JSONSerialization.jsonObject(with: sourceData) as? [String: Any],
-              let sourceMcps = sourceDict["mcpServers"] as? [String: Any],
-              !sourceMcps.isEmpty else {
-            return 0
+    /// Reads the mcpServers dictionary from a .claude.json file.
+    private func readMcpServers(from url: URL) -> [String: Any]? {
+        guard FileManager.default.fileExists(atPath: url.path),
+              let data = try? Data(contentsOf: url),
+              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let mcps = dict["mcpServers"] as? [String: Any],
+              !mcps.isEmpty else {
+            return nil
         }
+        return mcps
+    }
 
-        // Read or initialize destination .claude.json
+    /// Writes the union of MCP servers into a .claude.json file, preserving all other keys.
+    /// Only adds servers that are missing. Returns the number of servers added.
+    @discardableResult
+    private func writeMcpServers(_ unionMcps: [String: Any], into url: URL) -> Int {
+        // Read or initialize destination
         var destDict: [String: Any] = [:]
-        if FileManager.default.fileExists(atPath: destClaudeJson.path),
-           let destData = try? Data(contentsOf: destClaudeJson),
-           let parsed = try? JSONSerialization.jsonObject(with: destData) as? [String: Any] {
+        if FileManager.default.fileExists(atPath: url.path),
+           let data = try? Data(contentsOf: url),
+           let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
             destDict = parsed
         }
 
-        // Merge: source MCPs fill in what's missing, existing account MCPs take precedence
         var existingMcps = destDict["mcpServers"] as? [String: Any] ?? [:]
-        var mergedCount = 0
-        for (name, config) in sourceMcps where existingMcps[name] == nil {
+        var addedCount = 0
+        for (name, config) in unionMcps where existingMcps[name] == nil {
             existingMcps[name] = config
-            mergedCount += 1
+            addedCount += 1
         }
 
-        guard mergedCount > 0 else { return 0 }
+        guard addedCount > 0 else { return 0 }
 
         destDict["mcpServers"] = existingMcps
 
-        // Write back
         do {
             let jsonData = try JSONSerialization.data(
                 withJSONObject: destDict, options: [.prettyPrinted, .sortedKeys])
-            try jsonData.write(to: destClaudeJson, options: .atomic)
-            LoggingService.shared.log(
-                "ClaudeSwitchService: Merged \(mergedCount) MCP server(s) into \(destClaudeJson.lastPathComponent)")
+            try jsonData.write(to: url, options: .atomic)
         } catch {
             LoggingService.shared.log(
-                "ClaudeSwitchService: Failed to merge MCP servers: \(error.localizedDescription)")
+                "ClaudeSwitchService: Failed to write MCP servers to \(url.lastPathComponent): "
+                + "\(error.localizedDescription)")
             return 0
         }
 
-        return mergedCount
+        return addedCount
+    }
+
+    /// Merges mcpServers from ~/.claude.json into a single destination (used during linkAccount).
+    @discardableResult
+    private func mergeMcpServersFromHome(into destClaudeJson: URL) -> Int {
+        guard let homeMcps = readMcpServers(from: homeClaudeJson) else { return 0 }
+        return writeMcpServers(homeMcps, into: destClaudeJson)
     }
 
     private func hasCredentialFiles(in dir: URL) -> Bool {
@@ -467,6 +535,17 @@ struct LinkAccountResult {
     let directoryPath: String
     let symlinkCount: Int
     let skippedFiles: [String]
+}
+
+struct McpSyncResult {
+    struct AccountChange: Identifiable {
+        let accountName: String
+        let addedServers: [String]
+        var id: String { accountName }
+    }
+    let changes: [AccountChange]
+    var totalSynced: Int { changes.reduce(0) { $0 + $1.addedServers.count } }
+    var hasChanges: Bool { totalSynced > 0 }
 }
 
 enum CredentialCheckResult {
