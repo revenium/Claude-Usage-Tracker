@@ -69,6 +69,14 @@ class ClaudeSwitchService {
         return trimmed.isEmpty ? UUID().uuidString.prefix(8).lowercased() : trimmed
     }
 
+    /// Returns the directory name that would be created for the given profile name,
+    /// including any numeric suffix to avoid collisions. Used by UI to show accurate
+    /// preview before linking. Returns the sanitized base name if resolution fails.
+    func previewDirectoryName(for profileName: String) -> String {
+        let base = sanitizeProfileName(profileName)
+        return (try? resolveDirectoryName(baseName: base)) ?? base
+    }
+
     // MARK: - Discovery
 
     /// Lists available account names from ~/.claude-accounts/ that have credentials
@@ -130,6 +138,11 @@ class ClaudeSwitchService {
         let finalDirName = try resolveDirectoryName(baseName: dirName)
         let finalAccountDir = accountDirectoryPath(for: finalDirName)
 
+        // Clear stale symlinks if reusing a credential-less directory
+        if FileManager.default.fileExists(atPath: finalAccountDir.path) {
+            clearStaleSymlinks(in: finalAccountDir)
+        }
+
         // Create account directory
         try FileManager.default.createDirectory(
             at: finalAccountDir, withIntermediateDirectories: true)
@@ -176,9 +189,10 @@ class ClaudeSwitchService {
             try FileManager.default.removeItem(at: dir)
         }
 
-        // Clear .last-account if it references this account
+        // Clear .last-account and unset tmux env if this was the active account
         if currentAccountName() == directoryName {
             try? FileManager.default.removeItem(at: lastAccountFile)
+            unpropagateFromTmux()
         }
 
         LoggingService.shared.log(
@@ -502,6 +516,49 @@ class ClaudeSwitchService {
                 at: dir, withIntermediateDirectories: true)
         }
         try name.write(to: lastAccountFile, atomically: true, encoding: .utf8)
+    }
+
+    private func unpropagateFromTmux() {
+        let tmuxPaths = ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux", "/usr/bin/tmux"]
+        guard let tmuxPath = tmuxPaths.first(where: { FileManager.default.fileExists(atPath: $0) }) else {
+            LoggingService.shared.log("ClaudeSwitchService: tmux not found — skipping env unset")
+            return
+        }
+
+        DispatchQueue.global(qos: .utility).async {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: tmuxPath)
+            process.arguments = ["set-environment", "-gu", "CLAUDE_CONFIG_DIR"]
+            process.standardOutput = Pipe()
+            process.standardError = Pipe()
+
+            do {
+                try process.run()
+                process.waitUntilExit()
+                if process.terminationStatus == 0 {
+                    LoggingService.shared.log(
+                        "ClaudeSwitchService: tmux CLAUDE_CONFIG_DIR unset")
+                } else {
+                    LoggingService.shared.log(
+                        "ClaudeSwitchService: tmux set-environment -gu failed "
+                        + "(exit \(process.terminationStatus)) — ignored")
+                }
+            } catch {
+                LoggingService.shared.log("ClaudeSwitchService: tmux unset command failed — ignored")
+            }
+        }
+    }
+
+    private func clearStaleSymlinks(in dir: URL) {
+        guard let contents = try? FileManager.default.contentsOfDirectory(
+            at: dir, includingPropertiesForKeys: [.isSymbolicLinkKey], options: []
+        ) else { return }
+        for item in contents {
+            let vals = try? item.resourceValues(forKeys: [.isSymbolicLinkKey])
+            if vals?.isSymbolicLink == true {
+                try? FileManager.default.removeItem(at: item)
+            }
+        }
     }
 
     private func propagateToTmux(configDir: String) {

@@ -771,7 +771,7 @@ struct CLIAccountView: View {
 
     private var sanitizedName: String {
         guard let name = profileManager.activeProfile?.name else { return "" }
-        return ClaudeSwitchService.shared.sanitizeProfileName(name)
+        return ClaudeSwitchService.shared.previewDirectoryName(for: name)
     }
 
     /// Detects the user's shell and returns the appropriate config file name
@@ -789,7 +789,16 @@ struct CLIAccountView: View {
     }
 
     private var shellSnippet: String {
-        """
+        let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+        if shell.contains("fish") {
+            return """
+            # Claude CLI account auto-switch (one-time setup, applies to all accounts)
+            if test -f ~/.claude-tokens/.last-account
+                set -gx CLAUDE_CONFIG_DIR "$HOME/.claude-accounts/"(cat ~/.claude-tokens/.last-account)
+            end
+            """
+        }
+        return """
         # Claude CLI account auto-switch (one-time setup, applies to all accounts)
         if [ -f ~/.claude-tokens/.last-account ]; then
           export CLAUDE_CONFIG_DIR="$HOME/.claude-accounts/$(cat ~/.claude-tokens/.last-account)"
