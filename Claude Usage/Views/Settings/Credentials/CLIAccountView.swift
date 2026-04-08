@@ -736,19 +736,20 @@ struct CLIAccountView: View {
 
         do {
             try ClaudeSwitchService.shared.unlinkAccount(directoryName: accountName)
+
+            var updated = profile
+            updated.cliAccountName = nil
+            updated.hasCliAccount = false
+            updated.cliAccountSyncedAt = nil
+            updated.cliCredentialsJSON = nil
+            profileManager.updateProfile(updated)
+
+            cliAccountInfo = nil
+            credentialCheckResult = .notFound
         } catch {
+            syncError = "Failed to remove account directory: \(error.localizedDescription)"
             LoggingService.shared.logError("CLIAccountView: Unlink directory removal failed: \(error.localizedDescription)")
         }
-
-        var updated = profile
-        updated.cliAccountName = nil
-        updated.hasCliAccount = false
-        updated.cliAccountSyncedAt = nil
-        updated.cliCredentialsJSON = nil
-        profileManager.updateProfile(updated)
-
-        cliAccountInfo = nil
-        credentialCheckResult = .notFound
     }
 
     private func checkCredentials() {
