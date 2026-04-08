@@ -20,6 +20,7 @@ struct CLIAccountView: View {
     @State private var credentialCheckResult: CredentialCheckResult = .notFound
     @State private var showUnlinkConfirmation = false
     @State private var showShellIntegration = false
+    @State private var showSetupGuide = false
     @State private var copiedToClipboard = false
     @State private var copiedShellSnippet = false
 
@@ -536,41 +537,143 @@ struct CLIAccountView: View {
         .cornerRadius(DesignTokens.Radius.small)
     }
 
-    // MARK: - Info Card
+    // MARK: - Setup Guide Button & Sheet
 
     private var infoCard: some View {
-        SettingsContentCard {
-            VStack(alignment: .leading, spacing: DesignTokens.Spacing.medium) {
-                HStack(spacing: DesignTokens.Spacing.small) {
-                    Image(systemName: "info.circle.fill")
-                        .foregroundColor(.blue)
-                        .font(.system(size: DesignTokens.Icons.standard))
-                    Text("cli.about_title".localized)
-                        .font(DesignTokens.Typography.sectionTitle)
-                }
-
-                VStack(alignment: .leading, spacing: DesignTokens.Spacing.extraSmall) {
-                    Text("cli.benefits".localized)
-                        .font(DesignTokens.Typography.body)
-                        .fontWeight(.medium)
-                        .foregroundColor(.secondary)
-
-                    VStack(alignment: .leading, spacing: DesignTokens.Spacing.extraSmall) {
-                        BulletPoint("cli.benefit_1".localized)
-                        BulletPoint("cli.benefit_2".localized)
-                        BulletPoint("cli.benefit_3".localized)
-                    }
-                    .font(DesignTokens.Typography.caption)
+        Button(action: { showSetupGuide = true }) {
+            HStack(spacing: DesignTokens.Spacing.small) {
+                Image(systemName: "book.pages")
+                    .font(.system(size: DesignTokens.Icons.standard))
+                    .foregroundColor(.accentColor)
+                Text("cli.guide_button".localized)
+                    .font(DesignTokens.Typography.body)
+                    .foregroundColor(.accentColor)
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: DesignTokens.Icons.small))
                     .foregroundColor(.secondary)
+            }
+            .padding(DesignTokens.Spacing.medium)
+            .background(DesignTokens.Colors.cardBackground)
+            .cornerRadius(DesignTokens.Radius.card)
+            .overlay(
+                RoundedRectangle(cornerRadius: DesignTokens.Radius.card)
+                    .strokeBorder(DesignTokens.Colors.cardBorder, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .sheet(isPresented: $showSetupGuide) {
+            setupGuideSheet
+        }
+    }
+
+    private var setupGuideSheet: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.section) {
+                // Header
+                HStack {
+                    VStack(alignment: .leading, spacing: DesignTokens.Spacing.extraSmall) {
+                        Text("cli.guide_title".localized)
+                            .font(DesignTokens.Typography.pageTitle)
+                        Text("cli.guide_subtitle".localized)
+                            .font(DesignTokens.Typography.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    Button(action: { showSetupGuide = false }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 20))
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
                 }
 
-                Text("cli.tracking_note".localized)
-                    .font(DesignTokens.Typography.caption)
-                    .foregroundColor(.orange)
-                    .padding(DesignTokens.Spacing.small)
-                    .background(Color.orange.opacity(0.08))
-                    .cornerRadius(DesignTokens.Radius.tiny)
+                // How it works
+                SettingsSectionCard(
+                    title: "cli.guide_how_title".localized,
+                    subtitle: "cli.guide_how_subtitle".localized
+                ) {
+                    VStack(alignment: .leading, spacing: DesignTokens.Spacing.medium) {
+                        guideStep(number: "1", text: "cli.guide_step1".localized)
+                        guideStep(number: "2", text: "cli.guide_step2".localized)
+                        guideStep(number: "3", text: "cli.guide_step3".localized)
+                        guideStep(number: "4", text: "cli.guide_step4".localized)
+                    }
+                }
+
+                // Shell integration
+                SettingsSectionCard(
+                    title: "cli.shell_integration_title".localized,
+                    subtitle: String(format: "cli.shell_integration_explain".localized, shellConfigFile)
+                ) {
+                    VStack(alignment: .leading, spacing: DesignTokens.Spacing.medium) {
+                        Text(shellSnippet)
+                            .font(DesignTokens.Typography.monospaced)
+                            .foregroundColor(.primary)
+                            .padding(DesignTokens.Spacing.small)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.primary.opacity(0.06))
+                            .cornerRadius(DesignTokens.Radius.small)
+
+                        Button(action: { copyShellSnippet() }) {
+                            HStack(spacing: DesignTokens.Spacing.extraSmall) {
+                                Image(systemName: copiedShellSnippet ? "checkmark" : "doc.on.doc")
+                                    .font(.system(size: DesignTokens.Icons.small))
+                                Text(copiedShellSnippet ? "cli.copied".localized : "cli.shell_integration_copy".localized)
+                                    .font(DesignTokens.Typography.body)
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.regular)
+
+                        Text("cli.guide_shell_note".localized)
+                            .font(DesignTokens.Typography.caption)
+                            .foregroundColor(.orange)
+                            .padding(DesignTokens.Spacing.small)
+                            .background(Color.orange.opacity(0.08))
+                            .cornerRadius(DesignTokens.Radius.tiny)
+                    }
+                }
+
+                // Important notes
+                SettingsContentCard {
+                    VStack(alignment: .leading, spacing: DesignTokens.Spacing.medium) {
+                        HStack(spacing: DesignTokens.Spacing.small) {
+                            Image(systemName: "lightbulb.fill")
+                                .foregroundColor(.yellow)
+                                .font(.system(size: DesignTokens.Icons.standard))
+                            Text("cli.guide_notes_title".localized)
+                                .font(DesignTokens.Typography.sectionTitle)
+                        }
+
+                        VStack(alignment: .leading, spacing: DesignTokens.Spacing.extraSmall) {
+                            BulletPoint("cli.guide_note1".localized)
+                            BulletPoint("cli.guide_note2".localized)
+                            BulletPoint("cli.guide_note3".localized)
+                            BulletPoint("cli.guide_note4".localized)
+                        }
+                        .font(DesignTokens.Typography.caption)
+                        .foregroundColor(.secondary)
+                    }
+                }
             }
+            .padding()
+        }
+        .frame(minWidth: 500, minHeight: 500)
+    }
+
+    private func guideStep(number: String, text: String) -> some View {
+        HStack(alignment: .top, spacing: DesignTokens.Spacing.small) {
+            Text(number)
+                .font(.system(size: 14, weight: .bold, design: .rounded))
+                .foregroundColor(.white)
+                .frame(width: 24, height: 24)
+                .background(Color.accentColor)
+                .clipShape(Circle())
+            Text(text)
+                .font(DesignTokens.Typography.body)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 

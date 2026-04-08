@@ -736,6 +736,23 @@
 "cli.multi_profile_required_title" = "Multi-Profile Mode Required";
 "cli.multi_profile_required" = "Enable multi-profile display in Manage Profiles to use CLI account switching.";
 
+/* CLI Setup Guide */
+"cli.guide_button" = "Multi-Account Switching Guide";
+"cli.guide_title" = "Multi-Account CLI Switching";
+"cli.guide_subtitle" = "How profile switching controls your Claude Code CLI account";
+"cli.guide_how_title" = "How It Works";
+"cli.guide_how_subtitle" = "Each profile gets its own CLI credentials";
+"cli.guide_step1" = "Link a CLI account to each profile using the Link CLI Account button. This creates a dedicated configuration directory.";
+"cli.guide_step2" = "Log in to each linked account from your terminal using the provided command. This is a one-time step per account.";
+"cli.guide_step3" = "Add the shell snippet (below) to your shell configuration. This is a one-time step per computer that enables all accounts.";
+"cli.guide_step4" = "Switch the Active Profile in the app. All new terminal sessions will automatically use the corresponding CLI account.";
+"cli.guide_shell_note" = "This snippet only needs to be added once, regardless of how many accounts you link. It reads the active account and sets the environment automatically.";
+"cli.guide_notes_title" = "Good to Know";
+"cli.guide_note1" = "Switching profiles does not affect already-open terminal sessions. Open a new terminal or tmux pane after switching.";
+"cli.guide_note2" = "OAuth tokens refresh automatically. You should not need to re-login unless tokens are revoked.";
+"cli.guide_note3" = "Settings, scripts, and plugins are shared across accounts via symlinks. Only credentials are unique per account.";
+"cli.guide_note4" = "Files added to ~/.claude/ after linking will not be automatically symlinked to account directories.";
+
 /* ==================== */
 /* MARK: - Additional Keys */
 /* ==================== */
