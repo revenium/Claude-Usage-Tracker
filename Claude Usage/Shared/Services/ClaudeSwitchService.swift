@@ -41,6 +41,13 @@ class ClaudeSwitchService {
             .appendingPathComponent(".claude")
     }
 
+    /// The user-level ~/.claude.json where `claude mcp add` stores MCP server config.
+    /// This is distinct from ~/.claude/.claude.json (inside the config directory).
+    private var homeClaudeJson: URL {
+        Constants.ClaudePaths.homeDirectory
+            .appendingPathComponent(".claude.json")
+    }
+
     /// Returns the full path for an account directory
     func accountDirectoryPath(for name: String) -> URL {
         accountsDir.appendingPathComponent(name)
@@ -137,13 +144,17 @@ class ClaudeSwitchService {
         let (symlinkCount, skippedFiles) = try createSymlinks(
             from: claudeDir, to: finalAccountDir)
 
-        // Copy .claude.json as a starting point if it exists
+        // Copy .claude.json as a starting point if it exists (from ~/.claude/.claude.json)
         let sourceClaudeJson = claudeDir.appendingPathComponent(".claude.json")
         let destClaudeJson = finalAccountDir.appendingPathComponent(".claude.json")
         if FileManager.default.fileExists(atPath: sourceClaudeJson.path)
             && !FileManager.default.fileExists(atPath: destClaudeJson.path) {
             try FileManager.default.copyItem(at: sourceClaudeJson, to: destClaudeJson)
         }
+
+        // Merge mcpServers from ~/.claude.json (where `claude mcp add` stores config)
+        // into the account's .claude.json so MCP servers carry over seamlessly.
+        mergeMcpServers(into: destClaudeJson)
 
         LoggingService.shared.log(
             "ClaudeSwitchService: Linked account '\(finalDirName)' "
@@ -247,7 +258,80 @@ class ClaudeSwitchService {
             + "(CLAUDE_CONFIG_DIR=\(configDir))")
     }
 
+    // MARK: - MCP Server Sync
+
+    /// Syncs mcpServers from ~/.claude.json into a single account's .claude.json.
+    /// Safe to call repeatedly — merges without overwriting existing per-account MCPs.
+    func syncMcpServers(forAccount name: String) -> Int {
+        let destJson = accountDirectoryPath(for: name).appendingPathComponent(".claude.json")
+        return mergeMcpServers(into: destJson)
+    }
+
+    /// Syncs mcpServers from ~/.claude.json into ALL linked accounts.
+    /// Returns the number of accounts updated.
+    func syncMcpServersToAllAccounts() -> Int {
+        var updatedCount = 0
+        for name in availableAccountNames() {
+            let merged = syncMcpServers(forAccount: name)
+            if merged > 0 { updatedCount += 1 }
+        }
+        if updatedCount > 0 {
+            LoggingService.shared.log(
+                "ClaudeSwitchService: Synced MCP servers to \(updatedCount) account(s)")
+        }
+        return updatedCount
+    }
+
     // MARK: - Private Helpers
+
+    /// Reads mcpServers from ~/.claude.json and merges them into a destination .claude.json.
+    /// Returns the number of MCP servers merged (0 if nothing to merge or source missing).
+    @discardableResult
+    private func mergeMcpServers(into destClaudeJson: URL) -> Int {
+        // Read source mcpServers from ~/.claude.json
+        guard FileManager.default.fileExists(atPath: homeClaudeJson.path),
+              let sourceData = try? Data(contentsOf: homeClaudeJson),
+              let sourceDict = try? JSONSerialization.jsonObject(with: sourceData) as? [String: Any],
+              let sourceMcps = sourceDict["mcpServers"] as? [String: Any],
+              !sourceMcps.isEmpty else {
+            return 0
+        }
+
+        // Read or initialize destination .claude.json
+        var destDict: [String: Any] = [:]
+        if FileManager.default.fileExists(atPath: destClaudeJson.path),
+           let destData = try? Data(contentsOf: destClaudeJson),
+           let parsed = try? JSONSerialization.jsonObject(with: destData) as? [String: Any] {
+            destDict = parsed
+        }
+
+        // Merge: source MCPs fill in what's missing, existing account MCPs take precedence
+        var existingMcps = destDict["mcpServers"] as? [String: Any] ?? [:]
+        var mergedCount = 0
+        for (name, config) in sourceMcps where existingMcps[name] == nil {
+            existingMcps[name] = config
+            mergedCount += 1
+        }
+
+        guard mergedCount > 0 else { return 0 }
+
+        destDict["mcpServers"] = existingMcps
+
+        // Write back
+        do {
+            let jsonData = try JSONSerialization.data(
+                withJSONObject: destDict, options: [.prettyPrinted, .sortedKeys])
+            try jsonData.write(to: destClaudeJson, options: .atomic)
+            LoggingService.shared.log(
+                "ClaudeSwitchService: Merged \(mergedCount) MCP server(s) into \(destClaudeJson.lastPathComponent)")
+        } catch {
+            LoggingService.shared.log(
+                "ClaudeSwitchService: Failed to merge MCP servers: \(error.localizedDescription)")
+            return 0
+        }
+
+        return mergedCount
+    }
 
     private func hasCredentialFiles(in dir: URL) -> Bool {
         let credFile = dir.appendingPathComponent(".credentials.json")
