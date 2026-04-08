@@ -210,8 +210,20 @@ final class StatusBarUIManager {
         observeAppearanceChanges()
     }
 
+    /// Adds a thin green underline to an image to indicate the active profile
+    private func addGreenUnderline(to image: NSImage) -> NSImage {
+        let newImage = NSImage(size: image.size)
+        newImage.lockFocus()
+        defer { newImage.unlockFocus() }
+        // Shift content up 2px to create a 1px gap above the underline
+        image.draw(at: NSPoint(x: 0, y: 2), from: .zero, operation: .copy, fraction: 1.0)
+        NSColor.systemGreen.setFill()
+        NSBezierPath(rect: NSRect(x: 1, y: 0, width: image.size.width - 2, height: 1)).fill()
+        return newImage
+    }
+
     /// Updates all multi-profile status items
-    func updateMultiProfileButtons(profiles: [Profile], config: MultiProfileDisplayConfig) {
+    func updateMultiProfileButtons(profiles: [Profile], config: MultiProfileDisplayConfig, activeProfileId: UUID? = nil) {
         guard isMultiProfileMode else { return }
 
         for profile in profiles where profile.isSelectedForDisplay {
@@ -225,7 +237,7 @@ final class StatusBarUIManager {
 
             // Get usage data for this profile
             let usage = profile.claudeUsage ?? ClaudeUsage.empty
-            let showRemaining = profile.iconConfig.showRemainingPercentage
+            let showRemaining = config.showRemainingPercentage
 
             // Calculate percentages
             let sessionUsed = usage.effectiveSessionPercentage
@@ -363,8 +375,14 @@ final class StatusBarUIManager {
                 )
             }
 
-            image.isTemplate = useMonochrome && !config.showPaceMarker
-            button.image = image
+            if profile.id == activeProfileId {
+                let underlinedImage = addGreenUnderline(to: image)
+                underlinedImage.isTemplate = false
+                button.image = underlinedImage
+            } else {
+                image.isTemplate = useMonochrome && !config.showPaceMarker
+                button.image = image
+            }
         }
     }
 

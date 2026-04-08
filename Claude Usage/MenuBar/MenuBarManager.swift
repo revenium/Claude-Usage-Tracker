@@ -587,7 +587,8 @@ class MenuBarManager: NSObject, ObservableObject {
             let config = profileManager.multiProfileConfig
             statusBarUIManager?.updateMultiProfileButtons(
                 profiles: profileManager.profiles,
-                config: config
+                config: config,
+                activeProfileId: profileManager.activeProfile?.id
             )
         } else {
             // Single profile mode - use the standard update
@@ -814,7 +815,7 @@ class MenuBarManager: NSObject, ObservableObject {
         // Defer icon update to next run loop iteration to let NSStatusBar finalize layout
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            self.statusBarUIManager?.updateMultiProfileButtons(profiles: self.profileManager.profiles, config: config)
+            self.statusBarUIManager?.updateMultiProfileButtons(profiles: self.profileManager.profiles, config: config, activeProfileId: self.profileManager.activeProfile?.id)
         }
 
         LoggingService.shared.log("MenuBarManager: Multi-profile mode enabled with \(selectedProfiles.count) profiles, style=\(config.iconStyle.rawValue)")
@@ -929,7 +930,8 @@ class MenuBarManager: NSObject, ObservableObject {
                 let config = self.profileManager.multiProfileConfig
                 self.statusBarUIManager?.updateMultiProfileButtons(
                     profiles: self.profileManager.profiles,
-                    config: config
+                    config: config,
+                    activeProfileId: self.profileManager.activeProfile?.id
                 )
                 self.consecutiveRefreshFailures = 0
                 self.lastRefreshError = nil

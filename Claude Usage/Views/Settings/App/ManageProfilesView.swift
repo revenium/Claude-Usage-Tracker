@@ -224,6 +224,21 @@ struct ManageProfilesView: View {
                                 )
                             )
 
+                            // Show Remaining Percentage Toggle
+                            SettingToggle(
+                                title: "appearance.show_remaining_title".localized,
+                                description: "appearance.show_remaining_description".localized,
+                                isOn: Binding(
+                                    get: { profileManager.multiProfileConfig.showRemainingPercentage },
+                                    set: { showRemaining in
+                                        var config = profileManager.multiProfileConfig
+                                        config.showRemainingPercentage = showRemaining
+                                        profileManager.updateMultiProfileConfig(config)
+                                        NotificationCenter.default.post(name: .displayModeChanged, object: nil)
+                                    }
+                                )
+                            )
+
                             // Info message
                             HStack(alignment: .top, spacing: 8) {
                                 Image(systemName: "info.circle.fill")
