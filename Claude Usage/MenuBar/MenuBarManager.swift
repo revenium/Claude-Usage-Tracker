@@ -354,10 +354,16 @@ class MenuBarManager: NSObject, ObservableObject {
         restartAutoRefreshWithInterval(profile.refreshInterval)
 
         // 3. Update menu bar based on current display mode
-        // IMPORTANT: In multi-profile mode, we update all icons, not just switch config
         if profileManager.displayMode == .multi {
-            // Multi-profile mode - refresh all profile icons
-            setupMultiProfileMode()
+            // Multi-profile mode: update button images in-place — do NOT call setupMultiProfileMode()
+            // here because that tears down and recreates all NSStatusItems, which causes macOS to
+            // assign new internal window IDs even when autosaveNames are identical.  Tools like
+            // Bartender / Ice track items by those IDs, so rebuilding defeats the static-ID goal.
+            // The set of displayed profiles hasn't changed; only the data needs refreshing.
+            let config = profileManager.multiProfileConfig
+            // Use profile.id (the parameter) rather than profileManager.activeProfile?.id to
+            // avoid a TOCTOU race where the published activeProfile may not yet reflect the switch.
+            statusBarUIManager?.updateMultiProfileButtons(profiles: profileManager.profiles, config: config, activeProfileId: profile.id)
         } else {
             // Single profile mode - update menu bar configuration
             updateMenuBarDisplay(with: profile.iconConfig)
