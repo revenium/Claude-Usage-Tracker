@@ -10,6 +10,10 @@ import Combine
 
 /// Manages multiple menu bar status items for different metrics
 final class StatusBarUIManager {
+    // Fixed UUID used as the dictionary key for the "no profiles selected" placeholder item.
+    // Using a constant instead of UUID() prevents a new random key on every call to setupMultiProfile.
+    private static let multiProfileDefaultPlaceholderID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+
     // Dictionary to hold multiple status items keyed by metric type (single profile mode)
     private var statusItems: [MenuBarMetricType: NSStatusItem] = [:]
 
@@ -45,6 +49,8 @@ final class StatusBarUIManager {
         if config.enabledMetrics.isEmpty {
             // No credentials/metrics - show default app logo
             let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+            // Stable identifier so Bartender and similar tools can reliably track this item
+            statusItem.autosaveName = "claude-usage-tracker.session"
 
             if let button = statusItem.button {
                 button.action = action
@@ -62,6 +68,8 @@ final class StatusBarUIManager {
             // Create status items for enabled metrics
             for metricConfig in config.enabledMetrics {
                 let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+                // Stable identifier so Bartender and similar tools can reliably track this item
+                statusItem.autosaveName = "claude-usage-tracker.\(metricConfig.metricType.rawValue)"
 
                 if let button = statusItem.button {
                     button.action = action
@@ -111,6 +119,8 @@ final class StatusBarUIManager {
         let itemsToAdd = newMetricTypes.subtracting(currentMetricTypes)
         for metricType in itemsToAdd {
             let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+            // Stable identifier so Bartender and similar tools can reliably track this item
+            statusItem.autosaveName = "claude-usage-tracker.\(metricType.rawValue)"
 
             if let button = statusItem.button {
                 button.action = action
@@ -179,6 +189,8 @@ final class StatusBarUIManager {
         if selectedProfiles.isEmpty {
             // No profiles selected - show default logo
             let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+            // Stable identifier so Bartender and similar tools can reliably track this item
+            statusItem.autosaveName = "claude-usage-tracker.multi.default"
             if let button = statusItem.button {
                 button.action = action
                 button.target = target
@@ -186,13 +198,15 @@ final class StatusBarUIManager {
             } else {
                 LoggingService.shared.logWarning("Multi-profile status bar button is nil - screens: \(NSScreen.screens.count)")
             }
-            // Use a placeholder UUID for default logo
-            multiProfileStatusItems[UUID()] = statusItem
+            // Use a fixed placeholder UUID (stable across calls) for the default logo item
+            multiProfileStatusItems[Self.multiProfileDefaultPlaceholderID] = statusItem
             LoggingService.shared.logUIEvent("Multi-profile: No profiles selected, showing default logo")
         } else {
             // Create one status item per selected profile
             for profile in selectedProfiles {
                 let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+                // Stable identifier so Bartender and similar tools can reliably track this item
+                statusItem.autosaveName = "claude-usage-tracker.profile.\(profile.id.uuidString)"
 
                 if let button = statusItem.button {
                     button.action = action
@@ -210,13 +224,17 @@ final class StatusBarUIManager {
         observeAppearanceChanges()
     }
 
-    /// Adds a thin green underline to an image to indicate the active profile
+    /// Adds a thin green underline to an image to indicate the active profile.
+    /// The canvas is 2pts taller than the source so the icon shifted up by 2pts is
+    /// not clipped. The 1pt underline occupies the bottom row of the original height.
     private func addGreenUnderline(to image: NSImage) -> NSImage {
-        let newImage = NSImage(size: image.size)
+        let newSize = NSSize(width: image.size.width, height: image.size.height + 2)
+        let newImage = NSImage(size: newSize)
         newImage.lockFocus()
         defer { newImage.unlockFocus() }
-        // Shift content up 2px to create a 1px gap above the underline
-        image.draw(at: NSPoint(x: 0, y: 2), from: .zero, operation: .copy, fraction: 1.0)
+        // Draw source image shifted up by 2pts (creating a gap above the underline).
+        // NSRect.zero passed as `from:` is AppKit's sentinel meaning "draw entire image".
+        image.draw(at: NSPoint(x: 0, y: 2), from: NSRect(origin: .zero, size: image.size), operation: .copy, fraction: 1.0)
         NSColor.systemGreen.setFill()
         NSBezierPath(rect: NSRect(x: 1, y: 0, width: image.size.width - 2, height: 1)).fill()
         return newImage
@@ -375,7 +393,8 @@ final class StatusBarUIManager {
                 )
             }
 
-            if profile.id == activeProfileId {
+            let isActive = profile.id == activeProfileId
+            if isActive {
                 let underlinedImage = addGreenUnderline(to: image)
                 underlinedImage.isTemplate = false
                 button.image = underlinedImage
