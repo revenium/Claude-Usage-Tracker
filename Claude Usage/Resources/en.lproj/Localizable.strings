@@ -717,7 +717,7 @@
 "cli.setup_complete_title" = "Directory Created";
 "cli.setup_complete_subtitle" = "Complete setup by logging in with your Claude account";
 "cli.setup_step1" = "Copy and run this command in your terminal:";
-"cli.setup_step2" = "Log in with the Claude account you want to use for this profile.";
+"cli.setup_step2" = "Once Claude opens, type /login and log in with the account you want to use for this profile.";
 "cli.setup_step3" = "After logging in, click below to verify credentials were saved:";
 "cli.copy_command" = "Copy";
 "cli.check_credentials" = "Check for Credentials";

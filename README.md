@@ -164,7 +164,7 @@ open "Claude Usage.xcodeproj"
 
 1. **Install Claude Code** (if not already installed)
    - Download from [claude.com/claude-code](https://claude.com/claude-code)
-   - Log in using `claude login`
+   - Open Claude Code and type `/login` to authenticate
 
 2. **Launch Claude Usage Tracker**
    - The app automatically detects your Claude Code Account

@@ -270,7 +270,7 @@ struct CLIAccountView: View {
 
                         // Command display
                         HStack {
-                            Text("CLAUDE_CONFIG_DIR=~/.claude-accounts/\(accountName) claude login")
+                            Text("CLAUDE_CONFIG_DIR=~/.claude-accounts/\(accountName) claude")
                                 .font(DesignTokens.Typography.monospaced)
                                 .foregroundColor(.primary)
                                 .padding(DesignTokens.Spacing.small)
@@ -278,7 +278,7 @@ struct CLIAccountView: View {
                             Spacer()
 
                             Button(action: {
-                                copyToClipboard("CLAUDE_CONFIG_DIR=~/.claude-accounts/\(accountName) claude login")
+                                copyToClipboard("CLAUDE_CONFIG_DIR=~/.claude-accounts/\(accountName) claude")
                             }) {
                                 HStack(spacing: DesignTokens.Spacing.extraSmall) {
                                     Image(systemName: copiedToClipboard ? "checkmark" : "doc.on.doc")

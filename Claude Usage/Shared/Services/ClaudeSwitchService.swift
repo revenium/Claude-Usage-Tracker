@@ -168,16 +168,20 @@ class ClaudeSwitchService {
         let dirName = sanitizeProfileName(profileName)
         let accountDir = accountDirectoryPath(for: dirName)
 
-        // Handle name collision with existing directory
+        // Resolve directory name (reuses existing directory if present)
         let finalDirName = try resolveDirectoryName(baseName: dirName)
         let finalAccountDir = accountDirectoryPath(for: finalDirName)
 
-        // Clear stale symlinks if reusing a credential-less directory
-        if FileManager.default.fileExists(atPath: finalAccountDir.path) {
+        // Check if this is an existing directory that already has credentials
+        let existingWithCreds = FileManager.default.fileExists(atPath: finalAccountDir.path)
+            && hasCredentialFiles(in: finalAccountDir)
+
+        // Clear stale symlinks only for credential-less directories (e.g., previous failed link)
+        if FileManager.default.fileExists(atPath: finalAccountDir.path) && !existingWithCreds {
             clearStaleSymlinks(in: finalAccountDir)
         }
 
-        // Create account directory
+        // Create account directory (no-op if it already exists)
         try FileManager.default.createDirectory(
             at: finalAccountDir, withIntermediateDirectories: true)
 
@@ -187,25 +191,29 @@ class ClaudeSwitchService {
                 at: tokensDir, withIntermediateDirectories: true)
         }
 
-        // Symlink shared config from ~/.claude/
+        // Symlink shared config from ~/.claude/ (skips items that already exist)
         let (symlinkCount, skippedFiles) = try createSymlinks(
             from: claudeDir, to: finalAccountDir)
 
-        // Copy .claude.json as a starting point if it exists (from ~/.claude/.claude.json)
-        let sourceClaudeJson = claudeDir.appendingPathComponent(".claude.json")
         let destClaudeJson = finalAccountDir.appendingPathComponent(".claude.json")
-        if FileManager.default.fileExists(atPath: sourceClaudeJson.path)
-            && !FileManager.default.fileExists(atPath: destClaudeJson.path) {
-            try FileManager.default.copyItem(at: sourceClaudeJson, to: destClaudeJson)
-        }
 
-        // Strip oauthAccount from the copy — user hasn't logged in to this account yet
-        if FileManager.default.fileExists(atPath: destClaudeJson.path),
-           let data = try? Data(contentsOf: destClaudeJson),
-           var json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            json.removeValue(forKey: "oauthAccount")
-            if let cleaned = try? JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys]) {
-                try? cleaned.write(to: destClaudeJson, options: .atomic)
+        // Only set up .claude.json for new directories — don't touch existing credentials
+        if !existingWithCreds {
+            // Copy .claude.json as a starting point if it exists (from ~/.claude/.claude.json)
+            let sourceClaudeJson = claudeDir.appendingPathComponent(".claude.json")
+            if FileManager.default.fileExists(atPath: sourceClaudeJson.path)
+                && !FileManager.default.fileExists(atPath: destClaudeJson.path) {
+                try FileManager.default.copyItem(at: sourceClaudeJson, to: destClaudeJson)
+            }
+
+            // Strip oauthAccount from the copy — user hasn't logged in to this account yet
+            if FileManager.default.fileExists(atPath: destClaudeJson.path),
+               let data = try? Data(contentsOf: destClaudeJson),
+               var json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                json.removeValue(forKey: "oauthAccount")
+                if let cleaned = try? JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys]) {
+                    try? cleaned.write(to: destClaudeJson, options: .atomic)
+                }
             }
         }
 
@@ -487,28 +495,9 @@ class ClaudeSwitchService {
     }
 
     private func resolveDirectoryName(baseName: String) throws -> String {
-        let baseDir = accountDirectoryPath(for: baseName)
-        if !FileManager.default.fileExists(atPath: baseDir.path) {
-            return baseName
-        }
-
-        // Directory exists but has no credentials — safe to reuse (e.g., previous failed link)
-        if !hasCredentialFiles(in: baseDir) {
-            return baseName
-        }
-
-        // Directory exists with credentials — find a unique suffix
-        for suffix in 2...99 {
-            let candidate = "\(baseName)-\(suffix)"
-            let candidateDir = accountDirectoryPath(for: candidate)
-            if !FileManager.default.fileExists(atPath: candidateDir.path) {
-                return candidate
-            }
-        }
-
-        throw ClaudeSwitchError.directoryCreationFailed(
-            "Could not find a unique directory name for '\(baseName)'"
-        )
+        // Always reuse an existing directory with the same name.
+        // If it already has credentials, linkAccount will adopt it as-is.
+        return baseName
     }
 
     private func createSymlinks(from source: URL, to destination: URL) throws -> (Int, [String]) {
