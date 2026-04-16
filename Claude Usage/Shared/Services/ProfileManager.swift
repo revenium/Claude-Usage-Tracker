@@ -234,13 +234,19 @@ class ProfileManager: ObservableObject {
                 try ClaudeSwitchService.shared.switchToAccount(accountName)
                 LoggingService.shared.log("✓ Switched CLI account to: \(accountName)")
 
-                // Auto-sync MCP servers across all accounts after switch
+                // Auto-sync MCP servers and skills across all accounts after switch
                 if SharedDataStore.shared.loadAutoSyncMCPEnabled() {
-                    let result = ClaudeSwitchService.shared.bidirectionalMcpSync()
-                    if result.hasChanges {
+                    let mcpResult = ClaudeSwitchService.shared.bidirectionalMcpSync()
+                    if mcpResult.hasChanges {
                         LoggingService.shared.log(
-                            "Auto-synced MCP servers: \(result.totalSynced) server(s) "
-                            + "across \(result.changes.count) target(s)")
+                            "Auto-synced MCP servers: \(mcpResult.totalSynced) server(s) "
+                            + "across \(mcpResult.changes.count) target(s)")
+                    }
+                    let skillsResult = ClaudeSwitchService.shared.syncSkills()
+                    if skillsResult.hasChanges {
+                        LoggingService.shared.log(
+                            "Auto-synced skills: \(skillsResult.totalSynced) skill(s) "
+                            + "across \(skillsResult.changes.count) target(s)")
                     }
                 }
             } catch {

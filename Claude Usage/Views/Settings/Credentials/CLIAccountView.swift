@@ -26,6 +26,7 @@ struct CLIAccountView: View {
 
     // MCP sync state
     @State private var mcpSyncResult: McpSyncResult?
+    @State private var skillsSyncResult: SkillsSyncResult?
     @State private var mcpSyncInProgress = false
 
     var body: some View {
@@ -572,11 +573,14 @@ struct CLIAccountView: View {
                     Button(action: {
                         mcpSyncInProgress = true
                         mcpSyncResult = nil
+                        skillsSyncResult = nil
                         // Run sync off the main thread to keep UI responsive
                         DispatchQueue.global(qos: .userInitiated).async {
-                            let result = ClaudeSwitchService.shared.bidirectionalMcpSync()
+                            let mcpResult = ClaudeSwitchService.shared.bidirectionalMcpSync()
+                            let skillsResult = ClaudeSwitchService.shared.syncSkills()
                             DispatchQueue.main.async {
-                                mcpSyncResult = result
+                                mcpSyncResult = mcpResult
+                                skillsSyncResult = skillsResult
                                 mcpSyncInProgress = false
                             }
                         }
@@ -598,10 +602,10 @@ struct CLIAccountView: View {
                 }
 
                 // Results display (shown after manual sync)
-                if let result = mcpSyncResult {
-                    if result.hasChanges {
+                if let mcpResult = mcpSyncResult {
+                    if mcpResult.hasChanges {
                         VStack(alignment: .leading, spacing: DesignTokens.Spacing.extraSmall) {
-                            ForEach(result.changes) { change in
+                            ForEach(mcpResult.changes) { change in
                                 HStack(spacing: DesignTokens.Spacing.small) {
                                     Image(systemName: "checkmark.circle.fill")
                                         .foregroundColor(.green)
@@ -612,7 +616,7 @@ struct CLIAccountView: View {
                                 }
                             }
                         }
-                    } else {
+                    } else if skillsSyncResult?.hasChanges != true {
                         HStack(spacing: DesignTokens.Spacing.small) {
                             Image(systemName: "checkmark.circle.fill")
                                 .foregroundColor(.green)
@@ -620,6 +624,21 @@ struct CLIAccountView: View {
                             Text("cli.mcp_sync_no_changes".localized)
                                 .font(DesignTokens.Typography.caption)
                                 .foregroundColor(.secondary)
+                        }
+                    }
+                }
+
+                if let skillsResult = skillsSyncResult, skillsResult.hasChanges {
+                    VStack(alignment: .leading, spacing: DesignTokens.Spacing.extraSmall) {
+                        ForEach(skillsResult.changes) { change in
+                            HStack(spacing: DesignTokens.Spacing.small) {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundColor(.green)
+                                    .font(.system(size: DesignTokens.Icons.small))
+                                Text("\(change.addedSkills.joined(separator: ", ")) \u{2192} \(change.accountName)")
+                                    .font(DesignTokens.Typography.caption)
+                                    .foregroundColor(.secondary)
+                            }
                         }
                     }
                 }

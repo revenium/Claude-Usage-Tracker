@@ -52,6 +52,17 @@ class ClaudeSwitchService {
             .appendingPathComponent(".claude.json")
     }
 
+    private var mainSkillsDir: URL {
+        claudeDir.appendingPathComponent("skills")
+    }
+
+    private var dotfilesSkillsDir: URL {
+        Constants.ClaudePaths.homeDirectory
+            .appendingPathComponent("dotfiles")
+            .appendingPathComponent(".claude")
+            .appendingPathComponent("skills")
+    }
+
     /// Returns the full path for an account directory
     func accountDirectoryPath(for name: String) -> URL {
         accountsDir.appendingPathComponent(name)
@@ -411,6 +422,159 @@ class ClaudeSwitchService {
         return McpSyncResult(changes: changes)
     }
 
+    // MARK: - Skills Sync
+
+    /// Syncs skills from ~/dotfiles/.claude/skills/ to ~/.claude/skills/, and ensures
+    /// all account directories have a `skills` symlink pointing to ~/.claude/skills/.
+    /// Because account dirs already symlink their skills/ to ~/.claude/skills/, syncing
+    /// dotfiles → main propagates automatically to every account.
+    func syncSkills() -> SkillsSyncResult {
+        var changes: [SkillsSyncResult.AccountChange] = []
+
+        // 1. Sync dotfiles → ~/.claude/skills/
+        let dotfilesAdded = syncSkillsFromDotfiles()
+        if !dotfilesAdded.isEmpty {
+            changes.append(SkillsSyncResult.AccountChange(
+                accountName: "~/.claude/skills",
+                addedSkills: dotfilesAdded
+            ))
+        }
+
+        // 2. Ensure each account dir has skills/ → ~/.claude/skills/
+        let accountChanges = ensureAccountSkillsLinks()
+        changes.append(contentsOf: accountChanges)
+
+        if !changes.isEmpty {
+            LoggingService.shared.log(
+                "ClaudeSwitchService: Skills sync — "
+                + "\(changes.reduce(0) { $0 + $1.addedSkills.count }) skill(s) across "
+                + "\(changes.count) target(s)")
+        }
+
+        return SkillsSyncResult(changes: changes)
+    }
+
+    /// Symlinks any ~/dotfiles/.claude/skills/ entries not yet in ~/.claude/skills/.
+    private func syncSkillsFromDotfiles() -> [String] {
+        guard FileManager.default.fileExists(atPath: dotfilesSkillsDir.path),
+              let entries = try? FileManager.default.contentsOfDirectory(
+                  at: dotfilesSkillsDir, includingPropertiesForKeys: nil, options: [])
+        else { return [] }
+
+        if !FileManager.default.fileExists(atPath: mainSkillsDir.path) {
+            do {
+                try FileManager.default.createDirectory(
+                    at: mainSkillsDir, withIntermediateDirectories: true)
+            } catch {
+                LoggingService.shared.log(
+                    "ClaudeSwitchService: Failed to create skills dir: \(error.localizedDescription)")
+                return []
+            }
+        }
+
+        var added: [String] = []
+        for entry in entries {
+            let name = entry.lastPathComponent
+            let dest = mainSkillsDir.appendingPathComponent(name)
+            // attributesOfItem uses lstat — succeeds for broken symlinks too
+            guard (try? FileManager.default.attributesOfItem(atPath: dest.path)) == nil else { continue }
+            do {
+                try FileManager.default.createSymbolicLink(at: dest, withDestinationURL: entry)
+                added.append(name)
+            } catch {
+                LoggingService.shared.log(
+                    "ClaudeSwitchService: Failed to link skill '\(name)' from dotfiles: "
+                    + "\(error.localizedDescription)")
+            }
+        }
+        return added.sorted()
+    }
+
+    /// Ensures every account directory has skills/ → ~/.claude/skills/.
+    /// Accounts already pointing to the correct target are skipped.
+    /// Accounts with a real skills/ directory get missing entries added as symlinks.
+    /// Accounts with no skills/ entry get a direct symlink created.
+    private func ensureAccountSkillsLinks() -> [SkillsSyncResult.AccountChange] {
+        var changes: [SkillsSyncResult.AccountChange] = []
+        for accountName in allAccountDirectoryNames() {
+            // Use validatedAccountDir for path-containment safety, consistent with other sync methods.
+            guard let accountDir = try? validatedAccountDir(for: accountName) else { continue }
+            let skillsPath = accountDir.appendingPathComponent("skills")
+
+            // Already a symlink — check it points to the right place.
+            // Resolve relative targets against the symlink's containing directory to avoid
+            // incorrect CWD-relative resolution.
+            if let target = try? FileManager.default.destinationOfSymbolicLink(
+                atPath: skillsPath.path) {
+                let resolvedTarget: URL
+                if target.hasPrefix("/") {
+                    resolvedTarget = URL(fileURLWithPath: target).standardized
+                } else {
+                    resolvedTarget = skillsPath.deletingLastPathComponent()
+                        .appendingPathComponent(target).standardized
+                }
+                if resolvedTarget == mainSkillsDir.standardized {
+                    continue  // already correct
+                }
+            }
+
+            // Real directory exists — sync missing entries into it
+            var isDir: ObjCBool = false
+            if FileManager.default.fileExists(atPath: skillsPath.path, isDirectory: &isDir),
+               isDir.boolValue {
+                let added = syncMissingSkillEntries(from: mainSkillsDir, to: skillsPath)
+                if !added.isEmpty {
+                    changes.append(SkillsSyncResult.AccountChange(
+                        accountName: accountName, addedSkills: added))
+                }
+                continue
+            }
+
+            // skills/ absent or broken symlink pointing elsewhere — create/replace symlink.
+            // Remove any stale broken symlink first; createSymbolicLink fails with EEXIST
+            // if a broken symlink node already occupies the path.
+            try? FileManager.default.removeItem(at: skillsPath)
+            do {
+                try FileManager.default.createSymbolicLink(
+                    at: skillsPath, withDestinationURL: mainSkillsDir)
+                LoggingService.shared.log(
+                    "ClaudeSwitchService: Created skills symlink for '\(accountName)'")
+            } catch {
+                LoggingService.shared.log(
+                    "ClaudeSwitchService: Failed to create skills symlink for '\(accountName)': "
+                    + "\(error.localizedDescription)")
+            }
+        }
+        return changes
+    }
+
+    /// Adds entries from `source` that are missing in `destination` as symlinks.
+    /// Always points new symlinks at the source entry directly rather than following
+    /// transitive symlink chains, which prevents relay of arbitrary link targets.
+    private func syncMissingSkillEntries(from source: URL, to destination: URL) -> [String] {
+        guard let entries = try? FileManager.default.contentsOfDirectory(
+            at: source, includingPropertiesForKeys: nil, options: [])
+        else { return [] }
+
+        var added: [String] = []
+        for entry in entries {
+            let name = entry.lastPathComponent
+            let dest = destination.appendingPathComponent(name)
+            guard (try? FileManager.default.attributesOfItem(atPath: dest.path)) == nil else { continue }
+
+            do {
+                // Point directly at the source entry (avoids propagating arbitrary symlink chains)
+                try FileManager.default.createSymbolicLink(at: dest, withDestinationURL: entry)
+                added.append(name)
+            } catch {
+                LoggingService.shared.log(
+                    "ClaudeSwitchService: Failed to add skill '\(name)' to '\(destination.lastPathComponent)': "
+                    + "\(error.localizedDescription)")
+            }
+        }
+        return added.sorted()
+    }
+
     // MARK: - Private Helpers
 
     /// Reads the mcpServers dictionary from a .claude.json file.
@@ -644,6 +808,17 @@ struct McpSyncResult {
     }
     let changes: [AccountChange]
     var totalSynced: Int { changes.reduce(0) { $0 + $1.addedServers.count } }
+    var hasChanges: Bool { totalSynced > 0 }
+}
+
+struct SkillsSyncResult {
+    struct AccountChange: Identifiable {
+        let accountName: String
+        let addedSkills: [String]
+        var id: String { accountName }
+    }
+    let changes: [AccountChange]
+    var totalSynced: Int { changes.reduce(0) { $0 + $1.addedSkills.count } }
     var hasChanges: Bool { totalSynced > 0 }
 }
 
