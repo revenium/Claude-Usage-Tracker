@@ -29,6 +29,9 @@ struct CLIAccountView: View {
     @State private var skillsSyncResult: SkillsSyncResult?
     @State private var mcpSyncInProgress = false
 
+    // Skills source
+    @State private var skillsSourcePath: String?
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.section) {
@@ -51,9 +54,10 @@ struct CLIAccountView: View {
                         accountDetailsCard(profile: profile)
                     }
 
-                    // MCP Server Sync (only in multi-profile mode)
+                    // MCP Server Sync and Skills Source (only in multi-profile mode)
                     if profileManager.displayMode == .multi {
                         mcpSyncSection
+                        skillsSourceSection
                     }
 
                     // Error display
@@ -69,6 +73,7 @@ struct CLIAccountView: View {
         }
         .onAppear {
             loadCLIAccountInfo()
+            skillsSourcePath = SharedDataStore.shared.loadSkillsSourceDirectory()
             if let accountName = profileManager.activeProfile?.cliAccountName {
                 credentialCheckResult = ClaudeSwitchService.shared.checkForCredentials(directoryName: accountName)
             }
@@ -643,6 +648,71 @@ struct CLIAccountView: View {
                     }
                 }
             }
+        }
+    }
+
+    // MARK: - Skills Source Section
+
+    private var skillsSourceSection: some View {
+        SettingsSectionCard(
+            title: "cli.skills_source_title".localized,
+            subtitle: "cli.skills_source_subtitle".localized
+        ) {
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.medium) {
+                HStack(spacing: DesignTokens.Spacing.small) {
+                    Image(systemName: "folder")
+                        .font(.system(size: DesignTokens.Icons.standard))
+                        .foregroundColor(.accentColor)
+                        .frame(width: DesignTokens.Spacing.iconFrame)
+
+                    if let path = skillsSourcePath {
+                        Text(path)
+                            .font(DesignTokens.Typography.monospaced)
+                            .foregroundColor(.primary)
+                            .lineLimit(1)
+                            .truncationMode(.head)
+                    } else {
+                        Text("cli.skills_source_not_configured".localized)
+                            .font(DesignTokens.Typography.body)
+                            .foregroundColor(.secondary)
+                    }
+
+                    Spacer()
+
+                    if skillsSourcePath != nil {
+                        Button("cli.skills_source_clear".localized) {
+                            skillsSourcePath = nil
+                            SharedDataStore.shared.saveSkillsSourceDirectory(nil)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .foregroundColor(.secondary)
+                    }
+
+                    Button("cli.skills_source_choose".localized) {
+                        chooseSkillsSourceDirectory()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+
+                Text("cli.skills_source_description".localized)
+                    .font(DesignTokens.Typography.caption)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func chooseSkillsSourceDirectory() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+
+        if panel.runModal() == .OK, let url = panel.url {
+            skillsSourcePath = url.path
+            SharedDataStore.shared.saveSkillsSourceDirectory(url.path)
         }
     }
 

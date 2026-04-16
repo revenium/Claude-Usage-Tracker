@@ -431,8 +431,8 @@ class ClaudeSwitchService {
     func syncSkills() -> SkillsSyncResult {
         var changes: [SkillsSyncResult.AccountChange] = []
 
-        // 1. Sync dotfiles → ~/.claude/skills/
-        let dotfilesAdded = syncSkillsFromDotfiles()
+        // 1. Sync configured source (or dotfiles fallback) → ~/.claude/skills/
+        let dotfilesAdded = syncSkillsFromSource()
         if !dotfilesAdded.isEmpty {
             changes.append(SkillsSyncResult.AccountChange(
                 accountName: "~/.claude/skills",
@@ -454,11 +454,20 @@ class ClaudeSwitchService {
         return SkillsSyncResult(changes: changes)
     }
 
-    /// Symlinks any ~/dotfiles/.claude/skills/ entries not yet in ~/.claude/skills/.
-    private func syncSkillsFromDotfiles() -> [String] {
-        guard FileManager.default.fileExists(atPath: dotfilesSkillsDir.path),
-              let entries = try? FileManager.default.contentsOfDirectory(
-                  at: dotfilesSkillsDir, includingPropertiesForKeys: nil, options: [])
+    /// Symlinks entries from the configured source directory (or dotfiles fallback) into ~/.claude/skills/.
+    private func syncSkillsFromSource() -> [String] {
+        // Priority: user-configured path > dotfiles convention > skip
+        let sourceDir: URL
+        if let configured = SharedDataStore.shared.loadSkillsSourceDirectory() {
+            sourceDir = URL(fileURLWithPath: configured)
+        } else if FileManager.default.fileExists(atPath: dotfilesSkillsDir.path) {
+            sourceDir = dotfilesSkillsDir
+        } else {
+            return []
+        }
+
+        guard let entries = try? FileManager.default.contentsOfDirectory(
+                  at: sourceDir, includingPropertiesForKeys: nil, options: [])
         else { return [] }
 
         if !FileManager.default.fileExists(atPath: mainSkillsDir.path) {
@@ -483,7 +492,7 @@ class ClaudeSwitchService {
                 added.append(name)
             } catch {
                 LoggingService.shared.log(
-                    "ClaudeSwitchService: Failed to link skill '\(name)' from dotfiles: "
+                    "ClaudeSwitchService: Failed to link skill '\(name)' from source: "
                     + "\(error.localizedDescription)")
             }
         }
