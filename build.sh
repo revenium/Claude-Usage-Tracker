@@ -55,6 +55,7 @@ echo "Installing to /Applications..."
 osascript -e 'quit app "Claude Usage"' 2>/dev/null || true
 sleep 1
 cp -R "$APP" /Applications/
+rm -rf "$APP"
 
 echo "Launching Claude Usage..."
 open "/Applications/Claude Usage.app"
