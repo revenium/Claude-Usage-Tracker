@@ -55,7 +55,22 @@ echo "Installing to /Applications..."
 osascript -e 'quit app "Claude Usage"' 2>/dev/null || true
 sleep 1
 cp -R "$APP" /Applications/
-rm -rf "$APP"
+
+# Safety guards before removing DerivedData artifact:
+#  1. Path must be non-empty
+#  2. Must live inside Xcode's DerivedData (never a system or user dir)
+#  3. Must end in .app
+DERIVED_DATA="$HOME/Library/Developer/Xcode/DerivedData"
+if [[ -z "$APP" ]]; then
+  echo "WARNING: APP path is empty — skipping DerivedData cleanup"
+elif [[ "$APP" != "$DERIVED_DATA"* ]]; then
+  echo "WARNING: '$APP' is not inside DerivedData — skipping cleanup"
+elif [[ "$APP" != *.app ]]; then
+  echo "WARNING: '$APP' does not end in .app — skipping cleanup"
+else
+  rm -rf "$APP"
+  echo "Removed DerivedData artifact."
+fi
 
 echo "Launching Claude Usage..."
 open "/Applications/Claude Usage.app"
