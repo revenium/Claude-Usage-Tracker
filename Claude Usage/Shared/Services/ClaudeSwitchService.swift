@@ -470,8 +470,25 @@ class ClaudeSwitchService {
                   at: sourceDir, includingPropertiesForKeys: nil, options: [])
         else { return [] }
 
-        if !FileManager.default.fileExists(atPath: mainSkillsDir.path) {
+        // Use lstat (attributesOfItem) to detect dangling symlinks that fileExists misses.
+        // fileExists follows symlinks: returns false for a broken symlink, causing createDirectory
+        // to fail with EEXIST because the dangling symlink node already occupies the path.
+        let mainLstat = try? FileManager.default.attributesOfItem(atPath: mainSkillsDir.path)
+        let mainExists = FileManager.default.fileExists(atPath: mainSkillsDir.path)
+        if mainLstat == nil {
+            // No node at all — create the directory
             do {
+                try FileManager.default.createDirectory(
+                    at: mainSkillsDir, withIntermediateDirectories: true)
+            } catch {
+                LoggingService.shared.log(
+                    "ClaudeSwitchService: Failed to create skills dir: \(error.localizedDescription)")
+                return []
+            }
+        } else if (mainLstat?[.type] as? FileAttributeType) == .typeSymbolicLink, !mainExists {
+            // Dangling symlink (lstat found it, but stat/fileExists found no target) — remove and recreate
+            do {
+                try FileManager.default.removeItem(at: mainSkillsDir)
                 try FileManager.default.createDirectory(
                     at: mainSkillsDir, withIntermediateDirectories: true)
             } catch {
@@ -487,6 +504,14 @@ class ClaudeSwitchService {
             let dest = mainSkillsDir.appendingPathComponent(name)
             // attributesOfItem uses lstat — succeeds for broken symlinks too
             guard (try? FileManager.default.attributesOfItem(atPath: dest.path)) == nil else { continue }
+            // Guard against relay: if the source entry is a symlink escaping sourceDir, skip it.
+            let realEntry = entry.resolvingSymlinksInPath()
+            let realSource = sourceDir.resolvingSymlinksInPath()
+            guard realEntry.path.hasPrefix(realSource.path + "/") else {
+                LoggingService.shared.log(
+                    "ClaudeSwitchService: Skipping skill '\(name)' — symlink escapes source directory")
+                continue
+            }
             do {
                 try FileManager.default.createSymbolicLink(at: dest, withDestinationURL: entry)
                 added.append(name)
@@ -513,6 +538,7 @@ class ClaudeSwitchService {
             // Already a symlink — check it points to the right place.
             // Resolve relative targets against the symlink's containing directory to avoid
             // incorrect CWD-relative resolution.
+            var shouldReplaceSymlink = false
             if let target = try? FileManager.default.destinationOfSymbolicLink(
                 atPath: skillsPath.path) {
                 let resolvedTarget: URL
@@ -525,11 +551,17 @@ class ClaudeSwitchService {
                 if resolvedTarget == mainSkillsDir.standardized {
                     continue  // already correct
                 }
+                // Wrong-target symlink detected: bypass real-dir branch to avoid writing
+                // skills into an unintended external directory.
+                shouldReplaceSymlink = true
             }
 
-            // Real directory exists — sync missing entries into it
+            // Real directory exists — sync missing entries into it.
+            // Skip this branch for wrong-target symlinks: fileExists follows the symlink,
+            // so a valid external directory would pass the isDir check and receive writes.
             var isDir: ObjCBool = false
-            if FileManager.default.fileExists(atPath: skillsPath.path, isDirectory: &isDir),
+            if !shouldReplaceSymlink,
+               FileManager.default.fileExists(atPath: skillsPath.path, isDirectory: &isDir),
                isDir.boolValue {
                 let added = syncMissingSkillEntries(from: mainSkillsDir, to: skillsPath)
                 if !added.isEmpty {
@@ -539,15 +571,24 @@ class ClaudeSwitchService {
                 continue
             }
 
-            // skills/ absent or broken symlink pointing elsewhere — create/replace symlink.
-            // Remove any stale broken symlink first; createSymbolicLink fails with EEXIST
-            // if a broken symlink node already occupies the path.
+            // skills/ absent or is a symlink pointing elsewhere — create/replace symlink.
+            // Only remove symlink nodes; a regular file or other non-symlink at this path
+            // is unexpected and must not be silently destroyed.
+            let nodeAttrs = try? FileManager.default.attributesOfItem(atPath: skillsPath.path)
+            if let nodeType = nodeAttrs?[.type] as? FileAttributeType,
+               nodeType != .typeSymbolicLink {
+                LoggingService.shared.log(
+                    "ClaudeSwitchService: Skipping non-symlink node at skills path for '\(accountName)'")
+                continue
+            }
             try? FileManager.default.removeItem(at: skillsPath)
             do {
                 try FileManager.default.createSymbolicLink(
                     at: skillsPath, withDestinationURL: mainSkillsDir)
                 LoggingService.shared.log(
                     "ClaudeSwitchService: Created skills symlink for '\(accountName)'")
+                changes.append(SkillsSyncResult.AccountChange(
+                    accountName: accountName, addedSkills: ["(linked)"]))
             } catch {
                 LoggingService.shared.log(
                     "ClaudeSwitchService: Failed to create skills symlink for '\(accountName)': "
