@@ -67,6 +67,9 @@ class SharedDataStore {
         // MCP Server Sync
         static let autoSyncMCPEnabled = "autoSyncMCPEnabled"
 
+        // Skills Sync
+        static let skillsSourceDirectory = "skillsSourceDirectory"
+
         // Popover Settings
         static let popoverShowRemainingTime = "popoverShowRemainingTime" // legacy bool key
         static let popoverTimeDisplay = "popoverTimeDisplay"
@@ -495,6 +498,20 @@ class SharedDataStore {
         // Default to true (enabled) for new installs — UserDefaults.bool returns false for unset keys
         if defaults.object(forKey: Keys.autoSyncMCPEnabled) == nil { return true }
         return defaults.bool(forKey: Keys.autoSyncMCPEnabled)
+    }
+
+    // MARK: - Skills Sync
+
+    func saveSkillsSourceDirectory(_ path: String?) {
+        if let path = path {
+            defaults.set(path, forKey: Keys.skillsSourceDirectory)
+        } else {
+            defaults.removeObject(forKey: Keys.skillsSourceDirectory)
+        }
+    }
+
+    func loadSkillsSourceDirectory() -> String? {
+        return defaults.string(forKey: Keys.skillsSourceDirectory)
     }
 
     // MARK: - Popover Settings

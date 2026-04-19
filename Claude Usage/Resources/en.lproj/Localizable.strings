@@ -763,6 +763,14 @@
 "cli.mcp_sync_no_changes" = "All accounts already in sync";
 "cli.mcp_sync_added" = "Added %@ to %@";
 
+/* CLI Skills Source Directory */
+"cli.skills_source_title" = "Skills Source Directory";
+"cli.skills_source_subtitle" = "Sync skills from an external directory into your main account";
+"cli.skills_source_not_configured" = "Not configured";
+"cli.skills_source_clear" = "Clear";
+"cli.skills_source_choose" = "Choose...";
+"cli.skills_source_description" = "When configured, missing skills are synced from this directory to ~/.claude/skills/ each time you sync. All sub-accounts automatically share skills from your main account.";
+
 /* ==================== */
 /* MARK: - Additional Keys */
 /* ==================== */

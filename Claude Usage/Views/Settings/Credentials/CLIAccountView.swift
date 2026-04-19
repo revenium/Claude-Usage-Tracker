@@ -26,7 +26,11 @@ struct CLIAccountView: View {
 
     // MCP sync state
     @State private var mcpSyncResult: McpSyncResult?
+    @State private var skillsSyncResult: SkillsSyncResult?
     @State private var mcpSyncInProgress = false
+
+    // Skills source
+    @State private var skillsSourcePath: String?
 
     var body: some View {
         ScrollView {
@@ -50,9 +54,10 @@ struct CLIAccountView: View {
                         accountDetailsCard(profile: profile)
                     }
 
-                    // MCP Server Sync (only in multi-profile mode)
+                    // MCP Server Sync and Skills Source (only in multi-profile mode)
                     if profileManager.displayMode == .multi {
                         mcpSyncSection
+                        skillsSourceSection
                     }
 
                     // Error display
@@ -68,6 +73,7 @@ struct CLIAccountView: View {
         }
         .onAppear {
             loadCLIAccountInfo()
+            skillsSourcePath = SharedDataStore.shared.loadSkillsSourceDirectory()
             if let accountName = profileManager.activeProfile?.cliAccountName {
                 credentialCheckResult = ClaudeSwitchService.shared.checkForCredentials(directoryName: accountName)
             }
@@ -572,11 +578,14 @@ struct CLIAccountView: View {
                     Button(action: {
                         mcpSyncInProgress = true
                         mcpSyncResult = nil
+                        skillsSyncResult = nil
                         // Run sync off the main thread to keep UI responsive
                         DispatchQueue.global(qos: .userInitiated).async {
-                            let result = ClaudeSwitchService.shared.bidirectionalMcpSync()
+                            let mcpResult = ClaudeSwitchService.shared.bidirectionalMcpSync()
+                            let skillsResult = ClaudeSwitchService.shared.syncSkills()
                             DispatchQueue.main.async {
-                                mcpSyncResult = result
+                                mcpSyncResult = mcpResult
+                                skillsSyncResult = skillsResult
                                 mcpSyncInProgress = false
                             }
                         }
@@ -598,10 +607,10 @@ struct CLIAccountView: View {
                 }
 
                 // Results display (shown after manual sync)
-                if let result = mcpSyncResult {
-                    if result.hasChanges {
+                if let mcpResult = mcpSyncResult {
+                    if mcpResult.hasChanges {
                         VStack(alignment: .leading, spacing: DesignTokens.Spacing.extraSmall) {
-                            ForEach(result.changes) { change in
+                            ForEach(mcpResult.changes) { change in
                                 HStack(spacing: DesignTokens.Spacing.small) {
                                     Image(systemName: "checkmark.circle.fill")
                                         .foregroundColor(.green)
@@ -612,7 +621,7 @@ struct CLIAccountView: View {
                                 }
                             }
                         }
-                    } else {
+                    } else if skillsSyncResult?.hasChanges != true {
                         HStack(spacing: DesignTokens.Spacing.small) {
                             Image(systemName: "checkmark.circle.fill")
                                 .foregroundColor(.green)
@@ -623,7 +632,87 @@ struct CLIAccountView: View {
                         }
                     }
                 }
+
+                if let skillsResult = skillsSyncResult, skillsResult.hasChanges {
+                    VStack(alignment: .leading, spacing: DesignTokens.Spacing.extraSmall) {
+                        ForEach(skillsResult.changes) { change in
+                            HStack(spacing: DesignTokens.Spacing.small) {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundColor(.green)
+                                    .font(.system(size: DesignTokens.Icons.small))
+                                Text("\(change.addedSkills.joined(separator: ", ")) \u{2192} \(change.accountName)")
+                                    .font(DesignTokens.Typography.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                }
             }
+        }
+    }
+
+    // MARK: - Skills Source Section
+
+    private var skillsSourceSection: some View {
+        SettingsSectionCard(
+            title: "cli.skills_source_title".localized,
+            subtitle: "cli.skills_source_subtitle".localized
+        ) {
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.medium) {
+                HStack(spacing: DesignTokens.Spacing.small) {
+                    Image(systemName: "folder")
+                        .font(.system(size: DesignTokens.Icons.standard))
+                        .foregroundColor(.accentColor)
+                        .frame(width: DesignTokens.Spacing.iconFrame)
+
+                    if let path = skillsSourcePath {
+                        Text(path)
+                            .font(DesignTokens.Typography.monospaced)
+                            .foregroundColor(.primary)
+                            .lineLimit(1)
+                            .truncationMode(.head)
+                    } else {
+                        Text("cli.skills_source_not_configured".localized)
+                            .font(DesignTokens.Typography.body)
+                            .foregroundColor(.secondary)
+                    }
+
+                    Spacer()
+
+                    if skillsSourcePath != nil {
+                        Button("cli.skills_source_clear".localized) {
+                            skillsSourcePath = nil
+                            SharedDataStore.shared.saveSkillsSourceDirectory(nil)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .foregroundColor(.secondary)
+                    }
+
+                    Button("cli.skills_source_choose".localized) {
+                        chooseSkillsSourceDirectory()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+
+                Text("cli.skills_source_description".localized)
+                    .font(DesignTokens.Typography.caption)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func chooseSkillsSourceDirectory() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+
+        if panel.runModal() == .OK, let url = panel.url {
+            skillsSourcePath = url.path
+            SharedDataStore.shared.saveSkillsSourceDirectory(url.path)
         }
     }
 
