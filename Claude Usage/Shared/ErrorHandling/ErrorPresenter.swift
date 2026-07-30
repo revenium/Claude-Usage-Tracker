@@ -8,6 +8,26 @@
 import SwiftUI
 import AppKit
 
+@MainActor
+struct ProviderRecoveryActionDispatcher {
+    let retry: () -> Void
+    let openSettings: () -> Void
+
+    @discardableResult
+    func perform(_ action: ProviderRecoveryAction) -> Bool {
+        switch action {
+        case .retry:
+            retry()
+            return true
+        case .openSettings:
+            openSettings()
+            return true
+        case .installOrUpdateCodex:
+            return false
+        }
+    }
+}
+
 /// Presents errors to users in a friendly way
 class ErrorPresenter {
 
@@ -109,44 +129,17 @@ class ErrorPresenter {
     }
 
     private func perform(_ action: ProviderRecoveryAction) {
-        switch action {
-        case .retry:
-            NotificationCenter.default.post(
-                name: .retryProviderOperation,
-                object: nil
-            )
-            ShortcutManager.shared.onRefresh?()
-        case .chooseHome:
-            NotificationCenter.default.post(
-                name: .chooseCodexHome,
-                object: nil
-            )
-            openSettings()
-        case .signIn:
-            NotificationCenter.default.post(
-                name: .startCodexLogin,
-                object: nil
-            )
-            openSettings()
-        case .installOrUpdateCodex:
-            showCodexInstallationGuidance()
-        case .openSettings:
-            openSettings()
-        case .unlink:
-            NotificationCenter.default.post(
-                name: .reviewCodexHomeLink,
-                object: nil
-            )
-            openSettings()
-        }
-    }
-
-    private func openSettings() {
-        NotificationCenter.default.post(
-            name: .openSettings,
-            object: nil
+        let dispatcher = ProviderRecoveryActionDispatcher(
+            retry: {
+                ShortcutManager.shared.onRefresh?()
+            },
+            openSettings: {
+                ShortcutManager.shared.onOpenSettings?()
+            }
         )
-        ShortcutManager.shared.onOpenSettings?()
+        if !dispatcher.perform(action) {
+            showCodexInstallationGuidance()
+        }
     }
 
     private func showCodexInstallationGuidance() {
@@ -292,20 +285,6 @@ struct ErrorDetailsView: View {
         pasteboard.clearContents()
         pasteboard.setString(error.copyableErrorCode, forType: .string)
     }
-}
-
-// MARK: - Notification Names
-
-extension Notification.Name {
-    static let openSettings = Notification.Name("openSettings")
-    static let retryProviderOperation =
-        Notification.Name("retryProviderOperation")
-    static let chooseCodexHome =
-        Notification.Name("chooseCodexHome")
-    static let startCodexLogin =
-        Notification.Name("startCodexLogin")
-    static let reviewCodexHomeLink =
-        Notification.Name("reviewCodexHomeLink")
 }
 
 // MARK: - Preview

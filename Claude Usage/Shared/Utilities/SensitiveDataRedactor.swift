@@ -36,6 +36,16 @@ nonisolated enum SensitiveDataRedactor {
         var result = value
         result = replacingEmbeddedURLs(in: result)
         result = replacing(
+            #"(?im)\b([A-Z][A-Z0-9_]*(?:HOME|PATH|DIR|DIRECTORY)[A-Z0-9_]*)\s*=\s*["']?[^\r\n"']+"#,
+            in: result,
+            with: "$1=\(redactedPath)"
+        )
+        result = replacing(
+            #"(?im)\b([A-Z][A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSCODE|CREDENTIAL|AUTH|COOKIE|SESSION|API_KEY|APIKEY|ACCESS_KEY|ACCESSKEY|PRIVATE_KEY|PRIVATEKEY|SIGNING_KEY|SIGNINGKEY)[A-Z0-9_]*)\s*=\s*["']?[^\r\n"']+"#,
+            in: result,
+            with: "$1=\(redactedValue)"
+        )
+        result = replacing(
             #"(?im)\b(authorization|proxy-authorization|cookie|set-cookie|x-api-key|x-auth-token)\s*[:=]\s*[^\r\n]+"#,
             in: result,
             with: "$1: \(redactedValue)"
@@ -61,6 +71,11 @@ nonisolated enum SensitiveDataRedactor {
             with: "$1=\(redactedPath)"
         )
         result = replacingQueryComponents(in: result)
+        result = replacing(
+            #"(?:file://)?/[^\s"'?,;)\]}]*auth\.json\b"#,
+            in: result,
+            with: redactedPath
+        )
         result = replacing(
             localPathPattern,
             in: result,
@@ -219,8 +234,10 @@ nonisolated enum SensitiveDataRedactor {
             "accesstoken",
             "clientsecret",
             "codexhome",
+            "home",
             "homepath",
             "workingdirectory",
+            "directory",
             "path"
         ].contains { normalized.contains($0) }
     }

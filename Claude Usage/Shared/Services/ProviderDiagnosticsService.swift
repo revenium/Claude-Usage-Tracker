@@ -416,6 +416,7 @@ nonisolated enum CodexVersionProbe {
     private static let maximumOutputBytes = 4_096
     private static let defaultTimeout: TimeInterval = 2
     private static let defaultTerminationGrace: TimeInterval = 0.25
+    private static let pollIntervalMilliseconds: Int32 = 5
 
     static func readVersion(
         _ executableURL: URL
@@ -451,73 +452,86 @@ nonisolated enum CodexVersionProbe {
         timeout: TimeInterval,
         terminationGrace: TimeInterval
     ) -> String? {
-        let process = Process()
-        let outputPipe = Pipe()
         let output = CodexVersionOutputBuffer(
             limit: maximumOutputBytes
         )
-        let termination = DispatchSemaphore(value: 0)
-        let readHandle = outputPipe.fileHandleForReading
-
-        process.executableURL = executableURL
-        process.arguments = ["--version"]
-        process.environment = [
-            "HOME": "/var/empty",
-            "LANG": "C",
-            "LC_ALL": "C"
-        ]
-        process.currentDirectoryURL =
-            URL(fileURLWithPath: "/", isDirectory: true)
-        process.standardOutput = outputPipe
-        process.standardError = FileHandle.nullDevice
-        process.terminationHandler = { _ in
-            termination.signal()
-        }
-        readHandle.readabilityHandler = { handle in
-            output.consume(handle.availableData)
-        }
-
-        do {
-            try process.run()
-        } catch {
-            readHandle.readabilityHandler = nil
-            try? outputPipe.fileHandleForWriting.close()
-            try? readHandle.close()
+        guard let spawned = spawn(executableURL) else {
             return nil
         }
-        // Process owns its duplicated descriptor after launch. Closing the
-        // parent's writer is required for the reader to observe EOF.
-        try? outputPipe.fileHandleForWriting.close()
-
+        let processIdentifier = spawned.processIdentifier
+        let outputDescriptor = spawned.outputDescriptor
         var timedOut = false
-        let initialWait = termination.wait(
-            timeout: dispatchDeadline(after: timeout)
+        let executionDeadline = deadline(after: timeout)
+        while !hasExited(processIdentifier) {
+            drain(outputDescriptor, into: output)
+            guard DispatchTime.now().uptimeNanoseconds
+                    < executionDeadline else {
+                timedOut = true
+                break
+            }
+            waitForReadable(outputDescriptor)
+        }
+        drain(outputDescriptor, into: output)
+
+        let descendantsExited = terminateProcessGroup(
+            processIdentifier,
+            outputDescriptor: outputDescriptor,
+            output: output,
+            grace: terminationGrace
         )
-        if initialWait == .timedOut {
-            timedOut = true
-            process.terminate()
-            let gracefulWait = termination.wait(
-                timeout:
-                    dispatchDeadline(after: terminationGrace)
+
+        var status: Int32 = 0
+        var reaped = false
+        let reapDeadline = deadline(
+            after: max(terminationGrace, 1)
+        )
+        while DispatchTime.now().uptimeNanoseconds
+                < reapDeadline {
+            let result = waitpid(
+                processIdentifier,
+                &status,
+                WNOHANG
             )
-            if gracefulWait == .timedOut {
-                _ = Darwin.kill(
-                    process.processIdentifier,
-                    SIGKILL
-                )
+            if result == processIdentifier {
+                reaped = true
+                break
+            }
+            if result == -1 {
+                break
+            }
+            drain(outputDescriptor, into: output)
+            waitForReadable(outputDescriptor)
+        }
+        if !reaped {
+            _ = Darwin.kill(-processIdentifier, SIGKILL)
+            // A blocking wait is safe only after waitid(WNOWAIT) has proven
+            // the direct child exited. Otherwise preserve the caller's
+            // bounded return and leave the unreaped PID ownership-stable
+            // while a utility worker completes the reaping barrier.
+            if hasExited(processIdentifier) {
+                while !reaped {
+                    let result = waitpid(
+                        processIdentifier,
+                        &status,
+                        0
+                    )
+                    if result == processIdentifier {
+                        reaped = true
+                    } else if result == -1, errno != EINTR {
+                        break
+                    }
+                }
+            } else {
+                deferReaping(processIdentifier)
             }
         }
-
-        // waitUntilExit performs the final waitpid/reap. It intentionally
-        // happens even after the termination handler fires and before any
-        // caller can observe probe completion.
-        process.waitUntilExit()
-        readHandle.readabilityHandler = nil
-        output.consume(readHandle.readDataToEndOfFile())
-        try? readHandle.close()
+        drain(outputDescriptor, into: output)
+        _ = Darwin.close(outputDescriptor)
 
         guard !timedOut,
-              process.terminationStatus == 0,
+              descendantsExited,
+              reaped,
+              exitedSuccessfully(status),
               let data = output.value,
               let value = String(data: data, encoding: .utf8) else {
             return nil
@@ -537,13 +551,354 @@ nonisolated enum CodexVersionProbe {
             ? nil : redacted
     }
 
-    private static func dispatchDeadline(
-        after interval: TimeInterval
-    ) -> DispatchTime {
-        .now()
-            + .milliseconds(
-                max(1, Int(interval * 1_000))
+    private struct SpawnedProcess {
+        let processIdentifier: pid_t
+        let outputDescriptor: Int32
+    }
+
+    /// Creates the process group atomically with the child. A post-launch
+    /// setpgid call has an exec race that can let a forked writer escape.
+    private static func spawn(
+        _ executableURL: URL
+    ) -> SpawnedProcess? {
+        var descriptors = [Int32](repeating: 0, count: 2)
+        guard Darwin.pipe(&descriptors) == 0 else {
+            return nil
+        }
+        let readDescriptor = descriptors[0]
+        let writeDescriptor = descriptors[1]
+        func closeDescriptors() {
+            _ = Darwin.close(readDescriptor)
+            _ = Darwin.close(writeDescriptor)
+        }
+        let currentFlags = fcntl(
+            readDescriptor,
+            F_GETFL
+        )
+        guard currentFlags >= 0,
+              fcntl(
+                  readDescriptor,
+                  F_SETFL,
+                  currentFlags | O_NONBLOCK
+              ) == 0 else {
+            closeDescriptors()
+            return nil
+        }
+
+        var fileActions: posix_spawn_file_actions_t?
+        guard posix_spawn_file_actions_init(
+            &fileActions
+        ) == 0 else {
+            closeDescriptors()
+            return nil
+        }
+        defer {
+            posix_spawn_file_actions_destroy(&fileActions)
+        }
+        var attributes: posix_spawnattr_t?
+        guard posix_spawnattr_init(&attributes) == 0 else {
+            closeDescriptors()
+            return nil
+        }
+        defer {
+            posix_spawnattr_destroy(&attributes)
+        }
+
+        let spawnFlags = Int16(
+            POSIX_SPAWN_SETPGROUP
+                | POSIX_SPAWN_CLOEXEC_DEFAULT
+        )
+        guard posix_spawnattr_setflags(
+            &attributes,
+            spawnFlags
+        ) == 0,
+        posix_spawnattr_setpgroup(&attributes, 0) == 0,
+        posix_spawn_file_actions_addclose(
+            &fileActions,
+            readDescriptor
+        ) == 0,
+        posix_spawn_file_actions_adddup2(
+            &fileActions,
+            writeDescriptor,
+            STDOUT_FILENO
+        ) == 0 else {
+            closeDescriptors()
+            return nil
+        }
+        if writeDescriptor != STDOUT_FILENO,
+           posix_spawn_file_actions_addclose(
+               &fileActions,
+               writeDescriptor
+           ) != 0 {
+            closeDescriptors()
+            return nil
+        }
+        guard posix_spawn_file_actions_addopen(
+            &fileActions,
+            STDERR_FILENO,
+            "/dev/null",
+            O_WRONLY,
+            0
+        ) == 0 else {
+            closeDescriptors()
+            return nil
+        }
+
+        let chdirResult: Int32
+        if #available(macOS 26.0, *) {
+            chdirResult =
+                posix_spawn_file_actions_addchdir(
+                    &fileActions,
+                    "/"
+                )
+        } else {
+            chdirResult =
+                posix_spawn_file_actions_addchdir_np(
+                    &fileActions,
+                    "/"
+                )
+        }
+        guard chdirResult == 0 else {
+            closeDescriptors()
+            return nil
+        }
+
+        let argumentStorage = [
+            strdup(executableURL.path),
+            strdup("--version")
+        ]
+        let environmentStorage = [
+            strdup("HOME=/var/empty"),
+            strdup("LANG=C"),
+            strdup("LC_ALL=C")
+        ]
+        defer {
+            argumentStorage.forEach { free($0) }
+            environmentStorage.forEach { free($0) }
+        }
+        guard argumentStorage.allSatisfy({ $0 != nil }),
+              environmentStorage.allSatisfy({ $0 != nil }) else {
+            closeDescriptors()
+            return nil
+        }
+        var arguments = argumentStorage + [nil]
+        var environment = environmentStorage + [nil]
+        var processIdentifier: pid_t = 0
+        let result = arguments.withUnsafeMutableBufferPointer {
+            argumentBuffer in
+            environment.withUnsafeMutableBufferPointer {
+                environmentBuffer in
+                posix_spawn(
+                    &processIdentifier,
+                    argumentStorage[0],
+                    &fileActions,
+                    &attributes,
+                    argumentBuffer.baseAddress,
+                    environmentBuffer.baseAddress
+                )
+            }
+        }
+        _ = Darwin.close(writeDescriptor)
+        guard result == 0, processIdentifier > 0 else {
+            _ = Darwin.close(readDescriptor)
+            return nil
+        }
+        return SpawnedProcess(
+            processIdentifier: processIdentifier,
+            outputDescriptor: readDescriptor
+        )
+    }
+
+    private static func terminateProcessGroup(
+        _ processGroup: pid_t,
+        outputDescriptor: Int32,
+        output: CodexVersionOutputBuffer,
+        grace: TimeInterval
+    ) -> Bool {
+        _ = Darwin.kill(-processGroup, SIGTERM)
+        let gracefulDeadline = deadline(after: grace)
+        while hasLiveMembers(processGroup) {
+            drain(outputDescriptor, into: output)
+            guard DispatchTime.now().uptimeNanoseconds
+                    < gracefulDeadline else {
+                break
+            }
+            waitForReadable(outputDescriptor)
+        }
+        if hasLiveMembers(processGroup) {
+            _ = Darwin.kill(-processGroup, SIGKILL)
+        }
+        let killDeadline = deadline(after: max(grace, 1))
+        while hasLiveMembers(processGroup) {
+            drain(outputDescriptor, into: output)
+            guard DispatchTime.now().uptimeNanoseconds
+                    < killDeadline else {
+                return false
+            }
+            waitForReadable(outputDescriptor)
+        }
+        return true
+    }
+
+    private static func hasLiveMembers(
+        _ processGroup: pid_t
+    ) -> Bool {
+        var capacity = 16
+        let maximumCapacity = 4_096
+        while capacity <= maximumCapacity {
+            var identifiers = [pid_t](
+                repeating: 0,
+                count: capacity
             )
+            let returnedCount =
+                identifiers.withUnsafeMutableBytes { buffer in
+                    proc_listpgrppids(
+                        processGroup,
+                        buffer.baseAddress,
+                        Int32(buffer.count)
+                    )
+                }
+            guard returnedCount >= 0 else {
+                return true
+            }
+            // libproc returns a PID count (not a byte count); the byte size
+            // supplied above is only the capacity of the destination buffer.
+            let count = Int(returnedCount)
+            let candidates =
+                identifiers.prefix(min(count, capacity))
+            if candidates.contains(where: {
+                guard $0 > 0 else { return false }
+                if $0 == processGroup {
+                    return !hasExited($0)
+                }
+                return !isZombie($0)
+            }) {
+                return true
+            }
+            if count < capacity {
+                return false
+            }
+            if capacity == maximumCapacity {
+                return true
+            }
+            capacity *= 2
+        }
+        return true
+    }
+
+    private static func isZombie(
+        _ processIdentifier: pid_t
+    ) -> Bool {
+        var info = proc_bsdinfo()
+        let expectedSize = MemoryLayout<proc_bsdinfo>.size
+        let returnedSize = withUnsafeMutablePointer(to: &info) {
+            proc_pidinfo(
+                processIdentifier,
+                PROC_PIDTBSDINFO,
+                0,
+                $0,
+                Int32(expectedSize)
+            )
+        }
+        return returnedSize == expectedSize
+            && info.pbi_status == UInt32(SZOMB)
+    }
+
+    /// Observes exit without reaping so the process-group identifier remains
+    /// owned until every descendant has been contained.
+    private static func hasExited(
+        _ processIdentifier: pid_t
+    ) -> Bool {
+        var info = siginfo_t()
+        while true {
+            let result = waitid(
+                P_PID,
+                UInt32(processIdentifier),
+                &info,
+                WEXITED | WNOHANG | WNOWAIT
+            )
+            if result == 0 {
+                return info.si_pid == processIdentifier
+            }
+            if errno != EINTR {
+                return false
+            }
+        }
+    }
+
+    private static func drain(
+        _ descriptor: Int32,
+        into output: CodexVersionOutputBuffer
+    ) {
+        var bytes = [UInt8](repeating: 0, count: 1_024)
+        while true {
+            let count = Darwin.read(
+                descriptor,
+                &bytes,
+                bytes.count
+            )
+            if count > 0 {
+                output.consume(
+                    Data(bytes.prefix(Int(count)))
+                )
+                continue
+            }
+            if count == -1,
+               errno == EINTR {
+                continue
+            }
+            return
+        }
+    }
+
+    private static func waitForReadable(
+        _ descriptor: Int32
+    ) {
+        var descriptorState = pollfd(
+            fd: descriptor,
+            events: Int16(POLLIN | POLLHUP),
+            revents: 0
+        )
+        _ = Darwin.poll(
+            &descriptorState,
+            1,
+            pollIntervalMilliseconds
+        )
+    }
+
+    private static func exitedSuccessfully(
+        _ status: Int32
+    ) -> Bool {
+        // Darwin wait status: low seven bits are the terminating signal;
+        // the next byte is the exit status when no signal is present.
+        (status & 0x7f) == 0
+            && ((status >> 8) & 0xff) == 0
+    }
+
+    private static func deferReaping(
+        _ processIdentifier: pid_t
+    ) {
+        DispatchQueue.global(qos: .utility).async {
+            var status: Int32 = 0
+            while waitpid(
+                processIdentifier,
+                &status,
+                0
+            ) == -1,
+            errno == EINTR {
+                // Retry only interrupted waits.
+            }
+        }
+    }
+
+    private static func deadline(
+        after interval: TimeInterval
+    ) -> UInt64 {
+        let nanoseconds = UInt64(
+            max(1, interval * 1_000_000_000)
+        )
+        return DispatchTime.now().uptimeNanoseconds
+            &+ nanoseconds
     }
 }
 
@@ -564,7 +919,7 @@ private nonisolated final class CodexVersionOutputBuffer:
         lock.lock()
         defer { lock.unlock() }
         guard !exceededLimit else { return }
-        guard data.count + chunk.count <= limit else {
+        guard chunk.count <= limit - data.count else {
             exceededLimit = true
             data.removeAll(keepingCapacity: false)
             return

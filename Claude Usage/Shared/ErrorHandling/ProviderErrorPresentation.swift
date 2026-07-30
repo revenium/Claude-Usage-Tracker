@@ -19,11 +19,8 @@ enum ProviderErrorCategory: String, Codable, CaseIterable, Sendable {
 
 enum ProviderRecoveryAction: String, Codable, CaseIterable, Sendable {
     case retry
-    case chooseHome
-    case signIn
     case installOrUpdateCodex
     case openSettings
-    case unlink
 
     nonisolated var title: String {
         switch self {
@@ -31,16 +28,6 @@ enum ProviderRecoveryAction: String, Codable, CaseIterable, Sendable {
             ProviderUILocalization.text(
                 "provider.recovery.retry",
                 fallback: "Try Again"
-            )
-        case .chooseHome:
-            ProviderUILocalization.text(
-                "provider.recovery.choose_home",
-                fallback: "Choose Codex Home"
-            )
-        case .signIn:
-            ProviderUILocalization.text(
-                "provider.recovery.sign_in",
-                fallback: "Sign In"
             )
         case .installOrUpdateCodex:
             ProviderUILocalization.text(
@@ -51,11 +38,6 @@ enum ProviderRecoveryAction: String, Codable, CaseIterable, Sendable {
             ProviderUILocalization.text(
                 "provider.recovery.open_settings",
                 fallback: "Open Settings"
-            )
-        case .unlink:
-            ProviderUILocalization.text(
-                "provider.recovery.unlink",
-                fallback: "Review Linked Home"
             )
         }
     }
@@ -179,7 +161,7 @@ struct ProviderErrorPresentation: Equatable, Sendable {
                 fallbackExplanation:
                     "The linked Codex home is missing, invalid, or changed after verification.",
                 isRecoverable: true,
-                actions: [.chooseHome, .openSettings, .unlink]
+                actions: [.openSettings]
             )
         case .duplicateHome:
             ProviderErrorPresentation(
@@ -191,7 +173,7 @@ struct ProviderErrorPresentation: Equatable, Sendable {
                 fallbackExplanation:
                     "Each Codex home can be linked to only one profile. Choose another home.",
                 isRecoverable: true,
-                actions: [.chooseHome, .openSettings]
+                actions: [.openSettings]
             )
         case .loggedOut:
             ProviderErrorPresentation(
@@ -203,7 +185,7 @@ struct ProviderErrorPresentation: Equatable, Sendable {
                 fallbackExplanation:
                     "The linked Codex home is not signed in to a supported ChatGPT subscription.",
                 isRecoverable: true,
-                actions: [.signIn, .openSettings]
+                actions: [.openSettings]
             )
         case .unsupportedAccount:
             ProviderErrorPresentation(
@@ -215,7 +197,7 @@ struct ProviderErrorPresentation: Equatable, Sendable {
                 fallbackExplanation:
                     "This Codex account mode does not expose ChatGPT subscription usage.",
                 isRecoverable: false,
-                actions: [.openSettings, .unlink]
+                actions: [.openSettings]
             )
         case .partialUsage:
             ProviderErrorPresentation(
@@ -438,7 +420,9 @@ nonisolated enum ProviderErrorMapper {
             return .loggedOut
         case .unsupportedAccount:
             return .unsupportedAccount
-        case .transport, .persistence, .unknown:
+        case .persistence:
+            return nil
+        case .transport, .unknown:
             return .transientFailure
         case .protocolMismatch:
             return .incompatibleAppServer

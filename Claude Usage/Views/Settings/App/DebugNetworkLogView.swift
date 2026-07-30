@@ -10,15 +10,62 @@ import Combine
 import SwiftUI
 import UsageCore
 
+struct ProviderDiagnosticRequestIdentity: Hashable {
+    let profileID: UUID?
+    let providerRevision: UInt64?
+
+    init(profile: Profile?) {
+        profileID = profile?.id
+        providerRevision = profile?.providerRevision
+    }
+}
+
+@MainActor
+final class ProviderDiagnosticsPresentationModel: ObservableObject {
+    typealias Snapshotter =
+        @MainActor (Profile?) async -> ProviderDiagnosticSnapshot
+
+    @Published private(set) var snapshot:
+        ProviderDiagnosticSnapshot?
+    @Published private(set) var isRefreshing = false
+
+    private let snapshotter: Snapshotter
+    private var latestRequest:
+        ProviderDiagnosticRequestIdentity?
+
+    init(
+        snapshotter: @escaping Snapshotter = {
+            await ProviderDiagnosticsService.shared.snapshot(for: $0)
+        }
+    ) {
+        self.snapshotter = snapshotter
+    }
+
+    func refresh(for profile: Profile?) async {
+        let identity = ProviderDiagnosticRequestIdentity(
+            profile: profile
+        )
+        latestRequest = identity
+        isRefreshing = true
+        let candidate = await snapshotter(profile)
+        guard !Task.isCancelled,
+              latestRequest == identity else {
+            return
+        }
+        snapshot = candidate
+        isRefreshing = false
+    }
+}
+
 struct DebugNetworkLogView: View {
     @StateObject private var loggerService = NetworkLoggerService.shared
     @StateObject private var profileManager = ProfileManager.shared
+    @StateObject private var diagnostics =
+        ProviderDiagnosticsPresentationModel()
     @State private var selectedDuration: LoggingDuration = .fifteenMinutes
     @State private var selectedLog: NetworkRequestLog?
     @State private var showClearConfirmation = false
     @State private var currentTime = Date()
-    @State private var diagnosticSnapshot: ProviderDiagnosticSnapshot?
-    @State private var isRefreshingDiagnostics = false
 
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
@@ -32,11 +79,12 @@ struct DebugNetworkLogView: View {
                 )
 
                 ProviderDiagnosticsCard(
-                    snapshot: diagnosticSnapshot,
-                    isRefreshing: isRefreshingDiagnostics,
+                    snapshot: diagnostics.snapshot,
+                    isRefreshing: diagnostics.isRefreshing,
                     onRefresh: {
+                        let profile = profileManager.activeProfile
                         Task {
-                            await refreshDiagnostics()
+                            await diagnostics.refresh(for: profile)
                         }
                     },
                     onCopy: copyDiagnostics
@@ -169,8 +217,13 @@ struct DebugNetworkLogView: View {
         .onReceive(timer) { _ in
             currentTime = Date()
         }
-        .task(id: profileManager.activeProfile?.id) {
-            await refreshDiagnostics()
+        .task(
+            id: ProviderDiagnosticRequestIdentity(
+                profile: profileManager.activeProfile
+            )
+        ) {
+            let profile = profileManager.activeProfile
+            await diagnostics.refresh(for: profile)
         }
     }
 
@@ -185,17 +238,10 @@ struct DebugNetworkLogView: View {
         }
     }
 
-    private func refreshDiagnostics() async {
-        isRefreshingDiagnostics = true
-        diagnosticSnapshot =
-            await ProviderDiagnosticsService.shared.snapshot(
-                for: profileManager.activeProfile
-            )
-        isRefreshingDiagnostics = false
-    }
-
     private func copyDiagnostics() {
-        guard let diagnosticSnapshot else { return }
+        guard let diagnosticSnapshot = diagnostics.snapshot else {
+            return
+        }
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(

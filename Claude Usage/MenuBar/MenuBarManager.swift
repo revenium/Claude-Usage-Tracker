@@ -895,6 +895,11 @@ class MenuBarManager: NSObject, ObservableObject {
         for failure: ProviderRefreshFailure,
         providerID: ProviderID? = nil
     ) -> AppError {
+        // Durable commit rejection is provider-neutral. Never relabel a
+        // storage failure as a transient provider outage.
+        if failure.kind == .persistence {
+            return .storageWriteFailed()
+        }
         if providerID == .codex,
            let presentation =
             ProviderErrorMapper.presentation(for: failure) {
