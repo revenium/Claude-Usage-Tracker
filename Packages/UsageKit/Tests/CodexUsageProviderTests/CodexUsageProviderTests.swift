@@ -336,7 +336,7 @@ final class CodexUsageProviderTests: XCTestCase {
         let attempt = try await CodexUsageProvider(
             client: loginFake.client
         ).startLogin(.browser())
-        await attempt.disconnect()
+        try await attempt.disconnect()
 
         let requests = try loginFake.recordedRequests()
         XCTAssertEqual(requests.map(\.method), [.accountLoginStart])

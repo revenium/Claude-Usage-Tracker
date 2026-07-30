@@ -162,12 +162,16 @@ public struct CodexUsageProvider: UsageProvider, Sendable {
                 challenge: challenge,
                 session: session
             )
-        } catch {
-            await session.close()
-            if let providerError = error as? UsageProviderError {
+        } catch let operationError {
+            do {
+                try await session.close()
+            } catch {
+                throw Self.map(error)
+            }
+            if let providerError = operationError as? UsageProviderError {
                 throw providerError
             }
-            throw Self.map(error)
+            throw Self.map(operationError)
         }
     }
 
@@ -474,14 +478,18 @@ public actor CodexLoginAttempt {
                 matching: .accountLoginCompleted
             )
             let completion = try decodeCompletion(notification)
-            await close()
+            try await close()
             return completion.success ? .succeeded : .failed
-        } catch {
-            await close()
-            if let providerError = error as? UsageProviderError {
+        } catch let operationError {
+            do {
+                try await close()
+            } catch {
+                throw CodexUsageProvider.map(error)
+            }
+            if let providerError = operationError as? UsageProviderError {
                 throw providerError
             }
-            throw CodexUsageProvider.map(error)
+            throw CodexUsageProvider.map(operationError)
         }
     }
 
@@ -507,26 +515,30 @@ public actor CodexLoginAttempt {
                 guard !completion.success else {
                     throw UsageProviderError.malformedResponse
                 }
-                await close()
+                try await close()
                 return .canceled
             case "notFound":
-                await close()
+                try await close()
                 return .notFound
             default:
                 throw UsageProviderError.malformedResponse
             }
-        } catch {
-            await close()
-            if let providerError = error as? UsageProviderError {
+        } catch let operationError {
+            do {
+                try await close()
+            } catch {
+                throw CodexUsageProvider.map(error)
+            }
+            if let providerError = operationError as? UsageProviderError {
                 throw providerError
             }
-            throw CodexUsageProvider.map(error)
+            throw CodexUsageProvider.map(operationError)
         }
     }
 
     /// Closes the login-scoped app-server without logging the Codex account out.
-    public func disconnect() async {
-        await close()
+    public func disconnect() async throws {
+        try await close()
     }
 
     private func decodeCompletion(
@@ -551,9 +563,9 @@ public actor CodexLoginAttempt {
         }
     }
 
-    private func close() async {
+    private func close() async throws {
         guard !isClosed else { return }
         isClosed = true
-        await session.close()
+        try await session.close()
     }
 }
