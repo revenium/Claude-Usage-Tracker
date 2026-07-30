@@ -39,6 +39,10 @@ class MenuBarManager: NSObject, ObservableObject {
     // Event monitor for closing popover on outside click
     private var eventMonitor: Any?
 
+    // Debounce the status-item click that also dismisses a transient popover.
+    private var lastPopoverCloseDate: Date = .distantPast
+    private weak var lastPopoverCloseButton: NSStatusBarButton?
+
     // Detached window reference (when popover is detached)
     private var detachedWindow: NSWindow?
 
@@ -84,6 +88,9 @@ class MenuBarManager: NSObject, ObservableObject {
 
     // Observer for display mode changes (single/multi profile)
     private var displayModeObserver: NSObjectProtocol?
+
+    // Observer for multi-profile selection and visual configuration changes
+    private var multiProfileConfigObserver: NSObjectProtocol?
 
     // Observer for screen/display changes (headless mode support)
     private var screenObserver: NSObjectProtocol?
@@ -205,6 +212,7 @@ class MenuBarManager: NSObject, ObservableObject {
 
         // Observe display mode changes (single/multi profile)
         observeDisplayModeChanges()
+        observeMultiProfileConfigChanges()
 
         // Setup headless mode observer if enabled (for Remote Desktop support)
         setupHeadlessModeObserver()
@@ -257,6 +265,10 @@ class MenuBarManager: NSObject, ObservableObject {
         if let displayModeObserver = displayModeObserver {
             NotificationCenter.default.removeObserver(displayModeObserver)
             self.displayModeObserver = nil
+        }
+        if let multiProfileConfigObserver = multiProfileConfigObserver {
+            NotificationCenter.default.removeObserver(multiProfileConfigObserver)
+            self.multiProfileConfigObserver = nil
         }
         if let screenObserver = screenObserver {
             NotificationCenter.default.removeObserver(screenObserver)
@@ -391,7 +403,9 @@ class MenuBarManager: NSObject, ObservableObject {
         let newPopover = NSPopover()
         newPopover.contentSize = Constants.WindowSizes.popoverSize
         newPopover.behavior = .semitransient
-        newPopover.animates = true
+        // Native animated resizing recurses indefinitely with preferredContentSize
+        // on macOS 26/27. PopoverContentView provides a fixed-size content animation.
+        newPopover.animates = false
         newPopover.delegate = self
         newPopover.contentViewController = createContentViewController()
 
@@ -455,7 +469,7 @@ class MenuBarManager: NSObject, ObservableObject {
         let popover = NSPopover()
         popover.contentSize = Constants.WindowSizes.popoverSize
         popover.behavior = .semitransient  // Changed to allow detaching
-        popover.animates = true
+        popover.animates = false
         popover.delegate = self
 
         popover.contentViewController = createContentViewController()
@@ -475,10 +489,18 @@ class MenuBarManager: NSObject, ObservableObject {
             }
         )
 
-        return NSHostingController(rootView: contentView)
+        let hostingController = NSHostingController(rootView: contentView)
+        hostingController.preferredContentSize = Constants.WindowSizes.popoverSize
+        hostingController.sizingOptions = .preferredContentSize
+        return hostingController
     }
 
     @objc private func togglePopover(_ sender: Any?) {
+        if NSApp.currentEvent?.type == .rightMouseUp {
+            showContextMenu(for: sender as? NSStatusBarButton)
+            return
+        }
+
         // Determine which button was clicked
         let clickedButton: NSStatusBarButton?
         if let button = sender as? NSStatusBarButton {
@@ -528,20 +550,31 @@ class MenuBarManager: NSObject, ObservableObject {
                     closePopover()
                 } else {
                     // Different button - close current and show at new position
-                    popover.performClose(nil)
+                    // Close synchronously. Replacing the hosting controller while an
+                    // asynchronous close is in progress can trigger BAD_ACCESS.
+                    popover.close()
                     stopMonitoringForOutsideClicks()
-                    // Update content view controller for new profile data
-                    popover.contentViewController = createContentViewController()
+                    NSApp.activate(ignoringOtherApps: true)
                     popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
                     currentPopoverButton = button
                     startMonitoringForOutsideClicks()
                 }
             } else {
-                // Popover not shown - show it
+                // Treat the status-item click that dismissed this same popover as
+                // a close, rather than immediately bouncing the popover open again.
+                if Self.shouldSuppressPopoverOpen(
+                    button: button,
+                    lastButton: lastPopoverCloseButton,
+                    lastCloseDate: lastPopoverCloseDate
+                ) {
+                    return
+                }
+
                 // Stop any existing monitor first
                 stopMonitoringForOutsideClicks()
                 // Update content view controller for current profile data
                 popover.contentViewController = createContentViewController()
+                NSApp.activate(ignoringOtherApps: true)
                 popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
                 currentPopoverButton = button
                 startMonitoringForOutsideClicks()
@@ -549,10 +582,78 @@ class MenuBarManager: NSObject, ObservableObject {
         }
     }
 
+    static func shouldSuppressPopoverOpen(
+        button: AnyObject,
+        lastButton: AnyObject?,
+        lastCloseDate: Date,
+        now: Date = Date()
+    ) -> Bool {
+        guard let lastButton, button === lastButton else { return false }
+        return now.timeIntervalSince(lastCloseDate) < 0.25
+    }
+
+    static func makeContextMenu(
+        target: AnyObject,
+        refreshAction: Selector,
+        settingsAction: Selector,
+        quitAction: Selector
+    ) -> NSMenu {
+        let menu = NSMenu()
+
+        let refreshItem = NSMenuItem(
+            title: "common.refresh".localized,
+            action: refreshAction,
+            keyEquivalent: ""
+        )
+        refreshItem.target = target
+        menu.addItem(refreshItem)
+        menu.addItem(.separator())
+
+        let settingsItem = NSMenuItem(
+            title: "common.settings".localized,
+            action: settingsAction,
+            keyEquivalent: ","
+        )
+        settingsItem.keyEquivalentModifierMask = .command
+        settingsItem.target = target
+        menu.addItem(settingsItem)
+
+        let quitItem = NSMenuItem(
+            title: "common.quit".localized,
+            action: quitAction,
+            keyEquivalent: "q"
+        )
+        quitItem.keyEquivalentModifierMask = .command
+        quitItem.target = target
+        menu.addItem(quitItem)
+
+        return menu
+    }
+
+    private func showContextMenu(for button: NSStatusBarButton?) {
+        guard let button, let window = button.window else { return }
+
+        let menu = Self.makeContextMenu(
+            target: self,
+            refreshAction: #selector(contextMenuRefresh),
+            settingsAction: #selector(preferencesClicked),
+            quitAction: #selector(quitClicked)
+        )
+        let buttonRect = button.convert(button.bounds, to: nil)
+        let screenRect = window.convertToScreen(buttonRect)
+        menu.popUp(positioning: nil, at: screenRect.origin, in: nil)
+    }
+
+    @objc private func contextMenuRefresh() {
+        refreshUsage()
+    }
+
     private func closePopover() {
         popover?.performClose(nil)
         stopMonitoringForOutsideClicks()
+        lastPopoverCloseButton = currentPopoverButton
         currentPopoverButton = nil
+        lastPopoverCloseDate = Date()
     }
 
     private func startMonitoringForOutsideClicks() {
@@ -735,13 +836,25 @@ class MenuBarManager: NSObject, ObservableObject {
             Task { @MainActor in
                 // Handle differently based on display mode
                 if self.profileManager.displayMode == .multi {
-                    // Multi-profile mode - refresh all profile icons
-                    self.setupMultiProfileMode()
+                    self.updateMultiProfileDisplay()
                 } else {
                     // Single profile mode
                     let newConfig = self.profileManager.activeProfile?.iconConfig ?? .default
                     self.updateMenuBarDisplay(with: newConfig)
                 }
+            }
+        }
+    }
+
+    private func observeMultiProfileConfigChanges() {
+        multiProfileConfigObserver = NotificationCenter.default.addObserver(
+            forName: .multiProfileConfigChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in
+                self.updateMultiProfileDisplay()
             }
         }
     }
@@ -828,6 +941,29 @@ class MenuBarManager: NSObject, ObservableObject {
 
         // Refresh data for all selected profiles that have credentials
         refreshAllSelectedProfiles()
+    }
+
+    /// Applies multi-profile selection and visual changes without recreating
+    /// retained NSStatusItems, preserving their macOS and third-party ordering.
+    private func updateMultiProfileDisplay() {
+        let config = profileManager.multiProfileConfig
+
+        statusBarUIManager?.updateMultiProfileConfiguration(
+            profiles: profileManager.profiles,
+            target: self,
+            action: #selector(togglePopover)
+        )
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.statusBarUIManager?.updateMultiProfileButtons(
+                profiles: self.profileManager.profiles,
+                config: config,
+                activeProfileId: self.profileManager.activeProfile?.id
+            )
+        }
+
+        LoggingService.shared.log("MenuBarManager: Multi-profile display updated incrementally")
     }
 
     /// Refreshes usage data for all profiles selected for multi-profile display
@@ -1633,28 +1769,44 @@ extension MenuBarManager: NSPopoverDelegate {
         return true
     }
 
+    func popoverDidClose(_ notification: Notification) {
+        lastPopoverCloseDate = Date()
+        lastPopoverCloseButton = currentPopoverButton
+    }
+
     func detachableWindow(for popover: NSPopover) -> NSWindow? {
         // Stop monitoring for outside clicks when detaching
         stopMonitoringForOutsideClicks()
 
-        // Create a new window with NEW content view controller
-        // This prevents the popover from losing its content
-        let newContentViewController = createContentViewController()
+        // Use a controller without the popover's preferredContentSize options;
+        // those constraints conflict with a detached window's content sizing.
+        let contentView = PopoverContentView(
+            manager: self,
+            onRefresh: { [weak self] in
+                self?.refreshUsage()
+            },
+            onPreferences: { [weak self] in
+                self?.closePopoverOrWindow()
+                self?.preferencesClicked()
+            }
+        )
+        let hostingController = NSHostingController(rootView: contentView)
 
         let window = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 320, height: 600),
-            styleMask: [.titled, .closable, .fullSizeContentView, .nonactivatingPanel, .hudWindow],
+            contentRect: NSRect(x: 0, y: 0, width: 280, height: 600),
+            styleMask: [.titled, .closable, .nonactivatingPanel, .hudWindow],
             backing: .buffered,
             defer: false
         )
-        window.contentViewController = newContentViewController
+        window.contentViewController = hostingController
         window.title = ""
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         window.isMovableByWindowBackground = true
-        window.setContentSize(NSSize(width: 320, height: 600))
+        window.setContentSize(NSSize(width: 280, height: 600))
         window.isReleasedWhenClosed = false
         window.level = .floating
+        window.collectionBehavior.insert(.fullScreenAuxiliary)
         window.isRestorable = false
         window.delegate = self
         window.backgroundColor = .clear
@@ -1671,7 +1823,7 @@ extension MenuBarManager: StatusBarUIManagerDelegate {
     func statusBarAppearanceDidChange() {
         // Safe from infinite loops: StatusBarUIManager's observer deduplicates by
         // appearance name, and setButtonImage() only assigns button.image when the
-        // rendered TIFF data actually changes — so even if setting button.image
+        // rendered CGImage data actually changes — so even if setting button.image
         // triggers effectiveAppearance KVO, the cycle stops immediately.
         cachedIsDarkMode = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
         cachedImageKey = ""

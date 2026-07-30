@@ -61,6 +61,9 @@ struct PopoverContentView: View {
 
     @State private var isRefreshing = false
     @State private var showInsights = false
+    // Replaces NSPopover's native resize animation, which can recurse indefinitely
+    // on macOS 26/27 when preferredContentSize drives the hosting controller.
+    @State private var appeared = false
     @StateObject private var profileManager = ProfileManager.shared
 
     private func profileInitials(for name: String) -> String {
@@ -201,6 +204,14 @@ struct PopoverContentView: View {
         .padding(.bottom, 8)
         .frame(width: 280)
         .background(VisualEffectBackground())
+        .opacity(appeared ? 1 : 0)
+        .scaleEffect(appeared ? 1 : 0.96, anchor: .top)
+        .onAppear {
+            appeared = false
+            withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+                appeared = true
+            }
+        }
     }
 }
 

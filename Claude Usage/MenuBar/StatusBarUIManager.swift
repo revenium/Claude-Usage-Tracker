@@ -51,10 +51,13 @@ final class StatusBarUIManager {
             let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
             // Stable identifier so Bartender and similar tools can reliably track this item
             statusItem.autosaveName = "claude-usage-tracker.session"
+            // Override a persisted hidden state from a prior Command-drag.
+            statusItem.isVisible = true
 
             if let button = statusItem.button {
                 button.action = action
                 button.target = target
+                button.sendAction(on: [.leftMouseUp, .rightMouseUp])
                 // Set a temporary placeholder - will be updated with actual logo
                 button.title = ""
             } else {
@@ -70,10 +73,12 @@ final class StatusBarUIManager {
                 let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
                 // Stable identifier so Bartender and similar tools can reliably track this item
                 statusItem.autosaveName = "claude-usage-tracker.\(metricConfig.metricType.rawValue)"
+                statusItem.isVisible = true
 
                 if let button = statusItem.button {
                     button.action = action
                     button.target = target
+                    button.sendAction(on: [.leftMouseUp, .rightMouseUp])
                 } else {
                     LoggingService.shared.logWarning("Status bar button is nil for \(metricConfig.metricType.displayName) - screens: \(NSScreen.screens.count)")
                 }
@@ -121,10 +126,12 @@ final class StatusBarUIManager {
             let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
             // Stable identifier so Bartender and similar tools can reliably track this item
             statusItem.autosaveName = "claude-usage-tracker.\(metricType.rawValue)"
+            statusItem.isVisible = true
 
             if let button = statusItem.button {
                 button.action = action
                 button.target = target
+                button.sendAction(on: [.leftMouseUp, .rightMouseUp])
                 if metricType == .session {
                     // Default logo placeholder
                     button.title = ""
@@ -191,9 +198,11 @@ final class StatusBarUIManager {
             let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
             // Stable identifier so Bartender and similar tools can reliably track this item
             statusItem.autosaveName = "claude-usage-tracker.multi.default"
+            statusItem.isVisible = true
             if let button = statusItem.button {
                 button.action = action
                 button.target = target
+                button.sendAction(on: [.leftMouseUp, .rightMouseUp])
                 button.title = ""
             } else {
                 LoggingService.shared.logWarning("Multi-profile status bar button is nil - screens: \(NSScreen.screens.count)")
@@ -207,10 +216,12 @@ final class StatusBarUIManager {
                 let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
                 // Stable identifier so Bartender and similar tools can reliably track this item
                 statusItem.autosaveName = "claude-usage-tracker.profile.\(profile.id.uuidString)"
+                statusItem.isVisible = true
 
                 if let button = statusItem.button {
                     button.action = action
                     button.target = target
+                    button.sendAction(on: [.leftMouseUp, .rightMouseUp])
                 } else {
                     LoggingService.shared.logWarning("Multi-profile status bar button is nil for \(profile.name) - screens: \(NSScreen.screens.count)")
                 }
@@ -222,6 +233,68 @@ final class StatusBarUIManager {
         }
 
         observeAppearanceChanges()
+    }
+
+    /// Updates the selected multi-profile status items without recreating retained items.
+    /// This preserves macOS item identity and the ordering remembered by menu-bar tools.
+    func updateMultiProfileConfiguration(profiles: [Profile], target: AnyObject, action: Selector) {
+        guard isMultiProfileMode else {
+            setupMultiProfile(profiles: profiles, target: target, action: action)
+            return
+        }
+
+        let selectedProfiles = profiles.filter { $0.isSelectedForDisplay }
+        let desiredIDs: Set<UUID> = selectedProfiles.isEmpty
+            ? [Self.multiProfileDefaultPlaceholderID]
+            : Set(selectedProfiles.map(\.id))
+        let currentIDs = Set(multiProfileStatusItems.keys)
+
+        let idsToRemove = currentIDs.subtracting(desiredIDs)
+        for profileID in idsToRemove {
+            if let statusItem = multiProfileStatusItems.removeValue(forKey: profileID) {
+                if let button = statusItem.button {
+                    lastImageData.removeValue(forKey: ObjectIdentifier(button))
+                    button.image = nil
+                    button.action = nil
+                    button.target = nil
+                }
+                NSStatusBar.system.removeStatusItem(statusItem)
+                LoggingService.shared.logUIEvent("Multi-profile: Removed status item for \(profileID)")
+            }
+        }
+
+        let idsToAdd = desiredIDs.subtracting(currentIDs)
+        if selectedProfiles.isEmpty, idsToAdd.contains(Self.multiProfileDefaultPlaceholderID) {
+            let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+            statusItem.autosaveName = "claude-usage-tracker.multi.default"
+            statusItem.isVisible = true
+            if let button = statusItem.button {
+                button.action = action
+                button.target = target
+                button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+                button.title = ""
+            }
+            multiProfileStatusItems[Self.multiProfileDefaultPlaceholderID] = statusItem
+            LoggingService.shared.logUIEvent("Multi-profile: Added default logo status item")
+        } else {
+            // Preserve profile order for first-time additions while retaining existing item identity.
+            for profile in selectedProfiles where idsToAdd.contains(profile.id) {
+                let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+                statusItem.autosaveName = "claude-usage-tracker.profile.\(profile.id.uuidString)"
+                statusItem.isVisible = true
+                if let button = statusItem.button {
+                    button.action = action
+                    button.target = target
+                    button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+                }
+                multiProfileStatusItems[profile.id] = statusItem
+                LoggingService.shared.logUIEvent("Multi-profile: Added status item for \(profile.name)")
+            }
+        }
+
+        LoggingService.shared.logUIEvent(
+            "Multi-profile config updated: removed=\(idsToRemove.count), added=\(idsToAdd.count), kept=\(currentIDs.intersection(desiredIDs).count)"
+        )
     }
 
     /// Adds a thin green underline to an image to indicate the active profile.
@@ -591,13 +664,23 @@ final class StatusBarUIManager {
     /// This prevents triggering effectiveAppearance KVO when the image is identical.
     private func setButtonImage(_ button: NSStatusBarButton, image: NSImage) {
         let buttonId = ObjectIdentifier(button)
-        guard let newData = image.tiffRepresentation else {
+        guard let newData = Self.imageFingerprint(image) else {
             button.image = image
             return
         }
         if lastImageData[buttonId] == newData { return }
         lastImageData[buttonId] = newData
         button.image = image
+    }
+
+    /// Returns stable pixel bytes without invoking NSImage.tiffRepresentation, whose
+    /// TIFF error-handler initialization crashes under the macOS 26 SDK.
+    static func imageFingerprint(_ image: NSImage) -> Data? {
+        guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
+              let data = cgImage.dataProvider?.data else {
+            return nil
+        }
+        return data as Data
     }
 
     /// Debounces appearance change notifications so multiple displays/buttons

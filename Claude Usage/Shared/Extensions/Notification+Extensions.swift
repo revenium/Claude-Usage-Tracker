@@ -20,6 +20,10 @@ extension Notification.Name {
     /// Posted when the display mode changes (single/multi profile)
     static let displayModeChanged = Notification.Name("displayModeChanged")
 
+    /// Posted when multi-profile selection or visual configuration changes.
+    /// Retained status items are updated in place instead of being recreated.
+    static let multiProfileConfigChanged = Notification.Name("multiProfileConfigChanged")
+
     /// Posted when auto-switch profile is triggered (for UI reactivity)
     static let autoSwitchProfileTriggered = Notification.Name("autoSwitchProfileTriggered")
 }

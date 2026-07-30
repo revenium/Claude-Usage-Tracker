@@ -123,6 +123,26 @@ final class BorderlessSettingsWindow: NSWindow {
 
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
+
+    static func isCloseShortcut(
+        modifierFlags: NSEvent.ModifierFlags,
+        charactersIgnoringModifiers: String?
+    ) -> Bool {
+        modifierFlags.contains(.command)
+            && charactersIgnoringModifiers?.lowercased() == "w"
+    }
+
+    // Borderless windows do not automatically route Command-W to performClose.
+    override func keyDown(with event: NSEvent) {
+        if Self.isCloseShortcut(
+            modifierFlags: event.modifierFlags,
+            charactersIgnoringModifiers: event.charactersIgnoringModifiers
+        ) {
+            close()
+            return
+        }
+        super.keyDown(with: event)
+    }
 }
 
 /// Builds the settings window — fully borderless, no system titlebar.
