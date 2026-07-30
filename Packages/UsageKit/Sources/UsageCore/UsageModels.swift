@@ -237,21 +237,24 @@ public struct UsageSummary: Codable, Equatable, Sendable {
     }
 }
 
+/// Informational credit balance supplied by a provider for display.
+///
+/// Credits are deliberately read-only in UsageCore. This type exposes no
+/// mutation or redemption operation; any provider action API belongs outside
+/// the usage-report contract.
 public struct UsageCredit: Codable, Equatable, Sendable, Identifiable {
     public var id: UsageMetricID
     public var displayName: String?
     public var balance: Double
     public var unit: UsageUnit
     public var resetsAt: Date?
-    public var isReadOnly: Bool
 
     public init(
         id: UsageMetricID,
         displayName: String? = nil,
         balance: Double,
         unit: UsageUnit,
-        resetsAt: Date? = nil,
-        isReadOnly: Bool = true
+        resetsAt: Date? = nil
     ) throws {
         guard balance.isFinite, balance >= 0 else {
             throw UsageCoreValidationError.invalidValue(field: "usageCredit.balance")
@@ -261,7 +264,6 @@ public struct UsageCredit: Codable, Equatable, Sendable, Identifiable {
         self.balance = balance
         self.unit = unit
         self.resetsAt = resetsAt
-        self.isReadOnly = isReadOnly
     }
 
     public init(from decoder: Decoder) throws {
@@ -271,8 +273,7 @@ public struct UsageCredit: Codable, Equatable, Sendable, Identifiable {
             displayName: container.decodeIfPresent(String.self, forKey: .displayName),
             balance: container.decode(Double.self, forKey: .balance),
             unit: container.decode(UsageUnit.self, forKey: .unit),
-            resetsAt: container.decodeIfPresent(Date.self, forKey: .resetsAt),
-            isReadOnly: container.decode(Bool.self, forKey: .isReadOnly)
+            resetsAt: container.decodeIfPresent(Date.self, forKey: .resetsAt)
         )
     }
 }

@@ -75,7 +75,11 @@ final class UsageCoreTests: XCTestCase {
         XCTAssertEqual(decoded, report)
         XCTAssertEqual(decoded.limitGroups[0].windows.map(\.id.rawValue), ["primary", "secondary"])
         XCTAssertEqual(decoded.usageSummary?.metrics.count, 2)
-        XCTAssertTrue(decoded.credits[0].isReadOnly)
+        let encodedObject = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: data) as? [String: Any]
+        )
+        let encodedCredits = try XCTUnwrap(encodedObject["credits"] as? [[String: Any]])
+        XCTAssertNil(encodedCredits[0]["isReadOnly"])
     }
 
     func testDynamicGroupAndWindowIdentityIsStableAndOrderIndependent() throws {
@@ -168,6 +172,9 @@ final class UsageCoreTests: XCTestCase {
     }
 
     func testIdentifiersRejectAmbiguousOrUnsafeValuesAndInvalidJSON() throws {
+        XCTAssertEqual(ProviderID.claude.rawValue, "claude")
+        XCTAssertEqual(ProviderID.codex.rawValue, "codex")
+        XCTAssertNotEqual(ProviderID.claude, ProviderID.codex)
         XCTAssertThrowsError(try ProviderID(""))
         XCTAssertThrowsError(try ProviderID(" provider"))
         XCTAssertThrowsError(try UsageWindowID("window\nname"))
@@ -276,6 +283,31 @@ final class UsageCoreTests: XCTestCase {
         XCTAssertThrowsError(
             try JSONDecoder().decode(UsageReport.self, from: invalidReport)
         )
+    }
+
+    func testMinimalReportDecodingDefaultsAdditiveSurfaces() throws {
+        let minimalReport = Data(
+            """
+            {
+              "providerID": "claude",
+              "health": {
+                "status": "healthy",
+                "checkedAt": \(fetchedAt.timeIntervalSinceReferenceDate)
+              },
+              "fetchedAt": \(fetchedAt.timeIntervalSinceReferenceDate)
+            }
+            """.utf8
+        )
+
+        let decoded = try JSONDecoder().decode(UsageReport.self, from: minimalReport)
+
+        XCTAssertEqual(decoded.providerID, .claude)
+        XCTAssertTrue(decoded.limitGroups.isEmpty)
+        XCTAssertNil(decoded.account)
+        XCTAssertNil(decoded.usageSummary)
+        XCTAssertTrue(decoded.credits.isEmpty)
+        XCTAssertNil(decoded.sourceUpdatedAt)
+        XCTAssertNil(decoded.staleAt)
     }
 
     func testUsageProviderProtocolExposesAccountHealthCapabilitiesAndReport() async throws {

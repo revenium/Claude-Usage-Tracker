@@ -65,9 +65,9 @@ public struct UsageReport: Codable, Equatable, Sendable {
             providerID: container.decode(ProviderID.self, forKey: .providerID),
             account: container.decodeIfPresent(ProviderAccount.self, forKey: .account),
             health: container.decode(ProviderHealth.self, forKey: .health),
-            limitGroups: container.decode([UsageLimitGroup].self, forKey: .limitGroups),
+            limitGroups: container.decodeIfPresent([UsageLimitGroup].self, forKey: .limitGroups) ?? [],
             usageSummary: container.decodeIfPresent(UsageSummary.self, forKey: .usageSummary),
-            credits: container.decode([UsageCredit].self, forKey: .credits),
+            credits: container.decodeIfPresent([UsageCredit].self, forKey: .credits) ?? [],
             sourceUpdatedAt: container.decodeIfPresent(Date.self, forKey: .sourceUpdatedAt),
             fetchedAt: container.decode(Date.self, forKey: .fetchedAt),
             staleAt: container.decodeIfPresent(Date.self, forKey: .staleAt)

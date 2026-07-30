@@ -35,6 +35,14 @@ private func decodeStableIdentifier(
 public struct ProviderID: Hashable, Sendable, Codable, CustomStringConvertible {
     public let rawValue: String
 
+    private static func wellKnown(_ rawValue: String) -> ProviderID {
+        do {
+            return try ProviderID(rawValue)
+        } catch {
+            preconditionFailure("Invalid well-known provider identifier: \(rawValue)")
+        }
+    }
+
     public init(_ rawValue: String) throws {
         guard isValidStableIdentifier(rawValue) else {
             throw UsageCoreValidationError.invalidIdentifier(kind: "provider")
@@ -52,6 +60,12 @@ public struct ProviderID: Hashable, Sendable, Codable, CustomStringConvertible {
     }
 
     public var description: String { rawValue }
+
+    /// The stable identity used by the built-in Claude provider adapter.
+    public static let claude = ProviderID.wellKnown("claude")
+
+    /// The stable identity used by the built-in Codex provider.
+    public static let codex = ProviderID.wellKnown("codex")
 }
 
 public struct UsageLimitGroupID: Hashable, Sendable, Codable, CustomStringConvertible {
