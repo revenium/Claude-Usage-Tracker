@@ -35,7 +35,7 @@ sed \
     -e "s/__SHA256__/$sha256/g" \
     "$template" > "$output_path"
 
-if rg -q '__VERSION__|__SHA256__' "$output_path"; then
+if grep -Eq -- '__VERSION__|__SHA256__' "$output_path"; then
     echo "error: unresolved cask template placeholder" >&2
     exit 65
 fi

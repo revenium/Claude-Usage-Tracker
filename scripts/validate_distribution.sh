@@ -10,6 +10,18 @@ fail() {
     exit 1
 }
 
+contains() {
+    grep -Eq -- "$1" "$2"
+}
+
+contains_fixed() {
+    grep -Fq -- "$1" "$2"
+}
+
+count_matches() {
+    grep -Ec -- "$1" "$2" || true
+}
+
 expected_repo='https://github.com/revenium/Claude-Usage-Tracker'
 expected_feed="$expected_repo/releases/latest/download/appcast.xml"
 expected_bundle_id='HamedElfayome.Claude-Usage'
@@ -21,28 +33,28 @@ plutil -lint \
     'Claude Usage/ClaudeUsageTracker.entitlements' >/dev/null
 
 info_plist='Claude Usage/Resources/Info.plist'
-rg -q '<string>\$\(SPARKLE_FEED_URL\)</string>' "$info_plist" \
+contains '<string>\$\(SPARKLE_FEED_URL\)</string>' "$info_plist" \
     || fail 'Info.plist must use the injected Sparkle feed build setting'
-rg -q '<string>\$\(SPARKLE_PUBLIC_ED_KEY\)</string>' "$info_plist" \
+contains '<string>\$\(SPARKLE_PUBLIC_ED_KEY\)</string>' "$info_plist" \
     || fail 'Info.plist must use the injected Sparkle public-key build setting'
-rg -q '<string>\$\(REVENIUM_UPDATE_CHANNEL\)</string>' "$info_plist" \
+contains '<string>\$\(REVENIUM_UPDATE_CHANNEL\)</string>' "$info_plist" \
     || fail 'Info.plist must use the injected update channel build setting'
 
 project='Claude Usage.xcodeproj/project.pbxproj'
-bundle_id_count=$(rg -c "PRODUCT_BUNDLE_IDENTIFIER = \"$expected_bundle_id\";" "$project")
+bundle_id_count=$(count_matches "PRODUCT_BUNDLE_IDENTIFIER = \"$expected_bundle_id\";" "$project")
 [[ $bundle_id_count -eq 2 ]] \
     || fail 'application bundle identifier changed or is not present in both configurations'
-rg -q 'MACOSX_DEPLOYMENT_TARGET = 14\.0;' "$project" \
+contains 'MACOSX_DEPLOYMENT_TARGET = 14\.0;' "$project" \
     || fail 'macOS 14 deployment target must be preserved'
-rg -q 'REVENIUM_UPDATE_CHANNEL = development;' "$project" \
+contains 'REVENIUM_UPDATE_CHANNEL = development;' "$project" \
     || fail 'Debug update channel is not development-isolated'
-rg -q 'REVENIUM_UPDATE_CHANNEL = production;' "$project" \
+contains 'REVENIUM_UPDATE_CHANNEL = production;' "$project" \
     || fail 'Release update channel is not production'
-[[ $(rg -c 'SPARKLE_FEED_URL = "";' "$project") -eq 2 ]] \
+[[ $(count_matches 'SPARKLE_FEED_URL = "";' "$project") -eq 2 ]] \
     || fail 'Debug and local Release feed defaults must both be empty'
-[[ $(rg -c 'SPARKLE_PUBLIC_ED_KEY = "";' "$project") -eq 2 ]] \
+[[ $(count_matches 'SPARKLE_PUBLIC_ED_KEY = "";' "$project") -eq 2 ]] \
     || fail 'Debug and local Release public-key defaults must both be empty'
-rg -q "static let appGroupIdentifier = \"$expected_app_group\"" \
+contains "static let appGroupIdentifier = \"$expected_app_group\"" \
     'Claude Usage/Shared/Utilities/Constants.swift' \
     || fail 'legacy preference/app-group identity changed'
 
@@ -68,51 +80,51 @@ active_paths=(
     'scripts'
 )
 
-if rg -n "$blocked_pattern" "${active_paths[@]}"; then
+if grep -ERn -- "$blocked_pattern" "${active_paths[@]}"; then
     fail 'active operational endpoint still references prior ownership'
 fi
 
-if rg -n 'github\.io/.+appcast|gh-pages' .github/workflows; then
+if grep -ERn -- 'github\.io/.+appcast|gh-pages' .github/workflows; then
     fail 'release workflows must not consume or publish the inherited Pages feed'
 fi
 
-rg -qF "$expected_feed" 'Claude Usage/Shared/Services/UpdateManager.swift' \
+contains_fixed "$expected_feed" 'Claude Usage/Shared/Services/UpdateManager.swift' \
     || fail 'runtime production feed does not match Revenium Releases'
 constants='Claude Usage/Shared/Utilities/Constants.swift'
-rg -q 'static let owner = "revenium"' "$constants" \
+contains 'static let owner = "revenium"' "$constants" \
     || fail 'application repository owner is not Revenium'
-rg -q 'static let repo = "Claude-Usage-Tracker"' "$constants" \
+contains 'static let repo = "Claude-Usage-Tracker"' "$constants" \
     || fail 'application repository name is not Claude-Usage-Tracker'
-rg -q 'repos/revenium/homebrew-tap/contents/Casks/claude-usage\.rb' \
+contains 'repos/revenium/homebrew-tap/contents/Casks/claude-usage\.rb' \
     '.github/workflows/update-homebrew-cask.yml' \
     || fail 'Homebrew workflow does not target the Revenium tap'
 homebrew_workflow='.github/workflows/update-homebrew-cask.yml'
 release_workflow='.github/workflows/release.yml'
-if rg -q 'workflow_dispatch' "$homebrew_workflow"; then
+if contains 'workflow_dispatch' "$homebrew_workflow"; then
     fail 'Homebrew tap token workflow must not have a manual tag-owned entry point'
 fi
-rg -q 'environment: release' "$homebrew_workflow" \
+contains 'environment: release' "$homebrew_workflow" \
     || fail 'Homebrew publication is not protected by the release environment'
-[[ $(rg -c 'HOMEBREW_TAP_TOKEN' "$release_workflow") -eq 1 ]] \
+[[ $(count_matches 'HOMEBREW_TAP_TOKEN' "$release_workflow") -eq 1 ]] \
     || fail 'Homebrew tap token must only be passed to the isolated cask publisher'
-rg -q 'HOMEBREW_TAP_TOKEN: \$\{\{ secrets\.HOMEBREW_TAP_TOKEN \}\}' "$release_workflow" \
+contains 'HOMEBREW_TAP_TOKEN: \$\{\{ secrets\.HOMEBREW_TAP_TOKEN \}\}' "$release_workflow" \
     || fail 'Homebrew tap token is not scoped to the isolated cask publisher call'
-rg -q 'metadata_commit == "\$source_commit"' "$homebrew_workflow" \
+contains 'metadata_commit == "\$source_commit"' "$homebrew_workflow" \
     || fail 'Homebrew publication does not bind metadata to the checked-out tag commit'
-rg -q 'merge-base --is-ancestor "\$source_commit" FETCH_HEAD' "$homebrew_workflow" \
+contains 'merge-base --is-ancestor "\$source_commit" FETCH_HEAD' "$homebrew_workflow" \
     || fail 'Homebrew publication does not require source containment in main'
-rg -q 'current_sha' "$homebrew_workflow" \
+contains 'current_sha' "$homebrew_workflow" \
     || fail 'Homebrew Contents API update lacks an optimistic blob-SHA guard'
 
-rg -q 'revenium-release-workflow:\$GITHUB_SHA' "$release_workflow" \
+contains 'revenium-release-workflow:\$GITHUB_SHA' "$release_workflow" \
     || fail 'release drafts do not carry exact-commit ownership provenance'
-rg -q -- '--draft' "$release_workflow" \
+contains '--draft' "$release_workflow" \
     || fail 'release workflow does not create a private draft'
-rg -q 'verified-draft' "$release_workflow" \
+contains 'verified-draft' "$release_workflow" \
     || fail 'release workflow does not re-download its draft assets'
-rg -q 'cmp -s' "$release_workflow" \
+contains 'cmp -s' "$release_workflow" \
     || fail 'release workflow does not byte-compare remote and local draft assets'
-rg -q -- '--draft=false' "$release_workflow" \
+contains '--draft=false' "$release_workflow" \
     || fail 'release workflow does not explicitly publish the verified draft'
 
 distribution_workflows=(
@@ -134,7 +146,7 @@ while IFS= read -r uses_line; do
     [[ $action_ref =~ ^[0-9a-f]{40}([[:space:]]|$) ]] \
         || fail "GitHub Action is not pinned to a full commit: $uses_line"
 done < <(
-    rg -o 'uses:[[:space:]]+[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+@[0-9A-Za-z_.-]+' \
+    grep -Eho -- 'uses:[[:space:]]+[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+@[0-9A-Za-z_.-]+' \
         "${distribution_workflows[@]}" \
         | sed -E 's/^.*uses:[[:space:]]+//'
 )
@@ -149,9 +161,9 @@ trap 'rm -f "$rendered_cask"' EXIT
     '99.99.99' \
     '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' \
     "$rendered_cask" >/dev/null
-rg -qF "$expected_repo/releases/download/v#{version}/Claude-Usage.zip" "$rendered_cask" \
+contains_fixed "$expected_repo/releases/download/v#{version}/Claude-Usage.zip" "$rendered_cask" \
     || fail 'rendered cask URL is not the version-pinned Revenium release asset'
-rg -q 'depends_on macos: ">= :sonoma"' "$rendered_cask" \
+contains 'depends_on macos: ">= :sonoma"' "$rendered_cask" \
     || fail 'rendered cask does not preserve the macOS 14 minimum'
 
 echo 'Distribution configuration validated.'

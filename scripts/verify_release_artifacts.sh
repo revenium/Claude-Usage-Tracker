@@ -209,11 +209,11 @@ done
 
 signature_details=$(codesign -dvvv "$app_path" 2>&1)
 if $require_developer_id; then
-    rg -q '^Authority=Developer ID Application:' <<< "$signature_details" || {
+    grep -Eq -- '^Authority=Developer ID Application:' <<< "$signature_details" || {
         echo 'error: app is not signed with a Developer ID Application certificate' >&2
         exit 65
     }
-    rg -q '^TeamIdentifier=[A-Z0-9]+$' <<< "$signature_details" || {
+    grep -Eq -- '^TeamIdentifier=[A-Z0-9]+$' <<< "$signature_details" || {
         echo 'error: Developer ID signature is missing a team identifier' >&2
         exit 65
     }
