@@ -7,9 +7,9 @@
 - Umbrella: `PRODUCT-2276`
 - Tracking wave: W00 — complete
 - Current delivery batch: B03 — Provider core
-- Current phases: P05/P06/P08 integrated and verified; P07 provider-tagged profile model in progress; P09 follows serially
-- Active implementation workers: P07 profile provider model; read-only B04/B05 design audits
-- Next action: Complete P07, then implement P09 profile-keyed refresh/presentation orchestration and ship B03
+- Current phases: P05/P06/P07/P08 integrated and verified; P09 profile-keyed refresh/presentation orchestration in progress
+- Active implementation workers: P09 refresh engine; independent B03 semantic audit follows the frozen P09 commit
+- Next action: Complete and audit P09, then run the integrated B03 ship pipeline
 
 ## Repository State at Initialization
 
@@ -43,9 +43,9 @@
 | W01 | Green baseline | P01 | Complete |
 | W02 | Safety foundations | P02, P03, P04 | Complete |
 | W03A | UsageKit boundary | P05 | Implemented pending B03 ship |
-| W03B | Transport and profile model | P06, P07 | P06 integrated; P07 in progress |
+| W03B | Transport and profile model | P06, P07 | Implemented pending B03 ship |
 | W03C | Codex provider | P08 | Implemented pending B03 ship |
-| W03D | Refresh integration | P09 | Pending |
+| W03D | Refresh integration | P09 | In progress |
 | W04 | Provider-aware UI parity | P10, P11, P12 | Pending |
 | W05A | Cross-cutting parity and distribution | P13, P14, P16 | Pending |
 | W05B | Localization/accessibility/UI automation | P15 | Pending |
@@ -71,6 +71,7 @@
 | P04 | PRODUCT-2277 | menu_reliability_audit | `747230b` final head | #8 | 2026-07-30 | Context menu, stable status items, popover/window/full-screen fixes, CGImage fingerprinting, Cmd+W, captured-profile auto-switch safety |
 | P05 | PRODUCT-2281 | usagekit_contracts | `00793e5` | Pending B03 | Pending merge | Foundation-only UsageCore contracts and characterized Claude adapter |
 | P06 | PRODUCT-2278 | codex_transport | `0647f4b` | Pending B03 | Pending merge | Bounded request/login-scoped app-server JSONL transport with callback-backed termination, reaping barrier, exact PID exit proof, and zero-orphan census |
+| P07 | PRODUCT-2286 | provider_profile_model | `6d07d6a` | Pending B03 | Pending merge | Strict provider-tagged profiles, canonical unique Codex homes, zero-profile provider choice, provider/revision CAS, fail-closed tombstones, verified migration, and transactional link/relink/unlink/delete recovery |
 | P08 | PRODUCT-2285 | codex_provider | `ea4c871` integrated head | Pending B03 | Pending merge | ChatGPT account/login/health/dynamic usage provider with one bounded refresh session, required-endpoint health, credit availability, UTC summaries, and process cleanup proof |
 
 ## Verification Evidence
@@ -105,6 +106,10 @@
 | 2026-07-30 | B02 final corrective head | production-shared A→B regression + full suite + Debug/Release | PASS | 1 focused and 218 full tests passed; both app executables verified at `747230b` |
 | 2026-07-30 | B02 final review/merge | all three review surfaces + independent exact-hash audit | PASS with documented reviewer limits | Six threads resolved; Tessie size ceiling and exhausted Greptile budget recorded in D37-D38; merged as `ab70776` |
 | 2026-07-30 | B03 integrated UsageKit | `swift test --package-path Packages/UsageKit` | PASS | 49 passed, 0 failed after P05/P06/P08 cherry-pick onto fresh `upstream/main` |
+| 2026-07-30 | P07 provider profile core | focused provider-core and security/current-usage integration suites | PASS | Frozen `6d07d6a`: 41/41 provider-core and 51/51 storage integration tests passed |
+| 2026-07-30 | P07 full app suite | unsigned `xcodebuild test` at frozen `6d07d6a` | PASS | Independent xcresult summary: 269 passed, 0 failed, 0 skipped |
+| 2026-07-30 | P07 package/build gates | UsageKit package plus Debug and universal Release app builds | PASS | 49/49 package tests; both app configurations succeeded; diff check clean |
+| 2026-07-30 | P07 exact-hash semantic audit | provider identity, migration, Keychain isolation, rollback, tombstone lifecycle, and P09 handoff | PASS | Independent clean verdict on `6d07d6ac55e1512effd2eadef90dac89cb721321` |
 
 ## Blockers
 
@@ -140,3 +145,7 @@
 - Corrected P06 process ownership: successful cleanup now requires the Foundation termination callback, bounded SIGKILL escalation, and a `waitUntilExit` reaping barrier; independent reruns prove exact fixture PIDs reach ESRCH and leave a zero-orphan census.
 - Started dependency-independent P08 typed account/rate-limit/usage/login provider work on the verified combined P05/P06 package boundary.
 - User authorized implementation and audited auto-merge for every delivery PR.
+- Completed P07 with strict closed provider tags, canonical physical Codex homes, zero-profile bootstrap, post-choice legacy Claude migration, provider/revision immutability, transactional Codex home changes, and fail-closed deletion tombstones.
+- Closed P07 review findings covering existing-v3 migration clobbering, stale revision reset, provider/Keychain boundary bypasses, durable-marker corruption, ordinary-save identity changes, deletion recovery ordering, and active-survivor transitions.
+- Independently verified frozen P07 at 269/269 full app tests, 49/49 package tests, both app builds, and a clean exact-hash semantic audit.
+- Started P09 profile-keyed provider refresh orchestration on the frozen P07 contract.
