@@ -68,41 +68,61 @@ public struct CodexUsageProvider: UsageProvider, Sendable {
     public func health() async -> ProviderHealth {
         let checkedAt = now()
         do {
-            _ = try await readSupportedAccount(refreshToken: false)
+            try await client.withSession { session in
+                _ = try await readSupportedAccount(
+                    refreshToken: false,
+                    session: session
+                )
+                _ = try await requestRateLimits(session: session)
+            }
             return ProviderHealth(
                 status: .healthy,
                 checkedAt: checkedAt
             )
-        } catch let error as UsageProviderError {
-            return Self.health(for: error, checkedAt: checkedAt)
         } catch {
-            return ProviderHealth(
-                status: .unavailable,
-                checkedAt: checkedAt,
-                issue: .unknown
+            return Self.health(
+                for: Self.map(error),
+                checkedAt: checkedAt
             )
         }
     }
 
     public func fetchUsage() async throws -> UsageReport {
-        let account = try await readSupportedAccount(refreshToken: false)
-        let rateLimits = try await requestRateLimits()
-        let usage = try await requestOptionalTokenUsage()
+        let snapshot: RefreshSnapshot
+        do {
+            snapshot = try await client.withSession { session in
+                let account = try await readSupportedAccount(
+                    refreshToken: false,
+                    session: session
+                )
+                let rateLimits = try await requestRateLimits(session: session)
+                let usage = try await requestOptionalTokenUsage(
+                    session: session
+                )
+                return RefreshSnapshot(
+                    account: account,
+                    rateLimits: rateLimits,
+                    usage: usage
+                )
+            }
+        } catch {
+            throw Self.map(error)
+        }
         let fetchedAt = now()
 
         do {
             let mappedLimits = try CodexReportMapper.limitGroups(
-                from: rateLimits
+                from: snapshot.rateLimits
             )
             let mappedCredits = try CodexReportMapper.credits(
-                from: rateLimits
+                from: snapshot.rateLimits
             )
-            let mappedSummary = try usage.flatMap {
+            let mappedSummary = try snapshot.usage.flatMap {
                 try CodexReportMapper.usageSummary(from: $0)
             }
             return try UsageReport(
                 providerID: .codex,
-                account: account,
+                account: snapshot.account,
                 health: ProviderHealth(
                     status: .healthy,
                     checkedAt: fetchedAt
@@ -182,9 +202,13 @@ public struct CodexUsageProvider: UsageProvider, Sendable {
     public func disconnect() async {}
 
     private func readSupportedAccount(
-        refreshToken: Bool
+        refreshToken: Bool,
+        session: CodexAppServerSession? = nil
     ) async throws -> ProviderAccount {
-        switch try await requestAccountStatus(refreshToken: refreshToken) {
+        switch try await requestAccountStatus(
+            refreshToken: refreshToken,
+            session: session
+        ) {
         case let .supported(account):
             return account
         case .unauthenticated:
@@ -195,13 +219,15 @@ public struct CodexUsageProvider: UsageProvider, Sendable {
     }
 
     private func requestAccountStatus(
-        refreshToken: Bool
+        refreshToken: Bool,
+        session: CodexAppServerSession? = nil
     ) async throws -> CodexAccountStatus {
         let rawResponse: CodexJSONValue
         do {
-            rawResponse = try await client.request(
+            rawResponse = try await request(
                 .accountRead,
-                params: .object(["refreshToken": .bool(refreshToken)])
+                params: .object(["refreshToken": .bool(refreshToken)]),
+                session: session
             )
         } catch {
             throw Self.map(error)
@@ -235,10 +261,15 @@ public struct CodexUsageProvider: UsageProvider, Sendable {
         }
     }
 
-    private func requestRateLimits() async throws -> CodexRateLimitsResponse {
+    private func requestRateLimits(
+        session: CodexAppServerSession? = nil
+    ) async throws -> CodexRateLimitsResponse {
         let rawResponse: CodexJSONValue
         do {
-            rawResponse = try await client.request(.accountRateLimitsRead)
+            rawResponse = try await request(
+                .accountRateLimitsRead,
+                session: session
+            )
         } catch {
             throw Self.map(error)
         }
@@ -255,11 +286,16 @@ public struct CodexUsageProvider: UsageProvider, Sendable {
         return decoded
     }
 
-    private func requestOptionalTokenUsage()
+    private func requestOptionalTokenUsage(
+        session: CodexAppServerSession? = nil
+    )
         async throws -> CodexAccountTokenUsageResponse?
     {
         do {
-            let rawResponse = try await client.request(.accountUsageRead)
+            let rawResponse = try await request(
+                .accountUsageRead,
+                session: session
+            )
             return try CodexDomainDecoder.decode(
                 CodexAccountTokenUsageResponse.self,
                 from: rawResponse
@@ -277,6 +313,17 @@ public struct CodexUsageProvider: UsageProvider, Sendable {
         } catch {
             throw UsageProviderError.malformedResponse
         }
+    }
+
+    private func request(
+        _ method: CodexMethod,
+        params: CodexJSONValue? = nil,
+        session: CodexAppServerSession?
+    ) async throws -> CodexJSONValue {
+        if let session {
+            return try await session.request(method, params: params)
+        }
+        return try await client.request(method, params: params)
     }
 
     private static func loginChallenge(
@@ -455,6 +502,12 @@ public struct CodexUsageProvider: UsageProvider, Sendable {
             || host == "::1"
             || host == "[::1]"
     }
+}
+
+private struct RefreshSnapshot: Sendable {
+    var account: ProviderAccount
+    var rateLimits: CodexRateLimitsResponse
+    var usage: CodexAccountTokenUsageResponse?
 }
 
 public actor CodexLoginAttempt {

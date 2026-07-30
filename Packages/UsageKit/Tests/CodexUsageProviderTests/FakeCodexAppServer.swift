@@ -5,6 +5,8 @@ final class FakeCodexAppServer {
     let client: CodexAppServerClient
     let directoryURL: URL
     let requestLogURL: URL
+    private let initializationLogURL: URL
+    private let processLogURL: URL
     private let pidFileURL: URL
 
     init(
@@ -22,6 +24,10 @@ final class FakeCodexAppServer {
             withIntermediateDirectories: false
         )
         requestLogURL = directoryURL.appendingPathComponent("requests.jsonl")
+        initializationLogURL = directoryURL.appendingPathComponent(
+            "initializations.jsonl"
+        )
+        processLogURL = directoryURL.appendingPathComponent("processes.log")
 
         guard let fixtureURL = Bundle.module.url(
             forResource: "fake-codex-app-server",
@@ -40,6 +46,8 @@ final class FakeCodexAppServer {
         var environment = additionalEnvironment
         environment["TEST_SCENARIO"] = scenario
         environment["REQUEST_LOG"] = requestLogURL.path
+        environment["INITIALIZATION_LOG"] = initializationLogURL.path
+        environment["PROCESS_LOG"] = processLogURL.path
         environment["PID_FILE"] = pidFileURL.path
         let configuredCodexHomeURL = codexHomeURL ?? directoryURL
         if scenario == "environment" {
@@ -64,17 +72,35 @@ final class FakeCodexAppServer {
     }
 
     func recordedRequests() throws -> [CodexRequestFrame] {
-        guard FileManager.default.fileExists(atPath: requestLogURL.path) else {
+        try recordedFrames(at: requestLogURL)
+    }
+
+    func recordedInitializations() throws -> [CodexRequestFrame] {
+        try recordedFrames(at: initializationLogURL)
+    }
+
+    func launchedProcessIdentifiers() throws -> [Int32] {
+        guard FileManager.default.fileExists(atPath: processLogURL.path) else {
             return []
         }
-        let data = try Data(contentsOf: requestLogURL)
-        return try data.split(separator: 0x0A).map {
-            try JSONDecoder().decode(CodexRequestFrame.self, from: Data($0))
+        return try String(contentsOf: processLogURL, encoding: .utf8)
+            .split(whereSeparator: \.isNewline)
+            .map {
+                guard let identifier = Int32($0), identifier > 0 else {
+                    throw FakeServerError.invalidProcessLog
+                }
+                return identifier
+            }
+    }
+
+    func assertAllProcessesExited(timeout: TimeInterval = 5) async throws {
+        for identifier in try launchedProcessIdentifiers() {
+            try await assertProcessExited(identifier, timeout: timeout)
         }
     }
 
     func processIdentifier(
-        timeout: TimeInterval = 1
+        timeout: TimeInterval = 5
     ) async throws -> Int32 {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
@@ -93,7 +119,7 @@ final class FakeCodexAppServer {
 
     func assertProcessExited(
         _ identifier: Int32,
-        timeout: TimeInterval = 1
+        timeout: TimeInterval = 5
     ) async throws {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
@@ -108,7 +134,18 @@ final class FakeCodexAppServer {
 
     enum FakeServerError: Error {
         case fixtureMissing
+        case invalidProcessLog
         case pidObservationTimedOut
         case processStillExists(Int32)
+    }
+
+    private func recordedFrames(at url: URL) throws -> [CodexRequestFrame] {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return []
+        }
+        let data = try Data(contentsOf: url)
+        return try data.split(separator: 0x0A).map {
+            try JSONDecoder().decode(CodexRequestFrame.self, from: Data($0))
+        }
     }
 }

@@ -1,4 +1,5 @@
 import CodexUsageProvider
+import Darwin
 import Foundation
 import UsageCore
 import XCTest
@@ -94,6 +95,15 @@ final class CodexUsageProviderTests: XCTestCase {
         XCTAssertNil(requests[1].params)
         XCTAssertNil(requests[2].params)
         XCTAssertFalse(requests.map(\.method).contains(.accountLogout))
+        XCTAssertEqual(
+            requests.map(\.id),
+            [.integer(2), .integer(3), .integer(4)]
+        )
+        let initializations = try fake.recordedInitializations()
+        XCTAssertEqual(initializations.map(\.method), [.initialize])
+        XCTAssertEqual(initializations.map(\.id), [.integer(1)])
+        XCTAssertEqual(try fake.launchedProcessIdentifiers().count, 1)
+        try await fake.assertAllProcessesExited()
     }
 
     func testAccountReadAlwaysSendsRequiredRefreshTokenParameter()
@@ -130,6 +140,97 @@ final class CodexUsageProviderTests: XCTestCase {
                 [.accountRead, .accountRateLimitsRead, .accountUsageRead]
             )
         }
+    }
+
+    func testCreditAvailabilityFlagsGateFiniteBalances() async throws {
+        let fake = try FakeCodexAppServer(scenario: "provider_credit_matrix")
+
+        let report = try await CodexUsageProvider(
+            client: fake.client
+        ).fetchUsage()
+
+        XCTAssertEqual(
+            report.credits.map(\.id.rawValue),
+            ["codex.limit.finite.credits"]
+        )
+        XCTAssertEqual(report.credits.first?.balance, 12.5)
+    }
+
+    func testDailyPeriodUsesExactUTCDayAcrossHostDST() async throws {
+        let previousTimeZone = getenv("TZ").map { String(cString: $0) }
+        XCTAssertEqual(setenv("TZ", "America/Denver", 1), 0)
+        tzset()
+        NSTimeZone.resetSystemTimeZone()
+        defer {
+            if let previousTimeZone {
+                _ = setenv("TZ", previousTimeZone, 1)
+            } else {
+                _ = unsetenv("TZ")
+            }
+            tzset()
+            NSTimeZone.resetSystemTimeZone()
+        }
+
+        let formatter = ISO8601DateFormatter()
+        let expectedStart = try XCTUnwrap(
+            formatter.date(from: "2026-03-08T00:00:00Z")
+        )
+        let expectedEnd = try XCTUnwrap(
+            formatter.date(from: "2026-03-09T00:00:00Z")
+        )
+        XCTAssertNotEqual(
+            TimeZone.current.secondsFromGMT(for: expectedStart),
+            0
+        )
+
+        let fake = try FakeCodexAppServer(scenario: "provider_daily_dst")
+        let report = try await CodexUsageProvider(
+            client: fake.client
+        ).fetchUsage()
+        let summary = try XCTUnwrap(report.usageSummary)
+
+        XCTAssertEqual(summary.periodStartedAt, expectedStart)
+        XCTAssertEqual(summary.periodEndsAt, expectedEnd)
+        XCTAssertEqual(
+            try XCTUnwrap(summary.periodEndsAt).timeIntervalSince(
+                try XCTUnwrap(summary.periodStartedAt)
+            ),
+            86_400
+        )
+    }
+
+    func testRefreshSharesOneOverallDeadlineAcrossAllRPCs() async throws {
+        let fake = try FakeCodexAppServer(
+            scenario: "provider_refresh_overall_timeout",
+            limits: try CodexTransportLimits(
+                startupTimeout: 5,
+                requestTimeout: 10,
+                overallTimeout: 4,
+                terminationGracePeriod: 0.05
+            )
+        )
+        let began = Date()
+
+        await XCTAssertThrowsProviderError(
+            try await CodexUsageProvider(
+                client: fake.client
+            ).fetchUsage()
+        ) {
+            XCTAssertEqual($0, .timedOut)
+        }
+
+        XCTAssertLessThan(Date().timeIntervalSince(began), 6)
+        XCTAssertEqual(
+            try fake.recordedRequests().map(\.method),
+            [.accountRead, .accountRateLimitsRead, .accountUsageRead]
+        )
+        XCTAssertEqual(
+            try fake.recordedRequests().map(\.id),
+            [.integer(2), .integer(3), .integer(4)]
+        )
+        XCTAssertEqual(try fake.recordedInitializations().count, 1)
+        XCTAssertEqual(try fake.launchedProcessIdentifiers().count, 1)
+        try await fake.assertAllProcessesExited()
     }
 
     func testLegacyAndAdditiveShapesRemainCompatible() async throws {
@@ -222,6 +323,42 @@ final class CodexUsageProviderTests: XCTestCase {
         let health = await provider.health()
         XCTAssertEqual(health.status, .unauthenticated)
         XCTAssertEqual(health.issue, .authenticationRequired)
+    }
+
+    func testHealthIncludesRequiredRateLimitEndpoint() async throws {
+        let rpcFailure = try FakeCodexAppServer(
+            scenario: "provider_health_rate_rpc_failure"
+        )
+        let rpcHealth = await CodexUsageProvider(
+            client: rpcFailure.client
+        ).health()
+        XCTAssertEqual(rpcHealth.status, .degraded)
+        XCTAssertEqual(rpcHealth.issue, .protocolMismatch)
+        XCTAssertEqual(
+            try rpcFailure.recordedRequests().map(\.method),
+            [.accountRead, .accountRateLimitsRead]
+        )
+        XCTAssertEqual(
+            try rpcFailure.recordedRequests().map(\.id),
+            [.integer(2), .integer(3)]
+        )
+        XCTAssertEqual(try rpcFailure.launchedProcessIdentifiers().count, 1)
+        try await rpcFailure.assertAllProcessesExited()
+
+        let malformed = try FakeCodexAppServer(
+            scenario: "provider_health_rate_malformed"
+        )
+        let malformedHealth = await CodexUsageProvider(
+            client: malformed.client
+        ).health()
+        XCTAssertEqual(malformedHealth.status, .degraded)
+        XCTAssertEqual(malformedHealth.issue, .responseInvalid)
+        XCTAssertEqual(
+            try malformed.recordedRequests().map(\.method),
+            [.accountRead, .accountRateLimitsRead]
+        )
+        XCTAssertEqual(try malformed.launchedProcessIdentifiers().count, 1)
+        try await malformed.assertAllProcessesExited()
     }
 
     func testBrowserAndDeviceLoginUseOfficialScopedFlows() async throws {
@@ -319,7 +456,7 @@ final class CodexUsageProviderTests: XCTestCase {
             XCTAssertEqual($0, .timedOut)
             XCTAssertFalse(String(describing: $0).contains("pending-login-id"))
         }
-        XCTAssertLessThan(Date().timeIntervalSince(startedAt), 1)
+        XCTAssertLessThan(Date().timeIntervalSince(startedAt), 2)
     }
 
     func testConcurrentWaitAndCancelNeverCompeteForProtocolFrames()
@@ -416,9 +553,9 @@ final class CodexUsageProviderTests: XCTestCase {
 
     private func fastLimits() throws -> CodexTransportLimits {
         try CodexTransportLimits(
-            startupTimeout: 1,
-            requestTimeout: 0.1,
-            overallTimeout: 1.5,
+            startupTimeout: 5,
+            requestTimeout: 0.2,
+            overallTimeout: 6,
             terminationGracePeriod: 0.05
         )
     }

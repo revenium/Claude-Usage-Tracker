@@ -18,10 +18,16 @@ scenario="${TEST_SCENARIO:-happy}"
 if [ -n "${PID_FILE:-}" ]; then
     printf '%s\n' "$$" > "$PID_FILE"
 fi
+if [ -n "${PROCESS_LOG:-}" ]; then
+    printf '%s\n' "$$" >> "$PROCESS_LOG"
+fi
 
 read_line || exit 10
 initialize_line="$received_line"
 initialize_id="$(extract_id "$initialize_line")"
+if [ -n "${INITIALIZATION_LOG:-}" ]; then
+    printf '%s\n' "$initialize_line" >> "$INITIALIZATION_LOG"
+fi
 
 case "$initialize_line" in
     *'"method":"initialize"'*) ;;
@@ -64,7 +70,8 @@ if [ "$scenario" = "blocked_stdin" ]; then
     done
 fi
 
-read_line || exit 15
+while :; do
+read_line || exit 0
 request_line="$received_line"
 request_id="$(extract_id "$request_line")"
 
@@ -258,6 +265,65 @@ case "$scenario" in
             *) exit 35 ;;
         esac
         ;;
+    provider_credit_matrix)
+        case "$request_line" in
+            *'"method":"account/read"'*|*'"method":"account\/read"'*)
+                printf '{"id":%s,"result":{"account":{"type":"chatgpt","email":null,"planType":"pro"},"requiresOpenaiAuth":true}}\n' "$request_id"
+                ;;
+            *'"method":"account/rateLimits/read"'*|*'"method":"account\/rateLimits\/read"'*)
+                printf '{"id":%s,"result":{"rateLimits":{"limitId":"finite","primary":{"usedPercent":1}},"rateLimitsByLimitId":{"finite":{"limitId":"finite","primary":{"usedPercent":1},"credits":{"hasCredits":true,"unlimited":false,"balance":"12.5"}},"disabled":{"limitId":"disabled","primary":{"usedPercent":2},"credits":{"hasCredits":false,"unlimited":false,"balance":"999"}},"unlimited":{"limitId":"unlimited","primary":{"usedPercent":3},"credits":{"hasCredits":true,"unlimited":true,"balance":"999"}}}}}\n' "$request_id"
+                ;;
+            *'"method":"account/usage/read"'*|*'"method":"account\/usage\/read"'*)
+                printf '{"id":%s,"result":{}}\n' "$request_id"
+                ;;
+            *) exit 40 ;;
+        esac
+        ;;
+    provider_daily_dst)
+        case "$request_line" in
+            *'"method":"account/read"'*|*'"method":"account\/read"'*)
+                printf '{"id":%s,"result":{"account":{"type":"chatgpt","email":null,"planType":"plus"},"requiresOpenaiAuth":true}}\n' "$request_id"
+                ;;
+            *'"method":"account/rateLimits/read"'*|*'"method":"account\/rateLimits\/read"'*)
+                printf '{"id":%s,"result":{"rateLimits":{"limitId":"codex","primary":{"usedPercent":5}}}}\n' "$request_id"
+                ;;
+            *'"method":"account/usage/read"'*|*'"method":"account\/usage\/read"'*)
+                printf '{"id":%s,"result":{"dailyUsageBuckets":[{"startDate":"2026-03-08","tokens":100}]}}\n' "$request_id"
+                ;;
+            *) exit 41 ;;
+        esac
+        ;;
+    provider_refresh_overall_timeout)
+        case "$request_line" in
+            *'"method":"account/read"'*|*'"method":"account\/read"'*)
+                sleep 0.5
+                printf '{"id":%s,"result":{"account":{"type":"chatgpt","email":null,"planType":"plus"},"requiresOpenaiAuth":true}}\n' "$request_id"
+                ;;
+            *'"method":"account/rateLimits/read"'*|*'"method":"account\/rateLimits\/read"'*)
+                sleep 0.5
+                printf '{"id":%s,"result":{"rateLimits":{"limitId":"codex","primary":{"usedPercent":5}}}}\n' "$request_id"
+                ;;
+            *'"method":"account/usage/read"'*|*'"method":"account\/usage\/read"'*)
+                read_line
+                ;;
+            *) exit 43 ;;
+        esac
+        ;;
+    provider_health_rate_rpc_failure|provider_health_rate_malformed)
+        case "$request_line" in
+            *'"method":"account/read"'*|*'"method":"account\/read"'*)
+                printf '{"id":%s,"result":{"account":{"type":"chatgpt","email":null,"planType":"plus"},"requiresOpenaiAuth":true}}\n' "$request_id"
+                ;;
+            *'"method":"account/rateLimits/read"'*|*'"method":"account\/rateLimits\/read"'*)
+                if [ "$scenario" = "provider_health_rate_rpc_failure" ]; then
+                    printf '{"id":%s,"error":{"code":-32601,"message":"required endpoint missing"}}\n' "$request_id"
+                else
+                    printf '{"id":%s,"result":{"rateLimits":{"limitId":"codex","primary":{"usedPercent":"invalid"}}}}\n' "$request_id"
+                fi
+                ;;
+            *) exit 42 ;;
+        esac
+        ;;
     provider_api_key)
         printf '{"id":%s,"result":{"account":{"type":"apiKey"},"requiresOpenaiAuth":true}}\n' "$request_id"
         ;;
@@ -322,8 +388,22 @@ case "$scenario" in
         ;;
 esac
 
-# Provider fixtures model the real app-server's long-lived process. Keep the
-# protocol stream open until the request-scoped client explicitly closes it.
+# Usage refresh and health fixtures model several sequential RPCs in one
+# request-scoped app-server. Login fixtures keep their existing specialized
+# protocol handling and then wait for the client to close.
 case "$scenario" in
-    provider_*) read_line ;;
+    provider_current|provider_usage_unavailable|provider_usage_empty|\
+    provider_legacy_additive|provider_lossy_dynamic|provider_malformed_rate|\
+    provider_credit_matrix|provider_daily_dst|provider_health_rate_rpc_failure|\
+    provider_health_rate_malformed|provider_refresh_overall_timeout)
+        continue
+        ;;
+    provider_*)
+        read_line
+        break
+        ;;
+    *)
+        break
+        ;;
 esac
+done

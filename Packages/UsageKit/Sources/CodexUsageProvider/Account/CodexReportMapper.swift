@@ -50,6 +50,7 @@ enum CodexReportMapper {
         var credits: [UsageCredit] = []
         for (sourceID, snapshot) in selectedSnapshots(from: response) {
             guard let snapshotCredits = snapshot.credits,
+                  snapshotCredits.hasCredits,
                   !snapshotCredits.unlimited,
                   let balanceString = snapshotCredits.balance,
                   let balance = Double(balanceString),
@@ -170,13 +171,9 @@ enum CodexReportMapper {
 
         let dates = validBuckets.map(\.date)
         let periodStart = dates.min()
-        let periodEnd = dates.max().flatMap {
-            Calendar(identifier: .gregorian).date(
-                byAdding: .day,
-                value: 1,
-                to: $0
-            )
-        }
+        // Daily bucket dates are parsed at midnight UTC. Add one exact UTC day
+        // so the persisted period is independent of the host time zone and DST.
+        let periodEnd = dates.max()?.addingTimeInterval(86_400)
         return try UsageSummary(
             metrics: metrics,
             periodStartedAt: periodStart,

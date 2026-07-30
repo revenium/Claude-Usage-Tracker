@@ -73,6 +73,32 @@ public struct CodexAppServerClient: Sendable {
             clientInfo: clientInfo
         )
     }
+
+    /// Executes a bounded operation in one initialized app-server process.
+    ///
+    /// The session's overall timeout starts before initialization and is shared
+    /// by every request made by `operation`. Cleanup is awaited on every path.
+    public func withSession<Value: Sendable>(
+        _ operation: @escaping @Sendable (
+            CodexAppServerSession
+        ) async throws -> Value
+    ) async throws -> Value {
+        let session = try await openSession()
+        do {
+            let value = try await operation(session)
+            try await session.close()
+            return value
+        } catch let operationError {
+            do {
+                try await session.close()
+            } catch {
+                // A failed close means the owned child was not proven reaped.
+                // Surface that cleanup failure rather than hiding it.
+                throw error
+            }
+            throw operationError
+        }
+    }
 }
 
 public actor CodexAppServerSession {

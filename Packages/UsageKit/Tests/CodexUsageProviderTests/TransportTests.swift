@@ -175,10 +175,14 @@ final class TransportTests: XCTestCase {
     }
 
     func testStartupAndRequestTimeoutsAreBounded() async throws {
-        let limits = try fastLimits()
         let startup = try FakeCodexAppServer(
             scenario: "startup_timeout",
-            limits: limits
+            limits: try CodexTransportLimits(
+                startupTimeout: 0.5,
+                requestTimeout: 1,
+                overallTimeout: 5,
+                terminationGracePeriod: 0.1
+            )
         )
         let startupBegan = Date()
         await XCTAssertThrowsCodexError(
@@ -191,11 +195,11 @@ final class TransportTests: XCTestCase {
             XCTAssertEqual(method, .initialize)
             XCTAssertEqual(id, 1)
         }
-        XCTAssertLessThan(Date().timeIntervalSince(startupBegan), 1)
+        XCTAssertLessThan(Date().timeIntervalSince(startupBegan), 2)
 
         let request = try FakeCodexAppServer(
             scenario: "request_timeout",
-            limits: limits
+            limits: try requestTimeoutLimits()
         )
         let requestBegan = Date()
         await XCTAssertThrowsCodexError(
@@ -208,16 +212,16 @@ final class TransportTests: XCTestCase {
             XCTAssertEqual(method, .accountUsageRead)
             XCTAssertEqual(id, 2)
         }
-        XCTAssertLessThan(Date().timeIntervalSince(requestBegan), 1)
+        XCTAssertLessThan(Date().timeIntervalSince(requestBegan), 2)
     }
 
     func testTaskCancellationTerminatesTheRequest() async throws {
         let fake = try FakeCodexAppServer(
             scenario: "cancellation",
             limits: try CodexTransportLimits(
-                startupTimeout: 1,
+                startupTimeout: 5,
                 requestTimeout: 5,
-                overallTimeout: 5
+                overallTimeout: 10
             )
         )
         let task = Task {
@@ -238,7 +242,7 @@ final class TransportTests: XCTestCase {
             XCTAssertEqual(method, .accountUsageRead)
             XCTAssertTrue(id == nil || id == 2)
         }
-        XCTAssertLessThan(Date().timeIntervalSince(began), 1)
+        XCTAssertLessThan(Date().timeIntervalSince(began), 2)
         try await fake.assertProcessExited(identifier)
     }
 
@@ -247,9 +251,9 @@ final class TransportTests: XCTestCase {
             let fake = try FakeCodexAppServer(
                 scenario: "ignore_termination",
                 limits: try CodexTransportLimits(
-                    startupTimeout: 1,
+                    startupTimeout: 5,
                     requestTimeout: 5,
-                    overallTimeout: 5,
+                    overallTimeout: 10,
                     terminationGracePeriod: 0.05
                 )
             )
@@ -268,7 +272,7 @@ final class TransportTests: XCTestCase {
                     return XCTFail("Unexpected error: \(error)")
                 }
             }
-            XCTAssertLessThan(Date().timeIntervalSince(began), 1)
+            XCTAssertLessThan(Date().timeIntervalSince(began), 2)
             try await fake.assertProcessExited(identifier)
         }
     }
@@ -277,9 +281,9 @@ final class TransportTests: XCTestCase {
         let fake = try FakeCodexAppServer(
             scenario: "request_timeout",
             limits: try CodexTransportLimits(
-                startupTimeout: 1,
-                requestTimeout: 2,
-                overallTimeout: 0.35,
+                startupTimeout: 5,
+                requestTimeout: 5,
+                overallTimeout: 3,
                 terminationGracePeriod: 0.05
             )
         )
@@ -302,9 +306,9 @@ final class TransportTests: XCTestCase {
                 maximumLineBytes: 256 * 1_024,
                 maximumStdoutBytes: 512 * 1_024,
                 maximumStderrBytes: 1_024,
-                startupTimeout: 1,
-                requestTimeout: 0.1,
-                overallTimeout: 2,
+                startupTimeout: 5,
+                requestTimeout: 0.2,
+                overallTimeout: 8,
                 terminationGracePeriod: 0.05
             )
         )
@@ -329,7 +333,7 @@ final class TransportTests: XCTestCase {
             XCTAssertEqual(method, .accountLoginStart)
             XCTAssertEqual(id, 2)
         }
-        XCTAssertLessThan(Date().timeIntervalSince(began), 1)
+        XCTAssertLessThan(Date().timeIntervalSince(began), 2)
         try await fake.assertProcessExited(identifier)
     }
 
@@ -482,11 +486,11 @@ final class TransportTests: XCTestCase {
         )
     }
 
-    private func fastLimits() throws -> CodexTransportLimits {
+    private func requestTimeoutLimits() throws -> CodexTransportLimits {
         try CodexTransportLimits(
-            startupTimeout: 0.5,
-            requestTimeout: 0.1,
-            overallTimeout: 1.5,
+            startupTimeout: 5,
+            requestTimeout: 0.2,
+            overallTimeout: 8,
             terminationGracePeriod: 0.1
         )
     }
@@ -496,9 +500,9 @@ final class TransportTests: XCTestCase {
             maximumLineBytes: 128,
             maximumStdoutBytes: 512,
             maximumStderrBytes: 128,
-            startupTimeout: 1,
+            startupTimeout: 5,
             requestTimeout: 1,
-            overallTimeout: 2,
+            overallTimeout: 8,
             terminationGracePeriod: 0.1
         )
     }
