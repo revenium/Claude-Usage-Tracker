@@ -275,6 +275,12 @@ enum UsageNotificationPolicy {
                     }
                 }
 
+                if let pendingThreshold =
+                    state.pendingThreshold,
+                   !thresholds.contains(pendingThreshold) {
+                    state.pendingThreshold = nil
+                }
+
                 if let reachedThreshold = thresholds
                     .reversed()
                     .first(where: {
@@ -337,6 +343,38 @@ private struct PersistedUsageNotificationRecord: Codable {
     let state: UsageNotificationWindowState
 }
 
+private enum NormalizedNotificationLedgerLoad {
+    case absent
+    case valid(
+        [UsageNotificationWindowKey:
+            UsageNotificationWindowState]
+    )
+    case invalidOrFuture
+}
+
+private struct NormalizedNotificationReservation {
+    let token: UUID
+    let window: UsageNotificationWindowKey
+}
+
+private enum NotificationStatePersistenceError:
+    LocalizedError
+{
+    case normalizedLedgerUnavailable
+    case normalizedLedgerWriteFailed
+    case legacyStateWriteFailed
+
+    var errorDescription: String? {
+        switch self {
+        case .normalizedLedgerUnavailable:
+            return "Notification state uses an unreadable or newer schema."
+        case .normalizedLedgerWriteFailed,
+             .legacyStateWriteFailed:
+            return "Notification state could not be saved."
+        }
+    }
+}
+
 /// Manages user notifications for usage threshold alerts
 class NotificationManager: NotificationServiceProtocol {
     typealias NotificationRequestAdder = (
@@ -351,6 +389,7 @@ class NotificationManager: NotificationServiceProtocol {
     private let notificationRequestAdder: NotificationRequestAdder
     private let missingWindowRetention: TimeInterval
     private let maximumMissingWindowsPerScope: Int
+    private let normalizedLedgerIsUsable: Bool
     private static let normalizedLedgerKey =
         "normalizedUsageNotificationLedger.v1"
     private static let normalizedLedgerSchemaVersion = 1
@@ -360,7 +399,8 @@ class NotificationManager: NotificationServiceProtocol {
     private var normalizedWindowStates:
         [UsageNotificationWindowKey:
             UsageNotificationWindowState] = [:]
-    private var normalizedInFlightIdentities: Set<String> = []
+    private var normalizedInFlightReservations:
+        [String: NormalizedNotificationReservation] = [:]
 
     // Legacy notification identities retain their established persistence.
     // Normalized provider notifications use the versioned per-window ledger.
@@ -390,34 +430,48 @@ class NotificationManager: NotificationServiceProtocol {
             defaults.array(forKey: "sentNotifications")
                 as? [String] ?? []
         )
-        normalizedWindowStates =
-            Self.loadNormalizedLedger(from: defaults)
+        switch Self.loadNormalizedLedger(from: defaults) {
+        case .absent:
+            normalizedLedgerIsUsable = true
+        case .valid(let states):
+            normalizedLedgerIsUsable = true
+            normalizedWindowStates = states
+        case .invalidOrFuture:
+            normalizedLedgerIsUsable = false
+        }
     }
 
     private static func loadNormalizedLedger(
         from defaults: UserDefaults
-    ) -> [UsageNotificationWindowKey:
-        UsageNotificationWindowState] {
+    ) -> NormalizedNotificationLedgerLoad {
         guard let data = defaults.data(
             forKey: normalizedLedgerKey
+        ) else {
+            return .absent
+        }
+        guard let ledger = try? JSONDecoder().decode(
+            PersistedUsageNotificationLedger.self,
+            from: data
         ),
-              let ledger = try? JSONDecoder().decode(
-                  PersistedUsageNotificationLedger.self,
-                  from: data
-              ),
               ledger.schemaVersion
                 == normalizedLedgerSchemaVersion else {
-            return [:]
+            return .invalidOrFuture
         }
-        return Dictionary(
-            ledger.records.map {
-                ($0.window, $0.state)
-            },
-            uniquingKeysWith: { _, latest in latest }
+        return .valid(
+            Dictionary(
+                ledger.records.map {
+                    ($0.window, $0.state)
+                },
+                uniquingKeysWith: { _, latest in latest }
+            )
         )
     }
 
-    private func persistNormalizedLedgerLocked() {
+    @discardableResult
+    private func persistNormalizedLedgerLocked() -> Bool {
+        guard normalizedLedgerIsUsable else {
+            return false
+        }
         let records = normalizedWindowStates
             .map {
                 PersistedUsageNotificationRecord(
@@ -434,16 +488,24 @@ class NotificationManager: NotificationServiceProtocol {
                 Self.normalizedLedgerSchemaVersion,
             records: records
         )
-        if let data = try? JSONEncoder().encode(ledger) {
-            defaults.set(data, forKey: Self.normalizedLedgerKey)
+        guard let data = try? JSONEncoder().encode(ledger) else {
+            return false
         }
+        defaults.set(data, forKey: Self.normalizedLedgerKey)
+        return defaults.data(forKey: Self.normalizedLedgerKey)
+            == data
     }
 
-    private func persistSentNotificationsLocked() {
+    @discardableResult
+    private func persistSentNotificationsLocked() -> Bool {
         defaults.set(
             Array(sentNotificationIdentities),
             forKey: "sentNotifications"
         )
+        return Set(
+            defaults.array(forKey: "sentNotifications")
+                as? [String] ?? []
+        ) == sentNotificationIdentities
     }
 
     @discardableResult
@@ -480,7 +542,8 @@ class NotificationManager: NotificationServiceProtocol {
             report: report,
             settings: settings,
             now: now
-        ) else {
+        ),
+              normalizedLedgerIsUsable else {
             return
         }
 
@@ -517,16 +580,34 @@ class NotificationManager: NotificationServiceProtocol {
             activeKeys: activeKeys,
             now: now
         )
-        persistNormalizedLedgerLocked()
-        let events = evaluation.events.filter {
-            normalizedInFlightIdentities.insert(
-                $0.identity.persistenceKey
-            ).inserted
+        guard persistNormalizedLedgerLocked() else {
+            stateLock.unlock()
+            return
+        }
+        var reservedEvents: [(
+            event: UsageNotificationEvent,
+            token: UUID
+        )] = []
+        for event in evaluation.events {
+            let identifier = event.identity.persistenceKey
+            guard normalizedInFlightReservations[
+                identifier
+            ] == nil else {
+                continue
+            }
+            let token = UUID()
+            normalizedInFlightReservations[identifier] =
+                NormalizedNotificationReservation(
+                    token: token,
+                    window: event.identity.window
+                )
+            reservedEvents.append((event, token))
         }
         stateLock.unlock()
-        for event in events {
+        for reservation in reservedEvents {
             sendNormalizedAlert(
-                event,
+                reservation.event,
+                reservationToken: reservation.token,
                 profileName: profileName,
                 soundName: settings.soundName
             )
@@ -535,6 +616,7 @@ class NotificationManager: NotificationServiceProtocol {
 
     private func sendNormalizedAlert(
         _ event: UsageNotificationEvent,
+        reservationToken: UUID,
         profileName: String,
         soundName: String
     ) {
@@ -608,6 +690,7 @@ class NotificationManager: NotificationServiceProtocol {
             if let error {
                 self?.completeNormalizedNotification(
                     event,
+                    reservationToken: reservationToken,
                     succeeded: false
                 )
                 LoggingService.shared.logError(
@@ -618,6 +701,7 @@ class NotificationManager: NotificationServiceProtocol {
             }
             self?.completeNormalizedNotification(
                 event,
+                reservationToken: reservationToken,
                 succeeded: true
             )
             if let customSoundName {
@@ -632,12 +716,19 @@ class NotificationManager: NotificationServiceProtocol {
 
     private func completeNormalizedNotification(
         _ event: UsageNotificationEvent,
+        reservationToken: UUID,
         succeeded: Bool
     ) {
         let identifier = event.identity.persistenceKey
         stateLock.lock()
         defer { stateLock.unlock() }
-        normalizedInFlightIdentities.remove(identifier)
+        guard normalizedInFlightReservations[identifier]?
+                .token == reservationToken else {
+            return
+        }
+        normalizedInFlightReservations.removeValue(
+            forKey: identifier
+        )
         guard succeeded,
               var state =
                 normalizedWindowStates[
@@ -729,7 +820,19 @@ class NotificationManager: NotificationServiceProtocol {
             }
             .prefix(maximumMissingWindowsPerScope)
         let retainedKeys =
-            activeKeys.union(retainedMissing.map(\.key))
+            activeKeys
+                .union(retainedMissing.map(\.key))
+                .union(
+                    normalizedInFlightReservations.values
+                        .compactMap {
+                            reservation in
+                            let key = reservation.window
+                            return key.profileID == profileID
+                                && key.providerID == providerID
+                                ? key
+                                : nil
+                        }
+                )
         let removedKeys = Set(scoped.keys).subtracting(
             retainedKeys
         )
@@ -738,12 +841,6 @@ class NotificationManager: NotificationServiceProtocol {
         }
         normalizedWindowStates = normalizedWindowStates
             .filter { !removedKeys.contains($0.key) }
-        for key in removedKeys {
-            normalizedInFlightIdentities =
-                Set(normalizedInFlightIdentities.filter {
-                    !$0.hasPrefix(key.persistencePrefix)
-                })
-        }
     }
 
     func normalizedNotificationStateCount(
@@ -1071,31 +1168,37 @@ class NotificationManager: NotificationServiceProtocol {
     func clearNotificationsForProfile(
         _ profileID: UUID,
         providerID: ProviderID
-    ) {
+    ) throws {
         stateLock.lock()
+        defer { stateLock.unlock() }
+        guard normalizedLedgerIsUsable else {
+            throw NotificationStatePersistenceError
+                .normalizedLedgerUnavailable
+        }
         normalizedWindowStates = normalizedWindowStates.filter {
             $0.key.profileID != profileID
                 || $0.key.providerID != providerID
         }
-        normalizedInFlightIdentities =
-            Set(normalizedInFlightIdentities.filter {
-                let component =
-                    profileID.uuidString.lowercased()
-                let profilePrefix =
-                    "\(component.utf8.count):\(component)"
-                return !$0.hasPrefix(profilePrefix)
-            })
+        normalizedInFlightReservations =
+            normalizedInFlightReservations.filter {
+                let window = $0.value.window
+                return window.profileID != profileID
+                    || window.providerID != providerID
+            }
         let component = profileID.uuidString.lowercased()
         let profilePrefix = "\(component.utf8.count):\(component)"
         let filtered = sentNotificationIdentities.filter {
             !$0.hasPrefix(profilePrefix)
         }
-        if filtered.count != sentNotificationIdentities.count {
-            sentNotificationIdentities = Set(filtered)
-            persistSentNotificationsLocked()
+        sentNotificationIdentities = Set(filtered)
+        guard persistSentNotificationsLocked() else {
+            throw NotificationStatePersistenceError
+                .legacyStateWriteFailed
         }
-        persistNormalizedLedgerLocked()
-        stateLock.unlock()
+        guard persistNormalizedLedgerLocked() else {
+            throw NotificationStatePersistenceError
+                .normalizedLedgerWriteFailed
+        }
     }
 
     /// Schedules a notification 24 hours before the session key expires

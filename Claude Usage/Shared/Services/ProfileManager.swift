@@ -45,7 +45,19 @@ struct ProfileActivationClaudeEffects {
 
 struct ProfileLifecycleEventSink {
     var deletionStarted: (Profile) -> Void
+    var deletionCleanup: (Profile) throws -> Void
     var deletionCompleted: (Profile) -> Void
+
+    init(
+        deletionStarted: @escaping (Profile) -> Void,
+        deletionCleanup:
+            @escaping (Profile) throws -> Void = { _ in },
+        deletionCompleted: @escaping (Profile) -> Void
+    ) {
+        self.deletionStarted = deletionStarted
+        self.deletionCleanup = deletionCleanup
+        self.deletionCompleted = deletionCompleted
+    }
 
     static let live = ProfileLifecycleEventSink(
         deletionStarted: {
@@ -55,12 +67,14 @@ struct ProfileLifecycleEventSink {
                 userInfo: Self.userInfo(for: $0)
             )
         },
-        deletionCompleted: {
-            NotificationManager.shared
+        deletionCleanup: {
+            try NotificationManager.shared
                 .clearNotificationsForProfile(
                     $0.id,
                     providerID: $0.providerID
                 )
+        },
+        deletionCompleted: {
             NotificationCenter.default.post(
                 name: .profileDeletionCompleted,
                 object: $0.id,
@@ -634,6 +648,9 @@ class ProfileManager: ObservableObject {
         }
         try historyService.deleteHistoryThrowing(for: id)
         try profileStore.deleteProfileUsageData(for: id)
+        try lifecycleEventSink.deletionCleanup(
+            scrubbedProfile
+        )
         LoggingService.shared.log("Successfully deleted usage history for profile: \(profileName)")
 
         let remainingProfiles = profiles.filter { $0.id != id }

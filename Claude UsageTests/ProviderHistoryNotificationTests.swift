@@ -345,7 +345,9 @@ final class ProviderHistoryNotificationTests: HostedAppTestCase {
         throws
     {
         let environment = try makeEnvironment()
-        let exportedAt = Date(timeIntervalSinceReferenceDate: 9_000)
+        let exportedAt = Date(
+            timeIntervalSinceReferenceDate: 9_000.123_456
+        )
         let service = retain(UsageHistoryService(
             defaults: environment.defaults,
             fileStore: ProfileUsageFileStore(
@@ -394,7 +396,7 @@ final class ProviderHistoryNotificationTests: HostedAppTestCase {
                 providerID: .codex,
                 fetchedAt: exportedAt,
                 windows: [
-                    ("dynamic", "primary", 50, 10_000)
+                    ("dynamic", "primary", 50, 10_000.654_321)
                 ]
             ),
             for: codex.id,
@@ -408,7 +410,7 @@ final class ProviderHistoryNotificationTests: HostedAppTestCase {
                 exportedAt: exportedAt
             )
         )
-        XCTAssertTrue(json.contains("\"schemaVersion\" : 2"))
+        XCTAssertTrue(json.contains("\"schemaVersion\" : 3"))
         XCTAssertTrue(json.contains("\"claude\""))
         XCTAssertTrue(json.contains("\"codex\""))
         XCTAssertTrue(json.contains("\"dynamic\""))
@@ -418,11 +420,16 @@ final class ProviderHistoryNotificationTests: HostedAppTestCase {
         XCTAssertFalse(json.contains(codexHome))
         XCTAssertFalse(json.contains("/Users/"))
 
-        let decoded = try JSONDecoder.iso8601.decode(
-            UsageHistoryExportDocument.self,
+        let decoded = try UsageHistoryExportDocument.decodedJSON(
             from: Data(json.utf8)
         )
-        XCTAssertEqual(decoded.profiles.count, 2)
+        XCTAssertEqual(
+            decoded,
+            service.makeExport(
+                profiles: [claude, codex],
+                exportedAt: exportedAt
+            )
+        )
     }
 
     func testVersionedCSVPreservesLegacyClaudeAndNormalizedFields()
@@ -1032,6 +1039,134 @@ final class ProviderHistoryNotificationTests: HostedAppTestCase {
         XCTAssertEqual(requests[0].identifier, requests[1].identifier)
     }
 
+    func testMissingWindowCannotEvictAnInFlightReservation()
+        throws
+    {
+        let environment = try makeEnvironment()
+        var requests: [UNNotificationRequest] = []
+        var completions: [(Error?) -> Void] = []
+        let manager = retain(NotificationManager(
+            defaults: environment.defaults,
+            missingWindowRetention: 0,
+            maximumMissingWindowsPerScope: 0,
+            notificationRequestAdder: { request, completion in
+                requests.append(request)
+                completions.append(completion)
+            }
+        ))
+        let profileID = UUID()
+        let now = Date(timeIntervalSinceReferenceDate: 49_750)
+        let high = try report(
+            providerID: .codex,
+            fetchedAt: now,
+            windows: [("group", "primary", 96, 59_750)]
+        )
+        manager.checkAndNotify(
+            report: high,
+            profileID: profileID,
+            profileName: "Codex",
+            settings: NotificationSettings(),
+            now: now
+        )
+        manager.checkAndNotify(
+            report: try report(
+                providerID: .codex,
+                fetchedAt: now.addingTimeInterval(1),
+                windows: [("group", "other", 10, 59_750)]
+            ),
+            profileID: profileID,
+            profileName: "Codex",
+            settings: NotificationSettings(),
+            now: now.addingTimeInterval(1)
+        )
+        XCTAssertEqual(
+            manager.normalizedNotificationStateCount(
+                profileID: profileID,
+                providerID: .codex
+            ),
+            2
+        )
+        manager.checkAndNotify(
+            report: high,
+            profileID: profileID,
+            profileName: "Codex",
+            settings: NotificationSettings(),
+            now: now.addingTimeInterval(2)
+        )
+        XCTAssertEqual(requests.count, 1)
+
+        completions.removeFirst()(TestError.expected)
+        manager.checkAndNotify(
+            report: high,
+            profileID: profileID,
+            profileName: "Codex",
+            settings: NotificationSettings(),
+            now: now.addingTimeInterval(3)
+        )
+        XCTAssertEqual(requests.count, 2)
+    }
+
+    func testOldCallbackCannotReleaseANewerReservationAfterProfileClear()
+        throws
+    {
+        let environment = try makeEnvironment()
+        var requests: [UNNotificationRequest] = []
+        var completions: [(Error?) -> Void] = []
+        let manager = retain(NotificationManager(
+            defaults: environment.defaults,
+            notificationRequestAdder: { request, completion in
+                requests.append(request)
+                completions.append(completion)
+            }
+        ))
+        let profileID = UUID()
+        let now = Date(timeIntervalSinceReferenceDate: 49_775)
+        let high = try report(
+            providerID: .codex,
+            fetchedAt: now,
+            windows: [("group", "primary", 96, 59_775)]
+        )
+        manager.checkAndNotify(
+            report: high,
+            profileID: profileID,
+            profileName: "Codex",
+            settings: NotificationSettings(),
+            now: now
+        )
+        try manager.clearNotificationsForProfile(
+            profileID,
+            providerID: .codex
+        )
+        manager.checkAndNotify(
+            report: high,
+            profileID: profileID,
+            profileName: "Codex",
+            settings: NotificationSettings(),
+            now: now.addingTimeInterval(1)
+        )
+        XCTAssertEqual(requests.count, 2)
+
+        completions[0](nil)
+        manager.checkAndNotify(
+            report: high,
+            profileID: profileID,
+            profileName: "Codex",
+            settings: NotificationSettings(),
+            now: now.addingTimeInterval(2)
+        )
+        XCTAssertEqual(requests.count, 2)
+
+        completions[1](nil)
+        manager.checkAndNotify(
+            report: high,
+            profileID: profileID,
+            profileName: "Codex",
+            settings: NotificationSettings(),
+            now: now.addingTimeInterval(3)
+        )
+        XCTAssertEqual(requests.count, 2)
+    }
+
     func testHigherDeliveredThresholdSuppressesLowerBackfill()
         throws
     {
@@ -1075,6 +1210,63 @@ final class ProviderHistoryNotificationTests: HostedAppTestCase {
         }
 
         XCTAssertEqual(requests.count, 1)
+    }
+
+    func testDisabledPendingThresholdIsNotRetriedAfterRestart()
+        throws
+    {
+        let environment = try makeEnvironment()
+        var requests: [UNNotificationRequest] = []
+        var completions: [(Error?) -> Void] = []
+        let capture:
+            NotificationManager.NotificationRequestAdder = {
+                request,
+                completion in
+                requests.append(request)
+                completions.append(completion)
+            }
+        let profileID = UUID()
+        let now = Date(timeIntervalSinceReferenceDate: 49_850)
+        let high = try report(
+            providerID: .codex,
+            fetchedAt: now,
+            windows: [("group", "primary", 96, 59_850)]
+        )
+        let first = retain(NotificationManager(
+            defaults: environment.defaults,
+            notificationRequestAdder: capture
+        ))
+        first.checkAndNotify(
+            report: high,
+            profileID: profileID,
+            profileName: "Codex",
+            settings: NotificationSettings(),
+            now: now
+        )
+        XCTAssertTrue(requests[0].identifier.hasSuffix("2:95"))
+        completions.removeFirst()(TestError.expected)
+
+        let second = retain(NotificationManager(
+            defaults: environment.defaults,
+            notificationRequestAdder: capture
+        ))
+        second.checkAndNotify(
+            report: high,
+            profileID: profileID,
+            profileName: "Codex",
+            settings: NotificationSettings(
+                threshold75Enabled: true,
+                threshold90Enabled: true,
+                threshold95Enabled: false
+            ),
+            now: now.addingTimeInterval(1)
+        )
+        XCTAssertEqual(requests.count, 2)
+        XCTAssertTrue(requests[1].identifier.hasSuffix("2:90"))
+        XCTAssertNotEqual(
+            requests[0].identifier,
+            requests[1].identifier
+        )
     }
 
     func testMissingWindowRetentionIsBoundedAndExpires()
@@ -1197,7 +1389,7 @@ final class ProviderHistoryNotificationTests: HostedAppTestCase {
             now: now
         )
 
-        manager.clearNotificationsForProfile(
+        try manager.clearNotificationsForProfile(
             profileID,
             providerID: .codex
         )
@@ -1228,6 +1420,68 @@ final class ProviderHistoryNotificationTests: HostedAppTestCase {
             ),
             1
         )
+    }
+
+    func testInvalidAndFutureNotificationLedgersFailClosedWithoutOverwrite()
+        throws
+    {
+        let fixtures = [
+            Data("{invalid".utf8),
+            Data(
+                """
+                {"schemaVersion":999,"records":[]}
+                """.utf8
+            )
+        ]
+        for fixture in fixtures {
+            let environment = try makeEnvironment()
+            environment.defaults.set(
+                fixture,
+                forKey: "normalizedUsageNotificationLedger.v1"
+            )
+            var requests: [UNNotificationRequest] = []
+            let manager = retain(NotificationManager(
+                defaults: environment.defaults,
+                notificationRequestAdder: {
+                    request,
+                    completion in
+                    requests.append(request)
+                    completion(nil)
+                }
+            ))
+            let profileID = UUID()
+            let now = Date(
+                timeIntervalSinceReferenceDate: 49_975
+            )
+            manager.checkAndNotify(
+                report: try report(
+                    providerID: .codex,
+                    fetchedAt: now,
+                    windows: [
+                        ("group", "primary", 96, 59_975)
+                    ]
+                ),
+                profileID: profileID,
+                profileName: "Codex",
+                settings: NotificationSettings(),
+                now: now
+            )
+
+            XCTAssertTrue(requests.isEmpty)
+            XCTAssertEqual(
+                environment.defaults.data(
+                    forKey:
+                        "normalizedUsageNotificationLedger.v1"
+                ),
+                fixture
+            )
+            XCTAssertThrowsError(
+                try manager.clearNotificationsForProfile(
+                    profileID,
+                    providerID: .codex
+                )
+            )
+        }
     }
 
     func testNotificationsRetainMissingWindowStateAndSeparateProfiles()

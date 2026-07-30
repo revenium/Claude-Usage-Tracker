@@ -148,7 +148,15 @@ class MenuBarManager: NSObject, ObservableObject {
                     == event.identity.providerID {
                     hooks.notifyNormalized(event, report)
                 }
-                hooks.autoSwitch(event, usage, activeProfile)
+                if event.capabilities.supports(
+                    .automaticProfileSwitch
+                ) {
+                    hooks.autoSwitch(
+                        event,
+                        usage,
+                        activeProfile
+                    )
+                }
             } else if event.capabilities.supports(
                 .usageNotifications
             ),
@@ -208,6 +216,9 @@ class MenuBarManager: NSObject, ObservableObject {
                   case .accepted = outcome,
                   let activeSnapshot,
                   activeSnapshot.providerID == .claude,
+                  activeSnapshot.capabilities.supports(
+                      .automaticProfileSwitch
+                  ),
                   let usage = activeSnapshot.claudeUsage else {
                 return
             }
@@ -2711,6 +2722,11 @@ class MenuBarManager: NSObject, ObservableObject {
 
         // Guard: feature must be enabled
         guard SharedDataStore.shared.loadAutoSwitchProfileEnabled() else { return }
+        guard providerUIDependencies.capabilities(
+            for: currentProfile.providerID
+        ).supports(.automaticProfileSwitch) else {
+            return
+        }
 
         // Guard: need more than 1 profile
         let profiles = profileManager.profiles
@@ -2775,8 +2791,11 @@ class MenuBarManager: NSObject, ObservableObject {
             let index = (currentIndex + offset) % count
             let candidate = profiles[index]
 
-            // Must have usage credentials
-            guard candidate.providerID == .claude,
+            // Must support this automation and have compatible usage data.
+            guard providerUIDependencies.capabilities(
+                for: candidate.providerID
+            ).supports(.automaticProfileSwitch),
+                  candidate.providerID == .claude,
                   candidate.hasUsageCredentials else {
                 continue
             }

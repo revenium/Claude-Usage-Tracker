@@ -144,7 +144,7 @@ struct UsageHistoryExportProfile: Codable, Equatable {
 /// display metadata and usage values—never credentials, provider home paths,
 /// executable paths, or authentication-file content.
 struct UsageHistoryExportDocument: Codable, Equatable {
-    static let currentSchemaVersion = 2
+    static let currentSchemaVersion = 3
 
     let schemaVersion: Int
     let exportedAt: Date
@@ -163,12 +163,48 @@ struct UsageHistoryExportDocument: Codable, Equatable {
     func encodedJSON() throws -> String {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        encoder.dateEncodingStrategy = .iso8601
+        encoder.dateEncodingStrategy =
+            Self.losslessDateEncodingStrategy
         return try String(
             decoding: encoder.encode(self),
             as: UTF8.self
         )
     }
+
+    static func decodedJSON(
+        from data: Data
+    ) throws -> UsageHistoryExportDocument {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy =
+            losslessDateDecodingStrategy
+        return try decoder.decode(
+            UsageHistoryExportDocument.self,
+            from: data
+        )
+    }
+
+    /// Schema v3 represents every Date as its binary64 seconds from Apple's
+    /// reference date. JSONEncoder emits a round-trippable decimal Double,
+    /// avoiding the subsecond truncation of Foundation's ISO-8601 strategy.
+    private static let losslessDateEncodingStrategy:
+        JSONEncoder.DateEncodingStrategy = .custom {
+            date,
+            encoder in
+            var container = encoder.singleValueContainer()
+            try container.encode(
+                date.timeIntervalSinceReferenceDate
+            )
+        }
+
+    private static let losslessDateDecodingStrategy:
+        JSONDecoder.DateDecodingStrategy = .custom {
+            decoder in
+            let container = try decoder.singleValueContainer()
+            return Date(
+                timeIntervalSinceReferenceDate:
+                    try container.decode(Double.self)
+            )
+        }
 }
 
 /// Reset type that triggers a usage snapshot

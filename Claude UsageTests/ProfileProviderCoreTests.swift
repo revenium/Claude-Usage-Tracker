@@ -1814,6 +1814,7 @@ final class ProfileProviderCoreTests: HostedAppTestCase {
 
         XCTAssertThrowsError(try manager.deleteProfile(target.id))
         XCTAssertEqual(lifecycle.started.count, 1)
+        XCTAssertTrue(lifecycle.cleaned.isEmpty)
         XCTAssertTrue(lifecycle.completed.isEmpty)
         XCTAssertEqual(lifecycle.started.first?.id, target.id)
         XCTAssertEqual(
@@ -1825,11 +1826,59 @@ final class ProfileProviderCoreTests: HostedAppTestCase {
         try manager.deleteProfile(target.id)
 
         XCTAssertEqual(lifecycle.started.count, 2)
+        XCTAssertEqual(lifecycle.cleaned.map(\.id), [target.id])
         XCTAssertEqual(lifecycle.completed.map(\.id), [target.id])
         XCTAssertEqual(lifecycle.completed.first?.providerRevision, 9)
         XCTAssertFalse(manager.profiles.contains(where: {
             $0.id == target.id
         }))
+    }
+
+    @MainActor
+    func testDeletionCleanupMustSucceedBeforeDurableFinalization()
+        throws
+    {
+        let defaults = ProviderTestDefaults()
+        let store = retain(ProfileStore(
+            defaults: defaults,
+            secretStore: ProviderSecretStore(),
+            usageFileStore: ProviderUsageStore()
+        ))
+        let target = Profile(
+            name: "Delete",
+            providerConfiguration: .codex(.init())
+        )
+        let survivor = Profile(
+            name: "Keep",
+            providerConfiguration: .codex(.init())
+        )
+        try seedProfilesForTesting([target, survivor], in: store)
+        let lifecycle = ProviderLifecycleRecorder()
+        lifecycle.cleanupFailuresRemaining = 1
+        let manager = retain(ProfileManager(
+            profileStore: store,
+            historyService: retain(ProviderHistoryDeleter()),
+            activationClaudeEffects: .noOp,
+            lifecycleEventSink: lifecycle.sink
+        ))
+        manager.profiles = [target, survivor]
+        manager.activeProfile = survivor
+
+        XCTAssertThrowsError(try manager.deleteProfile(target.id))
+        XCTAssertEqual(lifecycle.cleaned.map(\.id), [target.id])
+        XCTAssertTrue(lifecycle.completed.isEmpty)
+        XCTAssertTrue(store.loadProfiles().contains(where: {
+            $0.id == target.id && $0.deletionInProgress
+        }))
+
+        try manager.deleteProfile(target.id)
+
+        XCTAssertEqual(
+            lifecycle.cleaned.map(\.id),
+            [target.id, target.id]
+        )
+        XCTAssertEqual(lifecycle.completed.map(\.id), [target.id])
+        XCTAssertEqual(store.loadProfiles().map(\.id), [survivor.id])
     }
 
     @MainActor
@@ -2929,12 +2978,22 @@ private final class ProviderHistoryDeleter: ProfileHistoryDeleting {
 
 private final class ProviderLifecycleRecorder {
     private(set) var started: [Profile] = []
+    private(set) var cleaned: [Profile] = []
     private(set) var completed: [Profile] = []
+    var cleanupFailuresRemaining = 0
 
     var sink: ProfileLifecycleEventSink {
         ProfileLifecycleEventSink(
             deletionStarted: { [weak self] in
                 self?.started.append($0)
+            },
+            deletionCleanup: { [weak self] profile in
+                guard let self else { return }
+                cleaned.append(profile)
+                if cleanupFailuresRemaining > 0 {
+                    cleanupFailuresRemaining -= 1
+                    throw ProviderTestError.expected
+                }
             },
             deletionCompleted: { [weak self] in
                 self?.completed.append($0)

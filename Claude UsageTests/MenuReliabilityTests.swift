@@ -932,6 +932,44 @@ final class MenuReliabilityTests: HostedAppTestCase {
         )
     }
 
+    func testRefreshSideEffectRouterCapabilityGatesAutomaticSwitch()
+    {
+        let profile = Profile(name: "Claude")
+        let context = UsagePresentationContext(
+            epoch: 10,
+            focusedProfileID: profile.id,
+            visibleProfileIDs: [profile.id],
+            mode: .single
+        )
+        let event = makeAcceptedEvent(
+            profileID: profile.id,
+            context: context,
+            capabilities: ProviderCapabilities([
+                .statusLineIntegration: .available,
+                .usageHistory: .available,
+                .usageNotifications: .available,
+                .automaticProfileSwitch: .unavailable
+            ]),
+            components: [.providerUsage]
+        )
+        let recorder = ThreadSafeRecorder()
+        let router = makeSideEffectRouter(recorder)
+
+        router.presented(
+            event,
+            currentContext: context,
+            activeProfile: profile
+        )
+
+        XCTAssertEqual(
+            recorder.snapshot(),
+            [
+                "statusline:Captured",
+                "notify:Captured:true:default"
+            ]
+        )
+    }
+
     func testRefreshSideEffectRouterSuppressesInteractiveAEffectsAfterB()
     {
         let profileA = UUID()
@@ -1075,6 +1113,72 @@ final class MenuReliabilityTests: HostedAppTestCase {
                 "claude-circuit-success",
                 "success-toast"
             ]
+        )
+    }
+
+    func testRefreshSideEffectRouterCapabilityGatesBatchAutomaticSwitch()
+    {
+        let profile = Profile(name: "Claude")
+        let context = UsagePresentationContext(
+            epoch: 15,
+            focusedProfileID: profile.id,
+            visibleProfileIDs: [profile.id],
+            mode: .multi
+        )
+        let result = UsageRefreshBatchResult(
+            batchID: UUID(),
+            invocationOrder: 5,
+            outcomes: [profile.id: .accepted],
+            trigger: .timer,
+            presentationContext: context,
+            isLatestBatch: true
+        )
+        let unavailableRecorder = ThreadSafeRecorder()
+        let unavailableRouter = makeSideEffectRouter(
+            unavailableRecorder
+        )
+        unavailableRouter.finished(
+            result,
+            currentContext: context,
+            latestInvocationOrder: 5,
+            activeProfile: profile,
+            activeSnapshot: makePresentationSnapshot(
+                profileID: profile.id,
+                providerID: .claude,
+                presentationEpoch: context.epoch,
+                capabilities: ProviderCapabilities([
+                    .automaticProfileSwitch: .unavailable
+                ]),
+                claudeUsage: .empty
+            )
+        )
+        XCTAssertEqual(
+            unavailableRecorder.snapshot(),
+            ["batch-finalized"]
+        )
+
+        let availableRecorder = ThreadSafeRecorder()
+        let availableRouter = makeSideEffectRouter(
+            availableRecorder
+        )
+        availableRouter.finished(
+            result,
+            currentContext: context,
+            latestInvocationOrder: 5,
+            activeProfile: profile,
+            activeSnapshot: makePresentationSnapshot(
+                profileID: profile.id,
+                providerID: .claude,
+                presentationEpoch: context.epoch,
+                capabilities: ProviderCapabilities([
+                    .automaticProfileSwitch: .available
+                ]),
+                claudeUsage: .empty
+            )
+        )
+        XCTAssertEqual(
+            availableRecorder.snapshot(),
+            ["batch-finalized", "batch-auto-switch"]
         )
     }
 
@@ -1332,6 +1436,13 @@ final class MenuReliabilityTests: HostedAppTestCase {
         profileName: String = "Captured",
         notificationSettings: NotificationSettings =
             NotificationSettings(),
+        capabilities: ProviderCapabilities =
+            ProviderCapabilities([
+                .statusLineIntegration: .available,
+                .usageHistory: .available,
+                .usageNotifications: .available,
+                .automaticProfileSwitch: .available
+            ]),
         components: Set<AcceptedUsageComponent>
     ) -> AcceptedUsageRefreshEvent {
         var usage = ClaudeUsage.empty
@@ -1359,11 +1470,7 @@ final class MenuReliabilityTests: HostedAppTestCase {
             notificationSettings: notificationSettings,
             trigger: .manual,
             presentationContext: context,
-            capabilities: ProviderCapabilities([
-                .statusLineIntegration: .available,
-                .usageHistory: .available,
-                .usageNotifications: .available
-            ]),
+            capabilities: capabilities,
             previousUsage: nil,
             currentUsage: ProfileCurrentUsage(
                 providerID: .claude,
