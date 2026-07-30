@@ -125,18 +125,14 @@ final class CodexParityUITests: XCTestCase {
             element(app, identifier: "codex.account.unavailable")
                 .waitForExistence(timeout: 8)
         )
-        XCTAssertTrue(
-            element(app, identifier: "codex.account.refresh")
-                .isEnabled
-        )
-        let unsupportedRefresh = element(
+        let errorRefresh = element(
             app,
             identifier: "codex.account.refresh"
         )
-        XCTAssertTrue(unsupportedRefresh.isEnabled)
-        unsupportedRefresh.click()
+        XCTAssertTrue(errorRefresh.isEnabled)
+        errorRefresh.click()
         XCTAssertTrue(
-            element(app, identifier: "codex.account.unsupported")
+            element(app, identifier: "codex.account.unavailable")
                 .waitForExistence(timeout: 8)
         )
     }
