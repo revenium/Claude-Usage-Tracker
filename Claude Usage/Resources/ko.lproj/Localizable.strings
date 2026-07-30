@@ -268,7 +268,7 @@
 /* ==================== */
 /* MARK: - Setup Wizard */
 /* ==================== */
-"setup.step.enter_session_key" = "키 입력";
+"setup.step.enter_session_key" = "세션 키를 입력하세요";
 "wizard.test_connection" = "연결 테스트";
 "wizard.select_org_title" = "어떤 조직을 추적하시겠습니까?";
 "wizard.select_org_subtitle" = "사용량 모니터링을 위한 Claude 조직 선택";
@@ -351,10 +351,6 @@
 "personal.placeholder_session_key" = "세션 키를 입력하세요";
 "personal.help_session_key" = "Claude.ai에서 세션 키를 추출해야 합니다";
 "personal.button_test_connection" = "연결 테스트";
-"personal.button_save" = "저장";
-"personal.status_testing" = "테스트 중...";
-"personal.success_connection" = "연결 성공! %d개 조직 발견";
-"personal.error_connection_failed" = "연결 실패. 세션 키를 확인하세요.";
 
 /* ==================== */
 /* MARK: - API Billing */
@@ -371,48 +367,11 @@
 "api.button_save_configuration" = "구성 저장";
 "api.success_organizations_found" = "%d개 조직 발견";
 "api.success_configuration_saved" = "API 구성이 저장되었습니다";
-"api.error_fetch_failed" = "조직 가져오기 실패";
-
-/* ==================== */
-/* MARK: - Session Timer */
-/* ==================== */
-"session.timer_active" = "다음까지 남은 시간";
-"session.timer_inactive" = "타이머가 활성화되지 않음";
-"session.timer_paused" = "일시 중지됨";
-"session.timer_reset" = "재설정됨";
-
-/* ==================== */
-/* MARK: - Status Messages */
-/* ==================== */
-"status.fetching" = "데이터 가져오는 중...";
-"status.error" = "오류가 발생했습니다";
-"status.no_data" = "데이터 없음";
-"status.loading" = "로드 중...";
-"status.syncing" = "동기화 중...";
-"status.success" = "성공";
-
-/* ==================== */
-/* MARK: - Usage Display */
-/* ==================== */
-"usage.session" = "세션";
-"usage.week" = "주간";
-"usage.api_credits" = "API 크레딧";
-"usage.remaining" = "남음";
-"usage.used" = "사용됨";
-"usage.limit" = "한도";
-"usage.unlimited" = "무제한";
-"usage.next_reset" = "다음 재설정";
-"usage.time_until_reset" = "재설정까지";
+"api.error_fetch_failed" = "조직을 가져오지 못했습니다: %@";
 
 /* ==================== */
 /* MARK: - Notifications */
 /* ==================== */
-"notification.usage_warning_title" = "사용량 경고";
-"notification.usage_warning_body" = "사용량이 %d%%에 도달했습니다";
-"notification.usage_exceeded_title" = "사용량 초과";
-"notification.usage_exceeded_body" = "월간 한도를 초과했습니다";
-"notification.session_reset_title" = "세션 재설정됨";
-"notification.session_reset_body" = "새 세션이 시작되었습니다";
 "notification.session_auto_started.title" = "세션 자동 시작됨";
 "notification.session_auto_started.message" = "Claude로 새 세션이 자동으로 초기화되었습니다. 새로운 5시간 세션이 준비되었습니다!";
 "notification.session_auto_start_failed.title" = "자동 시작 실패";
@@ -438,13 +397,6 @@
 "error.code_label" = "오류 코드:";
 "error.what_to_do" = "해결 방법:";
 "error.occurred_at" = "발생 시각: %@";
-"error.network" = "네트워크 오류";
-"error.invalid_key" = "잘못된 세션 키";
-"error.unauthorized" = "권한 없음";
-"error.rate_limit" = "속도 제한 초과";
-"error.server" = "서버 오류";
-"error.unknown" = "알 수 없는 오류";
-"error.invalid_response" = "잘못된 응답";
 
 /* ==================== */
 /* MARK: - Validation Messages */
@@ -510,7 +462,6 @@
 /* MARK: - About */
 /* ==================== */
 "about.version" = "버전 %@";
-"about.build" = "빌드";
 "about.created_by" = "제작자";
 "about.contributors" = "기여자 (%d명)";
 "about.contributors_loading" = "기여자";
@@ -548,7 +499,6 @@
 "setup.welcome.subtitle" = "사용량 추적을 시작하려면 API 액세스를 구성하세요";
 "setup.step.get_session_key" = "세션 키 받기";
 "setup.step.get_session_key.description" = "claude.ai에서 세션 키를 추출해야 합니다";
-"setup.step.enter_session_key" = "세션 키 입력";
 "setup.open_claude_ai" = "claude.ai 열기";
 "setup.show_instructions" = "지침 표시";
 "setup.hide_instructions" = "숨기기";
@@ -594,29 +544,6 @@
 "auto_switch.subtitle" = "세션 한도에 도달하면 자동으로 전환";
 "auto_switch.enable_title" = "자동 전환 활성화";
 "auto_switch.enable_description" = "활성 프로필의 세션 사용량이 100%에 도달하면 다음 사용 가능한 프로필로 자동 전환합니다";
-
-/* ==================== */
-/* MARK: - Claude CLI Statusline */
-/* ==================== */
-"claudecode.title" = "Claude CLI 상태표시줄";
-"claudecode.subtitle" = "터미널 상태표시줄 통합";
-"claudecode.install_statusline" = "상태표시줄 스크립트 설치";
-"claudecode.uninstall_statusline" = "상태표시줄 스크립트 제거";
-"claudecode.statusline_installed" = "설치됨";
-"claudecode.statusline_not_installed" = "설치되지 않음";
-"claudecode.shell_support" = "지원되는 셸";
-"claudecode.installation_guide" = "설치 가이드";
-"claudecode.component_session" = "세션 사용량 표시";
-"claudecode.component_week" = "주간 사용량 표시";
-"claudecode.component_api" = "API 크레딧 표시";
-"claudecode.component_directory" = "현재 디렉토리 표시";
-"claudecode.component_branch" = "Git 브랜치 표시";
-"claudecode.component_usage" = "사용 통계";
-"claudecode.component_progressbar" = "진행 표시줄";
-"claudecode.component_resettime" = "재설정 시간";
-"claudecode.success_installed" = "상태표시줄이 성공적으로 설치되었습니다";
-"claudecode.success_uninstalled" = "상태표시줄이 제거되었습니다";
-"claudecode.error_installation_failed" = "설치 실패";
 
 /* ==================== */
 /* MARK: - General Settings (Additional) */
@@ -725,26 +652,12 @@
 "preview.sample_5_minutes" = "5분";
 
 /* ==================== */
-/* MARK: - Updates Settings (Additional) */
-/* ==================== */
-"settings.updates.title" = "소프트웨어 업데이트";
-"settings.updates.current_version" = "현재 버전";
-"settings.updates.last_check" = "마지막 확인";
-"settings.updates.never_checked" = "확인 안 함";
-"settings.updates.automatic" = "자동 업데이트";
-"settings.updates.automatic.description" = "매일 업데이트 자동 확인 및 다운로드";
-"settings.updates.check_now" = "업데이트 확인";
-"settings.updates.info.title" = "안전한 업데이트";
-"settings.updates.info.description" = "모든 업데이트는 암호화 서명되어 설치 전 검증됩니다";
-
-/* ==================== */
 /* MARK: - Wizard Steps & Actions */
 /* ==================== */
 "wizard.enter_key" = "키 입력";
 "wizard.select_org" = "조직 선택";
 "wizard.confirm" = "확인";
 "wizard.testing" = "테스트 중...";
-"wizard.test_connection" = "연결 테스트";
 "wizard.fetching" = "가져오는 중...";
 "wizard.fetch_organizations" = "조직 가져오기";
 "wizard.saving" = "저장 중...";
@@ -769,24 +682,15 @@
 /* ==================== */
 /* MARK: - Additional Keys */
 /* ==================== */
-"api.single_organization" = "단일 조직이 발견되어 자동으로 선택되었습니다";
 "api.remove_title" = "자격 증명 제거";
 "api.remove_subtitle" = "이 프로필에서 API 콘솔 세션 키를 영구적으로 삭제";
-"claudecode.button_apply" = "적용";
-"claudecode.button_reset" = "재설정";
 "claudecode.actions_title" = "작업";
-"error.generic" = "오류: %@";
-"personal.button_saving" = "저장 중...";
-"personal.button_setup_wizard" = "설정 마법사";
-"personal.button_open_claude" = "claude.ai 열기";
-"personal.success_key_saved" = "세션 키가 성공적으로 저장되었습니다";
 "personal.remove_title" = "자격 증명 제거";
 "personal.remove_subtitle" = "이 프로필에서 Claude.ai 세션 키를 영구적으로 삭제";
 "personal.signin_description" = "로그인하여 세션 키를 자동으로 추출합니다.";
 "personal.signin_button" = "Claude.ai에 로그인";
 "personal.signin_sheet_title" = "Claude.ai에 로그인";
 "personal.advanced_manual_key" = "고급: 수동 세션 키 입력";
-"about.run_setup_wizard" = "설정 마법사 실행";
 
 /* Migration & Reset */
 "wizard.migrate_old_data" = "이전 버전의 데이터가 있나요?";
@@ -808,8 +712,6 @@
 
 /* Migration Strings */
 "wizard.migrate_description_short" = "이전 앱 버전에서 이전 프로필 데이터 가져오기";
-"wizard.skip_migration" = "건너뛰기";
-"wizard.migration_skipped" = "건너뜀";
 
 // History
 "history.title" = "사용 기록";
@@ -851,7 +753,6 @@
 "history.export.title" = "데이터 내보내기";
 "history.export.json" = "JSON으로 내보내기";
 "history.export.csv" = "CSV로 내보내기";
-"history.chart.now" = "지금";
 "support.title" = "프로젝트 지원";
 "support.subtitle" = "Claude 사용량 추적기는 무료이며 오픈 소스입니다";
 "support.all_features_free" = "모든 기능이 무료";
@@ -1009,3 +910,257 @@
 
 "error.storage_write_failed" = "사용량 데이터를 저장할 수 없음";
 "error.storage_write_failed.suggestion" = "다시 시도하세요. 문제가 계속되면 앱에 데이터 폴더 쓰기 권한이 있는지 확인하세요.";
+
+/* ==================== */
+/* MARK: - Provider Parity */
+/* ==================== */
+"about.contributors_failed" = "기여자 목록을 불러올 수 없습니다";
+"appearance.metric_selection.automatic.description" = "사용 가능한 첫 번째 제공업체 한도를 표시하며, 제공업체가 창을 추가하거나 제거하면 자동으로 조정됩니다.";
+"appearance.metric_selection.automatic.selected" = "자동: %@ — %@";
+"appearance.metric_selection.automatic.title" = "지표 자동 선택";
+"appearance.metric_selection.unavailable" = "이 프로필을 새로고침하여 사용 가능한 사용량 한도를 확인하세요.";
+"appearance.metric_selection.waiting" = "제공업체가 사용 가능한 한도를 게시하기를 기다리는 중입니다.";
+"cli.check_credentials" = "자격 증명 확인";
+"cli.copied" = "복사됨!";
+"cli.copy_command" = "복사";
+"cli.credentials_found" = "자격 증명이 감지되었습니다! 계정이 준비되었습니다.";
+"cli.credentials_not_found" = "아직 자격 증명을 찾을 수 없습니다. 먼저 위의 로그인 명령을 실행하세요.";
+"cli.credentials_unreadable" = "자격 증명을 찾았지만 읽을 수 없습니다. 로그인 명령을 다시 실행해 보세요.";
+"cli.guide_button" = "다중 계정 전환 안내서";
+"cli.guide_how_subtitle" = "각 프로필은 고유한 CLI 자격 증명을 갖습니다";
+"cli.guide_how_title" = "작동 방식";
+"cli.guide_note1" = "프로필을 전환해도 이미 열려 있는 터미널 세션에는 영향을 주지 않습니다. 전환 후 새 터미널이나 tmux 창을 여세요.";
+"cli.guide_note2" = "OAuth 토큰은 자동으로 갱신됩니다. 토큰이 취소되지 않는 한 다시 로그인할 필요가 없습니다.";
+"cli.guide_note3" = "설정, 스크립트, 플러그인은 심볼릭 링크를 통해 계정 간에 공유됩니다. 자격 증명만 계정마다 고유합니다.";
+"cli.guide_note4" = "연결 이후 ~/.claude/에 추가된 파일은 계정 디렉터리에 자동으로 심볼릭 링크되지 않습니다.";
+"cli.guide_notes_title" = "알아두면 좋은 사항";
+"cli.guide_shell_note" = "이 코드 조각은 연결하는 계정 수와 관계없이 한 번만 추가하면 됩니다. 활성 계정을 읽어 자동으로 환경을 설정합니다.";
+"cli.guide_step1" = "CLI 계정 연결 버튼을 사용해 각 프로필에 CLI 계정을 연결하세요. 이렇게 하면 전용 구성 디렉터리가 생성됩니다.";
+"cli.guide_step2" = "제공된 명령을 사용해 터미널에서 각 연결된 계정에 로그인하세요. 계정당 한 번만 수행하면 됩니다.";
+"cli.guide_step3" = "아래의 셸 코드 조각을 셸 구성에 추가하세요. 컴퓨터당 한 번만 수행하면 모든 계정에 적용됩니다.";
+"cli.guide_step4" = "앱에서 활성 프로필을 전환하세요. 모든 새 터미널 세션은 해당 CLI 계정을 자동으로 사용합니다.";
+"cli.guide_subtitle" = "프로필 전환이 Claude Code CLI 계정을 제어하는 방식";
+"cli.guide_title" = "다중 계정 CLI 전환";
+"cli.last_synced" = "마지막 동기화:";
+"cli.link_benefit_1" = "각 프로필은 고유한 Claude CLI 로그인을 갖습니다";
+"cli.link_benefit_2" = "설정은 ~/.claude/의 심볼릭 링크를 통해 공유됩니다";
+"cli.link_benefit_3" = "활성 프로필을 변경하면 자동으로 전환됩니다";
+"cli.link_button" = "CLI 계정 연결";
+"cli.link_confirm_action" = "생성 및 연결";
+"cli.link_confirm_message" = "~/.claude-accounts/%@에 전용 CLI 구성 디렉터리가 생성됩니다.\n\n~/.claude/의 파일은 심볼릭 링크되어 설정이 공유됩니다. 이 프로필에서는 자격 증명만 고유합니다.\n\n참고: 이후 ~/.claude/에 추가된 새 파일은 자동으로 심볼릭 링크되지 않습니다.";
+"cli.link_confirm_title" = "CLI 계정 연결";
+"cli.link_subtitle" = "이 프로필 전용 CLI 구성 만들기";
+"cli.link_title" = "CLI 계정 연결";
+"cli.mcp_auto_sync_description" = "전환 시 새 MCP 서버 구성을 연결된 모든 계정에 자동으로 배포합니다";
+"cli.mcp_auto_sync_title" = "계정 전환 시 자동 동기화";
+"cli.mcp_sync_added" = "%@을(를) %@에 추가했습니다";
+"cli.mcp_sync_button" = "지금 MCP 서버 동기화";
+"cli.mcp_sync_no_changes" = "모든 계정이 이미 동기화되어 있습니다";
+"cli.mcp_sync_subtitle" = "모든 CLI 계정에서 MCP 서버를 일관되게 유지합니다";
+"cli.mcp_sync_title" = "MCP 서버 동기화";
+"cli.multi_profile_required" = "CLI 계정 전환을 사용하려면 프로필 관리에서 다중 프로필 표시를 활성화하세요.";
+"cli.multi_profile_required_title" = "다중 프로필 모드 필요";
+"cli.setup_complete_subtitle" = "Claude 계정으로 로그인하여 설정을 완료하세요";
+"cli.setup_complete_title" = "디렉터리 생성됨";
+"cli.setup_step1" = "이 명령을 복사하여 터미널에서 실행하세요:";
+"cli.setup_step2" = "Claude가 열리면 /login을 입력하고 이 프로필에 사용할 계정으로 로그인하세요.";
+"cli.setup_step3" = "로그인 후 아래를 클릭하여 자격 증명이 저장되었는지 확인하세요:";
+"cli.shell_integration_copy" = "클립보드에 복사";
+"cli.shell_integration_dismiss" = "확인";
+"cli.shell_integration_explain" = "이 코드 조각을 %@에 한 번만 추가하세요. 연결된 모든 계정에 적용되며, 다른 프로필에서는 이 단계를 반복할 필요가 없습니다.";
+"cli.shell_integration_title" = "셸 통합(일회성 설정)";
+"cli.skills_source_choose" = "선택...";
+"cli.skills_source_clear" = "지우기";
+"cli.skills_source_description" = "설정하면 동기화할 때마다 누락된 스킬이 이 디렉터리에서 ~/.claude/skills/로 동기화됩니다. 모든 하위 계정은 기본 계정의 스킬을 자동으로 공유합니다.";
+"cli.skills_source_not_configured" = "설정되지 않음";
+"cli.skills_source_subtitle" = "외부 디렉터리의 스킬을 기본 계정으로 동기화";
+"cli.skills_source_title" = "스킬 소스 디렉터리";
+"cli.status_linked" = "CLI 계정 연결됨";
+"cli.status_linked_pending" = "연결됨 — 로그인 대기 중";
+"cli.status_not_linked" = "연결되지 않음";
+"cli.switching_enabled" = "계정 전환이 활성화되었습니다. 활성 프로필을 변경하면 이 CLI 계정이 모든 새 터미널 세션에 적용됩니다.";
+"cli.unlink" = "연결 해제";
+"cli.unlink_action" = "연결 해제 및 삭제";
+"cli.unlink_confirm" = "~/.claude-accounts/%@의 CLI 계정 디렉터리가 제거됩니다. 기본 ~/.claude/ 디렉터리와 자격 증명은 영향을 받지 않습니다.";
+"cli.unlink_title" = "CLI 계정 연결 해제";
+"codex.account.checking" = "Codex 확인 중…";
+"codex.account.name" = "계정";
+"codex.account.not_checked" = "계정 상태를 아직 확인하지 않았습니다.";
+"codex.account.organization" = "조직";
+"codex.account.plan" = "요금제";
+"codex.account.short_title" = "Codex 계정";
+"codex.account.sign_in_required" = "계속하려면 Codex로 로그인하세요.";
+"codex.account.signed_out" = "로그인 필요";
+"codex.account.status" = "상태";
+"codex.account.status_subtitle" = "공식 Codex 앱 서버에서 가져온 읽기 전용 상태입니다.";
+"codex.account.status_title" = "계정 및 상태";
+"codex.account.subtitle" = "이 프로필의 Codex 홈과 ChatGPT 구독 계정을 관리합니다.";
+"codex.account.title" = "Codex 계정";
+"codex.account.unsupported" = "이 Codex 계정은 ChatGPT 구독 사용량을 제공하지 않습니다.";
+"codex.account.unsupported_short" = "지원되지 않는 계정";
+"codex.cli.missing" = "Codex CLI를 사용할 수 없습니다. Codex를 설치하거나 실행 파일을 PATH에서 사용할 수 있도록 하세요.";
+"codex.credentials.owned_by_codex" = "자격 증명은 이 디렉터리에 남아 있으며 Codex에서만 관리합니다.";
+"codex.feature_unavailable" = "이 빌드에서는 Codex 지원을 사용할 수 없습니다.";
+"codex.home.choose" = "Codex 홈 선택";
+"codex.home.invalid" = "Codex 홈을 연결할 수 없습니다.";
+"codex.home.link" = "연결";
+"codex.home.placeholder" = "CODEX_HOME 디렉터리를 선택하세요";
+"codex.home.relink" = "다시 연결";
+"codex.home.relink_required" = "이 연결을 사용할 수 없거나 변경되었습니다. Codex를 사용하기 전에 다시 확인해야 합니다.";
+"codex.home.reverify_after_edit" = "Codex 홈이 변경되었습니다. 계속하기 전에 다시 확인하세요.";
+"codex.home.subtitle" = "Codex가 이미 사용 중인 디렉터리를 연결하세요. 자격 증명은 계속 Codex가 소유합니다.";
+"codex.home.title" = "Codex 홈";
+"codex.home.unavailable" = "연결된 Codex 홈이 없거나 교체되었습니다. 계속하려면 다시 연결하세요.";
+"codex.home.unlinked" = "계속하려면 Codex 홈을 연결하세요.";
+"codex.login.browser" = "브라우저에서 로그인";
+"codex.login.browser_waiting" = "브라우저에서 로그인을 완료하세요. 이 앱은 Codex 자격 증명을 받거나 저장하지 않습니다.";
+"codex.login.cancel" = "로그인 취소";
+"codex.login.cancelling" = "로그인 취소 중…";
+"codex.login.device" = "기기 코드 사용";
+"codex.login.device_instructions" = "인증 페이지를 열고 다음 코드를 입력하세요:";
+"codex.login.failed" = "Codex 로그인을 완료하지 못했습니다. 다시 시도하세요.";
+"codex.login.open_verification" = "인증 페이지 열기";
+"codex.login.starting" = "로그인 시작 중…";
+"codex.login.succeeded" = "Codex로 로그인했습니다";
+"codex.login.user_code" = "기기 코드";
+"codex.operation.cancelled" = "Codex 작업이 취소되었습니다.";
+"codex.operation.timeout" = "Codex가 제시간에 응답하지 않았습니다. 다시 시도하세요.";
+"codex.operation.unavailable" = "이 작업을 사용할 수 없습니다.";
+"codex.profile.invalid" = "Codex 프로필을 업데이트할 수 없습니다.";
+"codex.response.invalid" = "Codex가 지원되지 않는 응답을 반환했습니다. Codex를 업데이트한 후 다시 시도하세요.";
+"codex.server.unavailable" = "Codex 앱 서버를 시작할 수 없습니다. Codex 설치를 확인한 후 다시 시도하세요.";
+"codex.setup.account" = "Codex 계정";
+"codex.setup.start_tracking" = "추적 시작";
+"codex.setup.subtitle" = "기존 Codex 홈을 연결하세요. 인증 파일은 계속 Codex가 소유하며 이 앱에서 읽거나 복사하지 않습니다.";
+"codex.setup.title" = "Codex 사용량 설정";
+"codex.transport.failed" = "Codex 앱 서버 연결이 끊어졌습니다. 다시 시도하세요.";
+"codex.unlink.action" = "연결 해제";
+"codex.unlink.confirmation" = "이는 앱과의 연결만 제거합니다. Codex 자격 증명은 Codex 홈에 그대로 남아 있으며 Codex는 로그아웃되지 않습니다.";
+"codex.unlink.title" = "Codex 홈 연결 해제";
+"common.retry" = "다시 시도";
+"diagnostics.provider.app" = "앱";
+"diagnostics.provider.app_server" = "앱 서버";
+"diagnostics.provider.codex" = "Codex";
+"diagnostics.provider.copy" = "수정된 진단 정보 복사";
+"diagnostics.provider.duration" = "확인 소요 시간";
+"diagnostics.provider.health" = "상태";
+"diagnostics.provider.home" = "Codex 홈";
+"diagnostics.provider.loading" = "제공업체 상태 확인 중…";
+"diagnostics.provider.os" = "macOS";
+"diagnostics.provider.provider" = "제공업체";
+"diagnostics.provider.refresh" = "진단 새로고침";
+"diagnostics.provider.subtitle" = "문제 해결을 위해 수정된 상태 요약을 복사하세요.";
+"diagnostics.provider.title" = "제공업체 진단";
+"history.all_windows" = "모든 창";
+"history.provider_usage" = "제공업체 사용량";
+"history.provider_window_filter" = "사용량 창";
+"menubar.api_cost" = "API 비용";
+"menubar.cost_source.api" = "API";
+"menubar.cost_source.cli" = "Claude Code";
+"menubar.cost_source.unknown" = "기타";
+"menubar.this_month" = "이번 달";
+"menubar.total" = "합계";
+"multiprofile.style_bars" = "막대";
+"multiprofile.style_circles" = "원형";
+"multiprofile.style_dots" = "점";
+"multiprofile.style_percent" = "백분율";
+"notification.provider_usage.reset" = "사용량 창이 재설정되었습니다.";
+"notification.provider_usage.reset_suffix" = " %@에 재설정됩니다.";
+"notification.provider_usage.threshold" = "사용량이 %d%%를 초과했습니다(%.1f%%).%@";
+"notification.provider_usage.title" = "%@ – %@";
+"popover.normalized.accessibility.account" = "계정";
+"popover.normalized.action.refresh" = "사용량 새로고침";
+"popover.normalized.action.settings" = "설정 열기";
+"popover.normalized.credits.read_only" = "읽기 전용";
+"popover.normalized.credits.title" = "크레딧";
+"popover.normalized.group.empty" = "이 그룹에 대해 보고된 한도가 없습니다.";
+"popover.normalized.health.checking" = "사용량 확인 중";
+"popover.normalized.health.degraded" = "일부 데이터만 사용 가능";
+"popover.normalized.health.healthy" = "사용 가능";
+"popover.normalized.health.sign_in" = "로그인 필요";
+"popover.normalized.health.unavailable" = "사용 불가";
+"popover.normalized.health.unsupported" = "지원되지 않는 계정";
+"popover.normalized.notice.configuration" = "새로고침하기 전에 이 프로필에 조치가 필요합니다.";
+"popover.normalized.notice.degraded" = "일부 사용량 세부 정보를 사용할 수 없습니다.";
+"popover.normalized.notice.refresh_failed" = "사용량을 새로고침할 수 없습니다.";
+"popover.normalized.notice.refreshing" = "사용량 새로고침 중…";
+"popover.normalized.notice.stale" = "사용량이 최신이 아닐 수 있습니다.";
+"popover.normalized.notice.unauthenticated" = "사용량을 새로고침하려면 다시 로그인하세요.";
+"popover.normalized.notice.unavailable" = "현재 제공업체를 사용할 수 없습니다.";
+"popover.normalized.notice.unsupported_account" = "이 계정은 구독 사용량을 제공하지 않습니다.";
+"popover.normalized.profile.account_linked" = "계정 연결됨";
+"popover.normalized.profile.active" = "활성";
+"popover.normalized.profile.api_linked" = "API 연결됨";
+"popover.normalized.profile.cli_linked" = "CLI 연결됨";
+"popover.normalized.profile.linked" = "연결됨";
+"popover.normalized.profile.not_connected" = "연결되지 않음";
+"popover.normalized.profile.not_linked" = "연결되지 않음";
+"popover.normalized.profile.relink_required" = "다시 연결 필요";
+"popover.normalized.reset.at" = "%@에 재설정";
+"popover.normalized.reset.both" = "%@ 후 재설정(%@)";
+"popover.normalized.reset.in" = "%@ 후 재설정";
+"popover.normalized.reset.now" = "지금 재설정";
+"popover.normalized.selected_profile" = "선택된 프로필";
+"popover.normalized.summary.daily_empty" = "일일 사용량이 보고되지 않았습니다.";
+"popover.normalized.summary.daily_title" = "일일 사용량";
+"popover.normalized.summary.no_values" = "보고된 요약 값이 없습니다.";
+"popover.normalized.summary.title" = "사용량 요약";
+"popover.normalized.unit.requests" = "요청";
+"popover.normalized.unit.tokens" = "토큰";
+"popover.normalized.value.remaining" = "남음";
+"popover.normalized.value.unavailable" = "사용 불가";
+"popover.normalized.value.used" = "사용됨";
+"profiles.about_cli_switching" = "CLI 계정 전환: 각 프로필의 CLI 계정 설정에서 CLI 계정을 연결하세요";
+"profiles.claude_cli_linked" = "CLI 연결됨";
+"profiles.codex_home_linked" = "홈 연결됨";
+"profiles.codex_relink" = "다시 연결 필요";
+"profiles.codex_unlinked" = "홈 연결 해제됨";
+"profiles.provider_label" = "제공업체";
+"profiles.provider_unknown" = "제공업체 사용 불가";
+"profiles.rename_failed_title" = "프로필 이름을 변경할 수 없음";
+"provider.capability.autostart_unavailable" = "이 제공업체에서는 자동 세션 시작을 사용할 수 없습니다.";
+"provider.capability.login_unavailable" = "이 제공업체에서는 대화형 로그인을 사용할 수 없습니다.";
+"provider.capability.notifications_unavailable" = "이 제공업체에서는 사용량 알림을 사용할 수 없습니다.";
+"provider.error.cancelled.explanation" = "이 작업은 Codex 계정이나 자격 증명을 변경하지 않고 종료되었습니다.";
+"provider.error.cancelled.title" = "Codex 작업 취소됨";
+"provider.error.codex_launch.explanation" = "Codex 앱 서버를 시작할 수 없습니다. Codex 설치를 확인한 후 다시 시도하세요.";
+"provider.error.codex_launch.title" = "Codex를 시작할 수 없음";
+"provider.error.codex_missing.explanation" = "Codex를 설치하거나 Codex 실행 파일을 PATH에서 사용할 수 있도록 한 후 다시 시도하세요.";
+"provider.error.codex_missing.title" = "Codex CLI를 찾을 수 없음";
+"provider.error.duplicate_home.explanation" = "각 Codex 홈은 하나의 프로필에만 연결할 수 있습니다. 다른 홈을 선택하세요.";
+"provider.error.duplicate_home.title" = "Codex 홈이 이미 연결됨";
+"provider.error.incompatible_app_server.explanation" = "이 Codex 앱 서버는 구독 사용량에 필요한 프로토콜을 지원하지 않습니다.";
+"provider.error.incompatible_app_server.title" = "Codex 업데이트 필요";
+"provider.error.invalid_home.explanation" = "연결된 Codex 홈이 없거나, 유효하지 않거나, 확인 후 변경되었습니다.";
+"provider.error.invalid_home.title" = "Codex 홈을 사용할 수 없음";
+"provider.error.logged_out.explanation" = "연결된 Codex 홈이 지원되는 ChatGPT 구독에 로그인되어 있지 않습니다.";
+"provider.error.logged_out.title" = "Codex로 로그인";
+"provider.error.malformed_response.explanation" = "Codex가 안전하게 해석할 수 없는 응답을 반환했습니다. Codex를 업데이트한 후 다시 시도하세요.";
+"provider.error.malformed_response.title" = "Codex가 잘못된 데이터를 반환함";
+"provider.error.partial_usage.explanation" = "속도 제한 정보는 사용할 수 있지만, 선택적 사용량 세부 정보는 이 Codex 버전에서 지원되지 않습니다.";
+"provider.error.partial_usage.title" = "일부 Codex 사용량을 사용할 수 없음";
+"provider.error.timeout.explanation" = "Codex가 안전 제한 시간 내에 응답하지 않았습니다. 다시 시도하세요.";
+"provider.error.timeout.title" = "Codex 시간 초과";
+"provider.error.transient.explanation" = "요청이 완료되기 전에 Codex 앱 서버 연결이 끊어지거나 실패했습니다. 다시 시도하세요.";
+"provider.error.transient.title" = "Codex를 일시적으로 사용할 수 없음";
+"provider.error.unsupported_account.explanation" = "이 Codex 계정 모드는 ChatGPT 구독 사용량을 제공하지 않습니다.";
+"provider.error.unsupported_account.title" = "지원되지 않는 Codex 계정";
+"provider.health.degraded" = "저하됨";
+"provider.health.healthy" = "정상";
+"provider.health.unauthenticated" = "로그인 필요";
+"provider.health.unavailable" = "사용 불가";
+"provider.health.unsupported" = "지원 안 됨";
+"provider.immutable.codex" = "제공업체: Codex(변경 불가)";
+"provider.operation.failed" = "제공업체 작업이 안전하게 실패했습니다. 다시 시도하세요.";
+"provider.profile_changed" = "프로필 또는 연결된 홈이 변경되었습니다. 현재 프로필을 확인한 후 다시 시도하세요.";
+"provider.profile_unavailable" = "이 프로필은 더 이상 사용할 수 없습니다.";
+"provider.recovery.codex_help.explanation" = "평소 사용하는 신뢰할 수 있는 패키지 관리자나 설치 프로그램으로 Codex를 설치하거나 업데이트한 후 “codex --version”이 정상적으로 실행되는지 확인하세요.";
+"provider.recovery.codex_help.title" = "Codex 설치 또는 업데이트";
+"provider.recovery.install_or_update_codex" = "Codex 설치 도움말";
+"provider.recovery.open_settings" = "설정 열기";
+"provider.recovery.retry" = "다시 시도";
+"section.provider_account_desc" = "계정, 상태, 로그인";
+"section.provider_account_title" = "제공업체 계정";
+"settings.profile.opening" = "프로필 설정 여는 중";
+"setup.provider.subtitle" = "프로필은 제공업체 계정과 사용량을 분리하여 유지합니다. Claude와 Codex 프로필을 모두 추가할 수 있습니다.";
+"setup.provider.title" = "사용량 제공업체 선택";
