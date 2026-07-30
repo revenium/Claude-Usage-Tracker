@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import UsageCore
 
 /// Represents a complete isolated profile with all credentials and settings
 struct Profile: Codable, Identifiable, Equatable {
@@ -256,6 +257,9 @@ struct Profile: Codable, Identifiable, Equatable {
         )
         if legacyClaudeUsage != nil || legacyAPIUsage != nil {
             usageRetry = ProfileCurrentUsage(
+                providerID: providerID,
+                providerRevision: providerRevision,
+                report: usageRetry?.report,
                 claudeUsage: legacyClaudeUsage ?? usageRetry?.claudeUsage,
                 apiUsage: legacyAPIUsage ?? usageRetry?.apiUsage
             )
@@ -328,7 +332,22 @@ struct Profile: Codable, Identifiable, Equatable {
         hasClaudeAI || hasAPIConsole || cliCredentialsJSON != nil
     }
 
+    var providerID: ProviderID {
+        switch providerConfiguration.kind {
+        case .claude:
+            return .claude
+        case .codex:
+            return .codex
+        }
+    }
+
     func validateProviderIsolation() throws {
+        if let currentUsageMigrationRetry {
+            try currentUsageMigrationRetry.validate(
+                expectedProviderID: providerID,
+                expectedProviderRevision: providerRevision
+            )
+        }
         guard providerConfiguration.kind == .codex else { return }
         let containsClaudeState =
             claudeSessionKey != nil
@@ -351,20 +370,170 @@ struct Profile: Codable, Identifiable, Equatable {
     }
 }
 
-/// Durable current-usage payload for the existing Claude.ai and Anthropic API
-/// surfaces. Codex persists its normalized usage independently through the
-/// provider-neutral file envelope introduced for that later integration.
+enum ProfileCurrentUsageValidationError: Error, LocalizedError, Equatable {
+    case identityMismatch(
+        expectedProviderID: ProviderID,
+        expectedProviderRevision: UInt64,
+        foundProviderID: ProviderID,
+        foundProviderRevision: UInt64
+    )
+    case reportProviderMismatch(
+        payloadProviderID: ProviderID,
+        reportProviderID: ProviderID
+    )
+    case claudeCompatibilityOnCodex
+
+    var errorDescription: String? {
+        switch self {
+        case .identityMismatch(
+            let expectedProviderID,
+            let expectedProviderRevision,
+            let foundProviderID,
+            let foundProviderRevision
+        ):
+            return "Current usage belongs to \(foundProviderID) revision "
+                + "\(foundProviderRevision), not \(expectedProviderID) "
+                + "revision \(expectedProviderRevision)."
+        case .reportProviderMismatch(
+            let payloadProviderID,
+            let reportProviderID
+        ):
+            return "Current usage for \(payloadProviderID) contains a "
+                + "\(reportProviderID) report."
+        case .claudeCompatibilityOnCodex:
+            return "Codex current usage cannot contain Claude or Anthropic "
+                + "API compatibility projections."
+        }
+    }
+}
+
+/// Atomic durable usage state for one exact provider-profile identity.
+///
+/// `claudeUsage` and `apiUsage` are compatibility projections retained while
+/// existing Claude-only consumers move to the normalized `report`. Legacy
+/// payloads predate the identity and report fields and decode as Claude
+/// revision zero.
 struct ProfileCurrentUsage: Codable, Equatable {
+    var providerID: ProviderID
+    var providerRevision: UInt64
+    var report: UsageReport?
     var claudeUsage: ClaudeUsage?
     var apiUsage: APIUsage?
 
-    init(claudeUsage: ClaudeUsage? = nil, apiUsage: APIUsage? = nil) {
+    init(
+        providerID: ProviderID = .claude,
+        providerRevision: UInt64 = 0,
+        report: UsageReport? = nil,
+        claudeUsage: ClaudeUsage? = nil,
+        apiUsage: APIUsage? = nil
+    ) {
+        self.providerID = providerID
+        self.providerRevision = providerRevision
+        self.report = report
         self.claudeUsage = claudeUsage
         self.apiUsage = apiUsage
     }
 
+    private enum CodingKeys: String, CodingKey {
+        case providerID
+        case providerRevision
+        case report
+        case claudeUsage
+        case apiUsage
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let hasProviderID = container.contains(.providerID)
+        let hasProviderRevision = container.contains(.providerRevision)
+        if !hasProviderID && !hasProviderRevision {
+            providerID = .claude
+            providerRevision = 0
+        } else {
+            guard hasProviderID && hasProviderRevision else {
+                throw DecodingError.dataCorrupted(
+                    DecodingError.Context(
+                        codingPath: decoder.codingPath,
+                        debugDescription: "Current usage identity requires "
+                            + "both providerID and providerRevision."
+                    )
+                )
+            }
+            // `decode`, rather than `decodeIfPresent`, deliberately rejects a
+            // tagged identity whose provider or revision is explicit null.
+            providerID = try container.decode(
+                ProviderID.self,
+                forKey: .providerID
+            )
+            providerRevision = try container.decode(
+                UInt64.self,
+                forKey: .providerRevision
+            )
+        }
+        report = try container.decodeIfPresent(
+            UsageReport.self,
+            forKey: .report
+        )
+        claudeUsage = try container.decodeIfPresent(
+            ClaudeUsage.self,
+            forKey: .claudeUsage
+        )
+        apiUsage = try container.decodeIfPresent(
+            APIUsage.self,
+            forKey: .apiUsage
+        )
+        try validateReportIdentity()
+        try validateCompatibilityIsolation()
+    }
+
+    func encode(to encoder: Encoder) throws {
+        try validateReportIdentity()
+        try validateCompatibilityIsolation()
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(providerID, forKey: .providerID)
+        try container.encode(providerRevision, forKey: .providerRevision)
+        try container.encodeIfPresent(report, forKey: .report)
+        try container.encodeIfPresent(claudeUsage, forKey: .claudeUsage)
+        try container.encodeIfPresent(apiUsage, forKey: .apiUsage)
+    }
+
     var isEmpty: Bool {
-        claudeUsage == nil && apiUsage == nil
+        report == nil && claudeUsage == nil && apiUsage == nil
+    }
+
+    func validate(
+        expectedProviderID: ProviderID,
+        expectedProviderRevision: UInt64
+    ) throws {
+        guard providerID == expectedProviderID,
+              providerRevision == expectedProviderRevision else {
+            throw ProfileCurrentUsageValidationError.identityMismatch(
+                expectedProviderID: expectedProviderID,
+                expectedProviderRevision: expectedProviderRevision,
+                foundProviderID: providerID,
+                foundProviderRevision: providerRevision
+            )
+        }
+        try validateReportIdentity()
+        try validateCompatibilityIsolation()
+    }
+
+    private func validateReportIdentity() throws {
+        guard let report else { return }
+        guard report.providerID == providerID else {
+            throw ProfileCurrentUsageValidationError.reportProviderMismatch(
+                payloadProviderID: providerID,
+                reportProviderID: report.providerID
+            )
+        }
+    }
+
+    private func validateCompatibilityIsolation() throws {
+        guard providerID == .codex else { return }
+        guard claudeUsage == nil, apiUsage == nil else {
+            throw ProfileCurrentUsageValidationError
+                .claudeCompatibilityOnCodex
+        }
     }
 }
 

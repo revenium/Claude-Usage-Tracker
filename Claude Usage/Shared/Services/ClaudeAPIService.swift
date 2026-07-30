@@ -11,7 +11,7 @@ class ClaudeAPIService: APIServiceProtocol {
         case consoleAPISession(String)     // Cookie: sessionKey=... (different endpoint)
     }
 
-    enum CapturedUsageFetchSource: Equatable {
+    enum CapturedUsageFetchSource: Equatable, Sendable {
         case claudeAI(checkOverage: Bool)
         case profileCLI
         case systemCLI
@@ -20,7 +20,7 @@ class ClaudeAPIService: APIServiceProtocol {
     /// Request-scoped authentication captured before async work begins.
     /// Deliberately neither Codable nor CustomStringConvertible so credentials
     /// cannot drift through persistence or routine diagnostics.
-    struct CapturedUsageRequest {
+    struct CapturedUsageRequest: Sendable {
         let source: CapturedUsageFetchSource
         fileprivate let sessionKey: String?
         fileprivate let organizationID: String?
@@ -33,7 +33,7 @@ class ClaudeAPIService: APIServiceProtocol {
 
     /// Request-scoped Console API credentials. This value is intentionally
     /// opaque and has no Codable or printable conformance.
-    struct CapturedAPIUsageRequest {
+    struct CapturedAPIUsageRequest: Sendable {
         fileprivate let organizationID: String
         fileprivate let apiSessionKey: String
 

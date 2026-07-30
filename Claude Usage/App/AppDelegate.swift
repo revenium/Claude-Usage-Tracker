@@ -25,6 +25,7 @@ struct SetupWizardDecision {
     }
 }
 
+@MainActor
 class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     private var menuBarManager: MenuBarManager?
     private var setupWindow: NSWindow?
@@ -72,7 +73,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         // Check if setup has been completed
         if !shouldShowSetupWizard() {
             // Initialize menu bar with active profile
-            menuBarManager = MenuBarManager()
+            menuBarManager = makeMenuBarManager()
             menuBarManager?.setup()
         } else {
             showSetupWizardManually()
@@ -124,7 +125,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         }
     }
 
-    static var isRunningHostedUnitTests: Bool {
+    nonisolated static var isRunningHostedUnitTests: Bool {
         let environment = ProcessInfo.processInfo.environment
         return environment["XCTestConfigurationFilePath"] != nil
             || environment["XCTestBundlePath"] != nil
@@ -224,13 +225,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             object: window,
             queue: .main
         ) { [weak self] _ in
-            NSApp.setActivationPolicy(.accessory)
-            self?.setupWindow = nil
+            MainActor.assumeIsolated {
+                NSApp.setActivationPolicy(.accessory)
+                self?.setupWindow = nil
 
-            // Initialize menu bar after setup completes
-            if self?.menuBarManager == nil {
-                self?.menuBarManager = MenuBarManager()
-                self?.menuBarManager?.setup()
+                if self?.menuBarManager == nil {
+                    self?.menuBarManager =
+                        self?.makeMenuBarManager()
+                    self?.menuBarManager?.setup()
+                }
             }
         }
 
@@ -241,6 +244,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     func applicationWillTerminate(_ notification: Notification) {
         // Cleanup
         menuBarManager?.cleanup()
+    }
+
+    private func makeMenuBarManager() -> MenuBarManager {
+        let apiService = ClaudeAPIService()
+        let statusService = ClaudeStatusService()
+        let runtime = UsageRefreshRuntime.live(
+            profileManager: .shared,
+            apiService: apiService,
+            statusService: statusService
+        )
+        return MenuBarManager(
+            apiService: apiService,
+            statusService: statusService,
+            profileManager: .shared,
+            refreshRuntime: runtime
+        )
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

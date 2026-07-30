@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import UsageCore
 
 nonisolated enum ProfileUsageRecordKind: String, Codable {
     case currentUsage = "current-usage"
@@ -301,15 +302,37 @@ nonisolated final class ProfileUsageFileStore: @unchecked Sendable {
 }
 
 extension ProfileUsageFileStore: ProfileCurrentUsageFileStoring {
-    private var currentUsageProviderID: String { "claude" }
-
     func loadCurrentUsage(for profileID: UUID) throws -> ProfileCurrentUsage? {
-        let usage = try load(
-            ProfileCurrentUsage.self,
-            for: profileID,
-            providerID: currentUsageProviderID,
-            kind: .currentUsage
+        updateLock.lock()
+        defer { updateLock.unlock() }
+
+        let envelopeType =
+            ProfileUsageFileEnvelope<ProfileCurrentUsage>.self
+        let envelope = try atomicStore.read(
+            envelopeType,
+            from: relativePath(for: profileID, kind: .currentUsage)
         )
+        let usage: ProfileCurrentUsage?
+        if let envelope {
+            let envelopeProviderID = try validatedProviderID(
+                envelope.providerID
+            )
+            try validate(
+                envelope,
+                profileID: profileID,
+                providerID: envelopeProviderID,
+                kind: .currentUsage
+            )
+            let providerID = try ProviderID(envelopeProviderID)
+            try envelope.payload.validate(
+                expectedProviderID: providerID,
+                expectedProviderRevision:
+                    envelope.payload.providerRevision
+            )
+            usage = envelope.payload
+        } else {
+            usage = nil
+        }
         if usage == nil, try hasCurrentUsageRecoveryArtifacts(for: profileID) {
             // AtomicJSONFileStore quarantines an unreadable primary. Its
             // absence on a later read must not become permission to replace
@@ -320,10 +343,14 @@ extension ProfileUsageFileStore: ProfileCurrentUsageFileStoring {
     }
 
     func saveCurrentUsage(_ usage: ProfileCurrentUsage, for profileID: UUID) throws {
+        try usage.validate(
+            expectedProviderID: usage.providerID,
+            expectedProviderRevision: usage.providerRevision
+        )
         try save(
             usage,
             for: profileID,
-            providerID: currentUsageProviderID,
+            providerID: usage.providerID.rawValue,
             kind: .currentUsage
         )
         guard try loadCurrentUsage(for: profileID) == usage else {
@@ -344,14 +371,13 @@ extension ProfileUsageFileStore: ProfileCurrentUsageFileStoring {
         for profileID: UUID,
         transform: (inout ProfileCurrentUsage) throws -> Void
     ) throws -> ProfileCurrentUsage {
-        let updated = try update(
-            ProfileCurrentUsage.self,
-            for: profileID,
-            providerID: currentUsageProviderID,
-            kind: .currentUsage,
-            initialValue: ProfileCurrentUsage(),
-            transform: transform
-        )
+        updateLock.lock()
+        defer { updateLock.unlock() }
+
+        var updated = try loadCurrentUsage(for: profileID)
+            ?? ProfileCurrentUsage()
+        try transform(&updated)
+        try saveCurrentUsage(updated, for: profileID)
         guard try loadCurrentUsage(for: profileID) == updated else {
             throw ProfileUsageFileStoreError.currentUsageWriteVerificationFailed(profileID)
         }

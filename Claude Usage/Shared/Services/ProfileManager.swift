@@ -7,6 +7,7 @@
 
 import Foundation
 import Combine
+import UsageCore
 
 struct ProfileActivationClaudeEffects {
     var resyncBeforeSwitching: (UUID) throws -> Void
@@ -920,6 +921,7 @@ class ProfileManager: ObservableObject {
         if var usageRetry =
             profiles[index].currentUsageMigrationRetry {
             if component == .claude {
+                usageRetry.report = nil
                 usageRetry.claudeUsage = nil
             } else {
                 usageRetry.apiUsage = nil
@@ -976,6 +978,65 @@ class ProfileManager: ObservableObject {
     }
 
     // MARK: - Usage Data
+
+    /// Installs one complete provider result and updates compatibility
+    /// projections only after the provider/revision/deletion fence and exact
+    /// durable readback succeed.
+    @discardableResult
+    func commitCurrentUsage(
+        _ usage: ProfileCurrentUsage,
+        for profileID: UUID,
+        expectedProviderID: ProviderID,
+        expectedProviderRevision: UInt64,
+        publishToActiveProfile: Bool = true
+    ) throws -> (
+        previous: ProfileCurrentUsage?,
+        current: ProfileCurrentUsage
+    ) {
+        guard let index = profiles.firstIndex(where: {
+            $0.id == profileID
+        }) else {
+            throw ProfileStoreError.profileNotFound(profileID)
+        }
+        let profile = profiles[index]
+        guard !profile.deletionInProgress else {
+            throw ProfileStoreError.profileDeletionInProgress(profileID)
+        }
+        guard profile.providerID == expectedProviderID,
+              profile.providerRevision == expectedProviderRevision else {
+            throw ProfileCurrentUsageValidationError.identityMismatch(
+                expectedProviderID: expectedProviderID,
+                expectedProviderRevision: expectedProviderRevision,
+                foundProviderID: profile.providerID,
+                foundProviderRevision: profile.providerRevision
+            )
+        }
+
+        let committed = try profileStore.commitCurrentUsage(
+            usage,
+            for: profileID,
+            expectedProviderID: expectedProviderID,
+            expectedProviderRevision: expectedProviderRevision
+        )
+        profiles[index].claudeUsage = committed.current.claudeUsage
+        profiles[index].apiUsage = committed.current.apiUsage
+        if publishToActiveProfile, activeProfile?.id == profileID {
+            activeProfile = profiles[index]
+        }
+        return committed
+    }
+
+    func loadCurrentUsage(
+        for profileID: UUID,
+        expectedProviderID: ProviderID,
+        expectedProviderRevision: UInt64
+    ) throws -> ProfileCurrentUsage? {
+        try profileStore.loadCurrentUsage(
+            for: profileID,
+            expectedProviderID: expectedProviderID,
+            expectedProviderRevision: expectedProviderRevision
+        )
+    }
 
     /// Saves Claude usage data for a specific profile
     @discardableResult

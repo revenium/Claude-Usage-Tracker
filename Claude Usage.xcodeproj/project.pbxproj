@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		056C52802F017E50007E2A48 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = SPARKLE_PRODUCT_DEP /* Sparkle */; };
+		CODEX_PROVIDER_APP_BUILD_FILE /* CodexUsageProvider in Frameworks */ = {isa = PBXBuildFile; productRef = CODEX_PROVIDER_APP_PRODUCT_DEP /* CodexUsageProvider */; };
 		USAGECORE_APP_BUILD_FILE /* UsageCore in Frameworks */ = {isa = PBXBuildFile; productRef = USAGECORE_APP_PRODUCT_DEP /* UsageCore */; };
 /* End PBXBuildFile section */
 
@@ -45,6 +46,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				056C52802F017E50007E2A48 /* Sparkle in Frameworks */,
+				CODEX_PROVIDER_APP_BUILD_FILE /* CodexUsageProvider in Frameworks */,
 				USAGECORE_APP_BUILD_FILE /* UsageCore in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -98,6 +100,7 @@
 			name = "Claude Usage";
 			packageProductDependencies = (
 				SPARKLE_PRODUCT_DEP /* Sparkle */,
+				CODEX_PROVIDER_APP_PRODUCT_DEP /* CodexUsageProvider */,
 				USAGECORE_APP_PRODUCT_DEP /* UsageCore */,
 			);
 			productName = "Claude Usage";
@@ -545,6 +548,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = SPARKLE_PACKAGE_REF /* XCRemoteSwiftPackageReference "Sparkle" */;
 			productName = Sparkle;
+		};
+		CODEX_PROVIDER_APP_PRODUCT_DEP /* CodexUsageProvider */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = USAGEKIT_PACKAGE_REF /* XCLocalSwiftPackageReference "UsageKit" */;
+			productName = CodexUsageProvider;
 		};
 		USAGECORE_APP_PRODUCT_DEP /* UsageCore */ = {
 			isa = XCSwiftPackageProductDependency;

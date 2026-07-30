@@ -1,4 +1,5 @@
 import Foundation
+import UsageCore
 import XCTest
 @testable import Claude_Usage
 
@@ -37,6 +38,9 @@ final class ProfileCurrentUsageIntegrationTests: HostedAppTestCase {
             usageFiles.values[profileID],
             ProfileCurrentUsage(claudeUsage: claude, apiUsage: api)
         )
+        XCTAssertEqual(usageFiles.values[profileID]?.providerID, .claude)
+        XCTAssertEqual(usageFiles.values[profileID]?.providerRevision, 0)
+        XCTAssertNil(usageFiles.values[profileID]?.report)
         let persisted = try persistedProfileText()
         XCTAssertFalse(persisted.contains("\"claudeUsage\""))
         XCTAssertFalse(persisted.contains("\"apiUsage\""))
@@ -47,6 +51,320 @@ final class ProfileCurrentUsageIntegrationTests: HostedAppTestCase {
             .loadProfiles()
         XCTAssertEqual(relaunched.first?.claudeUsage, claude)
         XCTAssertEqual(relaunched.first?.apiUsage, api)
+    }
+
+    func testCurrentUsageIdentityDefaultsOnlyForWhollyLegacyPayloads()
+        throws {
+        let decoder = JSONDecoder()
+        let legacy = try decoder.decode(
+            ProfileCurrentUsage.self,
+            from: Data(#"{"claudeUsage":null}"#.utf8)
+        )
+        XCTAssertEqual(legacy.providerID, .claude)
+        XCTAssertEqual(legacy.providerRevision, 0)
+
+        let tagged = try decoder.decode(
+            ProfileCurrentUsage.self,
+            from: Data(
+                #"{"providerID":"codex","providerRevision":7}"#.utf8
+            )
+        )
+        XCTAssertEqual(tagged.providerID, .codex)
+        XCTAssertEqual(tagged.providerRevision, 7)
+
+        let malformed = [
+            #"{"providerID":"codex"}"#,
+            #"{"providerRevision":7}"#,
+            #"{"providerID":null,"providerRevision":7}"#,
+            #"{"providerID":"codex","providerRevision":null}"#
+        ]
+        for json in malformed {
+            XCTAssertThrowsError(
+                try decoder.decode(
+                    ProfileCurrentUsage.self,
+                    from: Data(json.utf8)
+                ),
+                "Accepted partial or null identity: \(json)"
+            )
+        }
+    }
+
+    @MainActor
+    func testCodexPayloadRejectsClaudeCompatibilityOnDecodeSaveAndLoad()
+        throws {
+        let incompatiblePayloads = [
+            ProfileCurrentUsage(claudeUsage: makeClaudeUsage(tokens: 1)),
+            ProfileCurrentUsage(apiUsage: makeAPIUsage(spend: 1))
+        ]
+        var invalidObjects: [[String: Any]] = []
+        for payload in incompatiblePayloads {
+            var object = try XCTUnwrap(
+                JSONSerialization.jsonObject(
+                    with: JSONEncoder().encode(payload)
+                ) as? [String: Any]
+            )
+            object["providerID"] = "codex"
+            object["providerRevision"] = 0
+            invalidObjects.append(object)
+            XCTAssertThrowsError(
+                try JSONDecoder().decode(
+                    ProfileCurrentUsage.self,
+                    from: try JSONSerialization.data(
+                        withJSONObject: object
+                    )
+                )
+            ) { error in
+                XCTAssertTrue(
+                    String(describing: error).contains(
+                        "claudeCompatibilityOnCodex"
+                    )
+                        || error.localizedDescription.contains(
+                            "compatibility"
+                        )
+                )
+            }
+        }
+
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "CodexIsolation-\(UUID().uuidString)"
+            )
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+        let profileID = UUID()
+        let store = ProfileUsageFileStore(baseURL: rootURL)
+        XCTAssertThrowsError(
+            try store.saveCurrentUsage(
+                ProfileCurrentUsage(
+                    providerID: .codex,
+                    claudeUsage: makeClaudeUsage(tokens: 2)
+                ),
+                for: profileID
+            )
+        )
+        XCTAssertThrowsError(
+            try store.saveCurrentUsage(
+                ProfileCurrentUsage(
+                    providerID: .codex,
+                    apiUsage: makeAPIUsage(spend: 2)
+                ),
+                for: profileID
+            )
+        )
+
+        let fileURL = try store.fileURL(
+            for: profileID,
+            kind: .currentUsage
+        )
+        try FileManager.default.createDirectory(
+            at: fileURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try JSONSerialization.data(withJSONObject: [
+            "schemaVersion": 1,
+            "profileID": profileID.uuidString,
+            "providerID": "codex",
+            "recordKind": "current-usage",
+            "writtenAt": 0,
+            "updatedAt": 0,
+            "payload": invalidObjects[0]
+        ]).write(to: fileURL)
+        XCTAssertThrowsError(
+            try store.loadCurrentUsage(for: profileID)
+        )
+    }
+
+    @MainActor
+    func testCodexCurrentUsageUsesDynamicEnvelopeAndNormalizedReport()
+        throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "CodexCurrentUsage-\(UUID().uuidString)"
+            )
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+        let profileID = UUID()
+        let store = ProfileUsageFileStore(baseURL: rootURL)
+        let usage = ProfileCurrentUsage(
+            providerID: .codex,
+            providerRevision: 4,
+            report: try makeReport(providerID: .codex, marker: 4)
+        )
+
+        try store.saveCurrentUsage(usage, for: profileID)
+
+        XCTAssertEqual(try store.loadCurrentUsage(for: profileID), usage)
+        let data = try Data(
+            contentsOf: store.fileURL(
+                for: profileID,
+                kind: .currentUsage
+            )
+        )
+        let envelope = try JSONDecoder().decode(
+            ProfileUsageFileEnvelope<ProfileCurrentUsage>.self,
+            from: data
+        )
+        XCTAssertEqual(envelope.providerID, "codex")
+        XCTAssertEqual(envelope.payload.providerRevision, 4)
+        XCTAssertEqual(envelope.payload.report, usage.report)
+        XCTAssertNil(envelope.payload.claudeUsage)
+        XCTAssertNil(envelope.payload.apiUsage)
+    }
+
+    @MainActor
+    func testCommitFenceReturnsPreviousAndRejectsStaleOrDeletedIdentity()
+        throws {
+        let profileID = UUID()
+        let usageFiles = MockCurrentUsageFileStore()
+        let store = retain(makeStore(usageFiles: usageFiles))
+        let profile = Profile(
+            id: profileID,
+            name: "Codex",
+            providerConfiguration: .codex(.init()),
+            providerRevision: 3
+        )
+        try seedProfilesForTesting([profile], in: store)
+        let previous = ProfileCurrentUsage(
+            providerID: .codex,
+            providerRevision: 3,
+            report: try makeReport(providerID: .codex, marker: 1)
+        )
+        usageFiles.values[profileID] = previous
+        let candidate = ProfileCurrentUsage(
+            providerID: .codex,
+            providerRevision: 3,
+            report: try makeReport(providerID: .codex, marker: 2)
+        )
+
+        let committed = try store.commitCurrentUsage(
+            candidate,
+            for: profileID,
+            expectedProviderID: .codex,
+            expectedProviderRevision: 3
+        )
+        XCTAssertEqual(committed.previous, previous)
+        XCTAssertEqual(committed.current, candidate)
+        XCTAssertEqual(usageFiles.values[profileID], candidate)
+
+        XCTAssertThrowsError(
+            try store.commitCurrentUsage(
+                ProfileCurrentUsage(
+                    providerID: .codex,
+                    providerRevision: 2,
+                    report: try makeReport(
+                        providerID: .codex,
+                        marker: 99
+                    )
+                ),
+                for: profileID,
+                expectedProviderID: .codex,
+                expectedProviderRevision: 2
+            )
+        )
+        XCTAssertEqual(usageFiles.values[profileID], candidate)
+
+        _ = try store.beginProfileDeletion(profileID)
+        XCTAssertThrowsError(
+            try store.commitCurrentUsage(
+                candidate,
+                for: profileID,
+                expectedProviderID: .codex,
+                expectedProviderRevision: 3
+            )
+        ) { error in
+            guard case ProfileStoreError.profileDeletionInProgress = error
+            else {
+                return XCTFail("Expected deletion fence, got \(error)")
+            }
+        }
+        XCTAssertEqual(usageFiles.values[profileID], candidate)
+    }
+
+    @MainActor
+    func testCommitRemovesItsInstalledValueWhenIdentityChangesAtReadback()
+        throws {
+        let profileID = UUID()
+        let usageFiles = MockCurrentUsageFileStore()
+        let store = retain(makeStore(usageFiles: usageFiles))
+        let original = Profile(
+            id: profileID,
+            name: "Codex",
+            providerConfiguration: .codex(.init()),
+            providerRevision: 0
+        )
+        try seedProfilesForTesting([original], in: store)
+        usageFiles.onSave = { [defaults] in
+            var changed = original
+            changed.providerRevision = 1
+            defaults?.set(
+                try! JSONEncoder().encode([changed]),
+                forKey: "profiles_v3"
+            )
+        }
+        let candidate = ProfileCurrentUsage(
+            providerID: .codex,
+            providerRevision: 0,
+            report: try makeReport(providerID: .codex, marker: 1)
+        )
+
+        XCTAssertThrowsError(
+            try store.commitCurrentUsage(
+                candidate,
+                for: profileID,
+                expectedProviderID: .codex,
+                expectedProviderRevision: 0
+            )
+        )
+        XCTAssertNil(usageFiles.values[profileID])
+    }
+
+    @MainActor
+    func testUnlinkComponentsPreserveOrClearNormalizedReportAtomically()
+        throws {
+        let profileID = UUID()
+        let secrets = MockSecretStore()
+        let usageFiles = MockCurrentUsageFileStore()
+        let store = retain(
+            makeStore(usageFiles: usageFiles, secrets: secrets)
+        )
+        let profile = Profile(
+            id: profileID,
+            name: "Claude",
+            organizationId: "claude-org",
+            apiOrganizationId: "api-org"
+        )
+        try seedProfilesForTesting([profile], in: store)
+        secrets.values[
+            ProfileSecretLocator(
+                profileID: profileID,
+                field: .claudeSessionKey
+            )
+        ] = "claude-session"
+        secrets.values[
+            ProfileSecretLocator(
+                profileID: profileID,
+                field: .apiSessionKey
+            )
+        ] = "api-session"
+        let report = try makeReport(providerID: .claude, marker: 8)
+        let claude = makeClaudeUsage(tokens: 8)
+        usageFiles.values[profileID] = ProfileCurrentUsage(
+            report: report,
+            claudeUsage: claude,
+            apiUsage: makeAPIUsage(spend: 8)
+        )
+
+        try store.unlinkAPIConsole(for: profileID)
+        XCTAssertEqual(usageFiles.values[profileID]?.report, report)
+        XCTAssertEqual(usageFiles.values[profileID]?.claudeUsage, claude)
+        XCTAssertNil(usageFiles.values[profileID]?.apiUsage)
+
+        try store.unlinkClaudeAI(for: profileID)
+        XCTAssertNil(usageFiles.values[profileID]?.report)
+        XCTAssertNil(usageFiles.values[profileID]?.claudeUsage)
+        XCTAssertNil(usageFiles.values[profileID]?.apiUsage)
     }
 
     @MainActor
@@ -1567,6 +1885,23 @@ final class ProfileCurrentUsageIntegrationTests: HostedAppTestCase {
         )
     }
 
+    private func makeReport(
+        providerID: ProviderID,
+        marker: TimeInterval
+    ) throws -> UsageReport {
+        let date = Date(timeIntervalSinceReferenceDate: marker)
+        return try UsageReport(
+            providerID: providerID,
+            health: ProviderHealth(
+                status: .healthy,
+                checkedAt: date
+            ),
+            limitGroups: [],
+            fetchedAt: date,
+            staleAt: date.addingTimeInterval(60)
+        )
+    }
+
     @MainActor
     private func assertUnlinkFailurePreservesDurableState(
         component: UnlinkComponent,
@@ -1750,6 +2085,7 @@ private final class MockCurrentUsageFileStore: ProfileCurrentUsageFileStoring {
     var saveError: Error?
     var updateError: Error?
     var deleteError: Error?
+    var onSave: (() -> Void)?
     var updateCount = 0
     var deleteAllCount = 0
     var saveCount = 0
@@ -1767,6 +2103,9 @@ private final class MockCurrentUsageFileStore: ProfileCurrentUsageFileStoring {
             throw saveError
         }
         values[profileID] = usage
+        let hook = onSave
+        onSave = nil
+        hook?()
         guard try loadCurrentUsage(for: profileID) == usage else {
             throw TestFailure.expected
         }
@@ -1784,6 +2123,9 @@ private final class MockCurrentUsageFileStore: ProfileCurrentUsageFileStoring {
         var usage = try loadCurrentUsage(for: profileID) ?? ProfileCurrentUsage()
         try transform(&usage)
         values[profileID] = usage
+        let hook = onSave
+        onSave = nil
+        hook?()
         return usage
     }
 

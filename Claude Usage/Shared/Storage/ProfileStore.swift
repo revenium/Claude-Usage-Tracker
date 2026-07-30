@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import UsageCore
 
 protocol ProfileDefaultsStore: AnyObject {
     func data(forKey defaultName: String) -> Data?
@@ -25,6 +26,7 @@ enum ProfileStoreError: Error, LocalizedError {
     case credentialUsageUnlinkFailed(UUID)
     case credentialUsageUnlinkRollbackFailed(UUID, credentials: Bool, usage: Bool)
     case credentialUsageUnlinkMarkerVerificationFailed
+    case currentUsageCommitRollbackFailed(UUID)
     case profileWriteVerificationFailed
     case profileRestoreVerificationFailed
 
@@ -60,6 +62,9 @@ enum ProfileStoreError: Error, LocalizedError {
                 + "\(usage ? "unresolved" : "restored")."
         case .credentialUsageUnlinkMarkerVerificationFailed:
             return "Credential unlink recovery state could not be verified."
+        case .currentUsageCommitRollbackFailed(let profileID):
+            return "Current usage rollback is unresolved for profile "
+                + "\(profileID.uuidString.prefix(8))."
         case .profileWriteVerificationFailed:
             return "The profile record could not be verified after writing."
         case .profileRestoreVerificationFailed:
@@ -245,6 +250,31 @@ class ProfileStore {
                 // A Codex profile owns no Claude credential locators. Merely
                 // loading or editing it must never consult secure storage.
                 try profiles[profileIndex].validateProviderIsolation()
+                do {
+                    if let currentUsage = try usageFileStore.loadCurrentUsage(
+                        for: profiles[profileIndex].id
+                    ) {
+                        try currentUsage.validate(
+                            expectedProviderID:
+                                profiles[profileIndex].providerID,
+                            expectedProviderRevision:
+                                profiles[profileIndex].providerRevision
+                        )
+                    }
+                    unresolvedUsageProfileIDs.remove(
+                        profiles[profileIndex].id
+                    )
+                } catch {
+                    unresolvedUsageProfileIDs.insert(
+                        profiles[profileIndex].id
+                    )
+                    LoggingService.shared.logError(
+                        "ProfileStore: Codex current usage read is unresolved "
+                            + "for profile "
+                            + "\(profiles[profileIndex].id.uuidString.prefix(8))",
+                        error: error
+                    )
+                }
                 continue
             }
 
@@ -302,8 +332,20 @@ class ProfileStore {
                         // A previous migration may have installed the file and
                         // terminated before scrubbing preferences. A later
                         // refresh can make that file newer than this retry.
+                        try existingUsage.validate(
+                            expectedProviderID:
+                                profiles[profileIndex].providerID,
+                            expectedProviderRevision:
+                                profiles[profileIndex].providerRevision
+                        )
                         authoritativeUsage = existingUsage
                     } else {
+                        try retryUsage.validate(
+                            expectedProviderID:
+                                profiles[profileIndex].providerID,
+                            expectedProviderRevision:
+                                profiles[profileIndex].providerRevision
+                        )
                         try usageFileStore.saveCurrentUsage(retryUsage, for: profileID)
                         authoritativeUsage = retryUsage
                     }
@@ -328,6 +370,11 @@ class ProfileStore {
             do {
                 let currentUsage = try usageFileStore.loadCurrentUsage(
                     for: profiles[profileIndex].id
+                )
+                try currentUsage?.validate(
+                    expectedProviderID: profiles[profileIndex].providerID,
+                    expectedProviderRevision:
+                        profiles[profileIndex].providerRevision
                 )
                 profiles[profileIndex].claudeUsage = currentUsage?.claudeUsage
                 profiles[profileIndex].apiUsage = currentUsage?.apiUsage
@@ -535,6 +582,7 @@ class ProfileStore {
                 credentials.organizationId = nil
             },
             clearUsage: { usage in
+                usage.report = nil
                 usage.claudeUsage = nil
             }
         )
@@ -593,6 +641,10 @@ class ProfileStore {
                 .duplicateCodexHome(duplicate.id)
         }
         let previousUsage = try usageFileStore.loadCurrentUsage(for: profileID)
+        try previousUsage?.validate(
+            expectedProviderID: profiles[index].providerID,
+            expectedProviderRevision: profiles[index].providerRevision
+        )
         guard profiles[index].providerRevision < UInt64.max else {
             throw ProfileProviderConfigurationError
                 .providerRevisionExhausted(profileID)
@@ -850,21 +902,32 @@ class ProfileStore {
     // MARK: - Current Usage
 
     func saveClaudeUsage(_ usage: ClaudeUsage, for profileID: UUID) throws {
-        try requireClaudeProfile(profileID)
-        _ = try loadCurrentUsageResolvingMigration(for: profileID)
-        _ = try usageFileStore.updateCurrentUsage(for: profileID) { current in
-            current.claudeUsage = usage
-        }
-        unresolvedUsageProfileIDs.remove(profileID)
+        let profile = try requireClaudeProfile(profileID)
+        var current = try loadCurrentUsageResolvingMigration(
+            for: profileID
+        )
+        current.claudeUsage = usage
+        _ = try commitCurrentUsage(
+            current,
+            for: profileID,
+            expectedProviderID: profile.providerID,
+            expectedProviderRevision: profile.providerRevision
+        )
     }
 
     func clearClaudeUsage(for profileID: UUID) throws {
-        try requireClaudeProfile(profileID)
-        _ = try loadCurrentUsageResolvingMigration(for: profileID)
-        _ = try usageFileStore.updateCurrentUsage(for: profileID) { current in
-            current.claudeUsage = nil
-        }
-        unresolvedUsageProfileIDs.remove(profileID)
+        let profile = try requireClaudeProfile(profileID)
+        var current = try loadCurrentUsageResolvingMigration(
+            for: profileID
+        )
+        current.report = nil
+        current.claudeUsage = nil
+        _ = try commitCurrentUsage(
+            current,
+            for: profileID,
+            expectedProviderID: profile.providerID,
+            expectedProviderRevision: profile.providerRevision
+        )
     }
 
     func loadClaudeUsage(for profileID: UUID) throws -> ClaudeUsage? {
@@ -874,27 +937,170 @@ class ProfileStore {
     }
 
     func saveAPIUsage(_ usage: APIUsage, for profileID: UUID) throws {
-        try requireClaudeProfile(profileID)
-        _ = try loadCurrentUsageResolvingMigration(for: profileID)
-        _ = try usageFileStore.updateCurrentUsage(for: profileID) { current in
-            current.apiUsage = usage
-        }
-        unresolvedUsageProfileIDs.remove(profileID)
+        let profile = try requireClaudeProfile(profileID)
+        var current = try loadCurrentUsageResolvingMigration(
+            for: profileID
+        )
+        current.apiUsage = usage
+        _ = try commitCurrentUsage(
+            current,
+            for: profileID,
+            expectedProviderID: profile.providerID,
+            expectedProviderRevision: profile.providerRevision
+        )
     }
 
     func clearAPIUsage(for profileID: UUID) throws {
-        try requireClaudeProfile(profileID)
-        _ = try loadCurrentUsageResolvingMigration(for: profileID)
-        _ = try usageFileStore.updateCurrentUsage(for: profileID) { current in
-            current.apiUsage = nil
-        }
-        unresolvedUsageProfileIDs.remove(profileID)
+        let profile = try requireClaudeProfile(profileID)
+        var current = try loadCurrentUsageResolvingMigration(
+            for: profileID
+        )
+        current.apiUsage = nil
+        _ = try commitCurrentUsage(
+            current,
+            for: profileID,
+            expectedProviderID: profile.providerID,
+            expectedProviderRevision: profile.providerRevision
+        )
     }
 
     func loadAPIUsage(for profileID: UUID) throws -> APIUsage? {
         try requireClaudeProfile(profileID)
         return try loadCurrentUsageResolvingMigration(for: profileID)
             .apiUsage
+    }
+
+    /// Loads usage only for the exact request identity captured by a refresh.
+    /// An existing file for another provider or revision fails closed.
+    func loadCurrentUsage(
+        for profileID: UUID,
+        expectedProviderID: ProviderID,
+        expectedProviderRevision: UInt64
+    ) throws -> ProfileCurrentUsage? {
+        try recoverPendingCredentialUsageUnlinks()
+        try recoverPendingCodexConfigurationMutations()
+        try validateCurrentUsageFence(
+            profileID: profileID,
+            expectedProviderID: expectedProviderID,
+            expectedProviderRevision: expectedProviderRevision
+        )
+        _ = try loadCurrentUsageResolvingMigration(for: profileID)
+        let usage = try usageFileStore.loadCurrentUsage(for: profileID)
+        try usage?.validate(
+            expectedProviderID: expectedProviderID,
+            expectedProviderRevision: expectedProviderRevision
+        )
+        return usage
+    }
+
+    /// Commits one complete provider result through a provider/revision/
+    /// deletion fence. The installed payload and live identity are read back
+    /// before success is returned, so callers may publish only after this
+    /// method completes.
+    @discardableResult
+    func commitCurrentUsage(
+        _ usage: ProfileCurrentUsage,
+        for profileID: UUID,
+        expectedProviderID: ProviderID,
+        expectedProviderRevision: UInt64
+    ) throws -> (
+        previous: ProfileCurrentUsage?,
+        current: ProfileCurrentUsage
+    ) {
+        try usage.validate(
+            expectedProviderID: expectedProviderID,
+            expectedProviderRevision: expectedProviderRevision
+        )
+        try recoverPendingCredentialUsageUnlinks()
+        try recoverPendingCodexConfigurationMutations()
+        try validateCurrentUsageFence(
+            profileID: profileID,
+            expectedProviderID: expectedProviderID,
+            expectedProviderRevision: expectedProviderRevision
+        )
+
+        // Resolve a legacy retry before capturing the rollback value. A valid
+        // installed destination remains authoritative under D031.
+        _ = try loadCurrentUsageResolvingMigration(for: profileID)
+        let previousUsage = try usageFileStore.loadCurrentUsage(
+            for: profileID
+        )
+        try previousUsage?.validate(
+            expectedProviderID: expectedProviderID,
+            expectedProviderRevision: expectedProviderRevision
+        )
+
+        do {
+            let updated = try usageFileStore.updateCurrentUsage(
+                for: profileID
+            ) { current in
+                current = usage
+            }
+            guard updated == usage else {
+                throw ProfileUsageFileStoreError
+                    .currentUsageWriteVerificationFailed(profileID)
+            }
+            let installed = try usageFileStore.loadCurrentUsage(
+                for: profileID
+            )
+            guard installed == usage else {
+                throw ProfileUsageFileStoreError
+                    .currentUsageWriteVerificationFailed(profileID)
+            }
+            try validateCurrentUsageFence(
+                profileID: profileID,
+                expectedProviderID: expectedProviderID,
+                expectedProviderRevision: expectedProviderRevision
+            )
+            unresolvedUsageProfileIDs.remove(profileID)
+            return (previous: previousUsage, current: usage)
+        } catch {
+            let commitError = error
+            do {
+                let installedAfterFailure =
+                    try usageFileStore.loadCurrentUsage(for: profileID)
+                if currentUsageFenceMatches(
+                    profileID: profileID,
+                    expectedProviderID: expectedProviderID,
+                    expectedProviderRevision: expectedProviderRevision
+                ) {
+                    if installedAfterFailure != previousUsage {
+                        if let previousUsage {
+                            try usageFileStore.saveCurrentUsage(
+                                previousUsage,
+                                for: profileID
+                            )
+                        } else {
+                            try usageFileStore.deleteCurrentUsage(
+                                for: profileID
+                            )
+                        }
+                    }
+                    guard try usageFileStore.loadCurrentUsage(
+                        for: profileID
+                    ) == previousUsage else {
+                        throw ProfileUsageFileStoreError
+                            .currentUsageWriteVerificationFailed(profileID)
+                    }
+                } else if installedAfterFailure == usage {
+                    // The identity changed after installation. Remove only
+                    // the exact stale value installed by this call; never
+                    // delete a newer writer's payload.
+                    try usageFileStore.deleteCurrentUsage(for: profileID)
+                    guard try usageFileStore.loadCurrentUsage(
+                        for: profileID
+                    ) == nil else {
+                        throw ProfileUsageFileStoreError
+                            .currentUsageWriteVerificationFailed(profileID)
+                    }
+                }
+            } catch {
+                unresolvedUsageProfileIDs.insert(profileID)
+                throw ProfileStoreError
+                    .currentUsageCommitRollbackFailed(profileID)
+            }
+            throw commitError
+        }
     }
 
     /// Deletes current usage plus any history/recovery artifacts remaining in
@@ -913,7 +1119,8 @@ class ProfileStore {
         return try JSONDecoder().decode([Profile].self, from: data)
     }
 
-    private func requireClaudeProfile(_ profileID: UUID) throws {
+    @discardableResult
+    private func requireClaudeProfile(_ profileID: UUID) throws -> Profile {
         let profiles = try decodeStoredProfiles()
         try validateProfileSet(profiles)
         guard let profile = profiles.first(where: {
@@ -927,6 +1134,50 @@ class ProfileStore {
         }
         guard !profile.deletionInProgress else {
             throw ProfileStoreError.profileDeletionInProgress(profileID)
+        }
+        return profile
+    }
+
+    private func validateCurrentUsageFence(
+        profileID: UUID,
+        expectedProviderID: ProviderID,
+        expectedProviderRevision: UInt64
+    ) throws {
+        let profiles = try decodeStoredProfiles()
+        try validateProfileSet(profiles)
+        guard let profile = profiles.first(where: {
+            $0.id == profileID
+        }) else {
+            throw ProfileStoreError.profileNotFound(profileID)
+        }
+        guard !profile.deletionInProgress else {
+            throw ProfileStoreError.profileDeletionInProgress(profileID)
+        }
+        guard profile.providerID == expectedProviderID,
+              profile.providerRevision == expectedProviderRevision else {
+            throw ProfileCurrentUsageValidationError.identityMismatch(
+                expectedProviderID: expectedProviderID,
+                expectedProviderRevision: expectedProviderRevision,
+                foundProviderID: profile.providerID,
+                foundProviderRevision: profile.providerRevision
+            )
+        }
+    }
+
+    private func currentUsageFenceMatches(
+        profileID: UUID,
+        expectedProviderID: ProviderID,
+        expectedProviderRevision: UInt64
+    ) -> Bool {
+        do {
+            try validateCurrentUsageFence(
+                profileID: profileID,
+                expectedProviderID: expectedProviderID,
+                expectedProviderRevision: expectedProviderRevision
+            )
+            return true
+        } catch {
+            return false
         }
     }
 
@@ -970,6 +1221,7 @@ class ProfileStore {
             if var usageRetry =
                 profiles[index].currentUsageMigrationRetry {
                 if marker.component == .claude {
+                    usageRetry.report = nil
                     usageRetry.claudeUsage = nil
                 } else {
                     usageRetry.apiUsage = nil
@@ -1147,11 +1399,24 @@ class ProfileStore {
         guard let index = profiles.firstIndex(where: { $0.id == profileID }) else {
             throw ProfileStoreError.profileNotFound(profileID)
         }
+        guard !profiles[index].deletionInProgress else {
+            throw ProfileStoreError.profileDeletionInProgress(profileID)
+        }
+        let providerID = profiles[index].providerID
+        let providerRevision = profiles[index].providerRevision
 
         if let retryUsage = profiles[index].currentUsageMigrationRetry {
             do {
+                try retryUsage.validate(
+                    expectedProviderID: providerID,
+                    expectedProviderRevision: providerRevision
+                )
                 let authoritativeUsage: ProfileCurrentUsage
                 if let existingUsage = try usageFileStore.loadCurrentUsage(for: profileID) {
+                    try existingUsage.validate(
+                        expectedProviderID: providerID,
+                        expectedProviderRevision: providerRevision
+                    )
                     authoritativeUsage = existingUsage
                 } else {
                     try usageFileStore.saveCurrentUsage(retryUsage, for: profileID)
@@ -1169,7 +1434,14 @@ class ProfileStore {
 
         do {
             let usage = try usageFileStore.loadCurrentUsage(for: profileID)
-                ?? ProfileCurrentUsage()
+                ?? ProfileCurrentUsage(
+                    providerID: providerID,
+                    providerRevision: providerRevision
+                )
+            try usage.validate(
+                expectedProviderID: providerID,
+                expectedProviderRevision: providerRevision
+            )
             unresolvedUsageProfileIDs.remove(profileID)
             return usage
         } catch {
@@ -1541,6 +1813,7 @@ class ProfileStore {
             if var usageRetry =
                 profiles[index].currentUsageMigrationRetry {
                 if marker.component == .claude {
+                    usageRetry.report = nil
                     usageRetry.claudeUsage = nil
                 } else {
                     usageRetry.apiUsage = nil
@@ -1550,8 +1823,17 @@ class ProfileStore {
             }
             var usage = try usageFileStore.loadCurrentUsage(
                 for: marker.profileID
-            ) ?? ProfileCurrentUsage()
+            ) ?? ProfileCurrentUsage(
+                providerID: profiles[index].providerID,
+                providerRevision: profiles[index].providerRevision
+            )
+            try usage.validate(
+                expectedProviderID: profiles[index].providerID,
+                expectedProviderRevision:
+                    profiles[index].providerRevision
+            )
             if marker.component == .claude {
+                usage.report = nil
                 usage.claudeUsage = nil
             } else {
                 usage.apiUsage = nil

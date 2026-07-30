@@ -1,4 +1,5 @@
 import XCTest
+import UsageCore
 @testable import Claude_Usage
 
 final class ProfileProviderCoreTests: HostedAppTestCase {
@@ -728,15 +729,11 @@ final class ProfileProviderCoreTests: HostedAppTestCase {
             providerConfiguration: .codex(.init())
         )
         usage.values[profile.id] = ProfileCurrentUsage(
-            apiUsage: APIUsage(
-                currentSpendCents: 10,
-                resetsAt: Date(),
-                prepaidCreditsCents: 100,
-                currency: "USD",
-                apiTokenCostCents: nil,
-                apiCostByModel: nil,
-                costBySource: nil,
-                dailyCostCents: nil
+            providerID: .codex,
+            providerRevision: 0,
+            report: try makeProviderReport(
+                providerID: .codex,
+                marker: 10
             )
         )
 
@@ -753,15 +750,11 @@ final class ProfileProviderCoreTests: HostedAppTestCase {
         XCTAssertEqual(try Data(contentsOf: authURL), authBytes)
 
         usage.values[profile.id] = ProfileCurrentUsage(
-            apiUsage: APIUsage(
-                currentSpendCents: 20,
-                resetsAt: Date(),
-                prepaidCreditsCents: 100,
-                currency: "USD",
-                apiTokenCostCents: nil,
-                apiCostByModel: nil,
-                costBySource: nil,
-                dailyCostCents: nil
+            providerID: .codex,
+            providerRevision: 1,
+            report: try makeProviderReport(
+                providerID: .codex,
+                marker: 20
             )
         )
         let unlinked = try manager.unlinkCodexHome(for: profile.id)
@@ -802,15 +795,11 @@ final class ProfileProviderCoreTests: HostedAppTestCase {
             providerConfiguration: .codex(.init())
         )
         let sentinel = ProfileCurrentUsage(
-            apiUsage: APIUsage(
-                currentSpendCents: 42,
-                resetsAt: Date(),
-                prepaidCreditsCents: 100,
-                currency: "USD",
-                apiTokenCostCents: nil,
-                apiCostByModel: nil,
-                costBySource: nil,
-                dailyCostCents: nil
+            providerID: .codex,
+            providerRevision: 0,
+            report: try makeProviderReport(
+                providerID: .codex,
+                marker: 42
             )
         )
         usage.values[profile.id] = sentinel
@@ -837,24 +826,40 @@ final class ProfileProviderCoreTests: HostedAppTestCase {
         )
         XCTAssertEqual(linked.providerRevision, 1)
         XCTAssertEqual(eventCount, 1)
-        usage.values[profile.id] = sentinel
+        let linkedSentinel = ProfileCurrentUsage(
+            providerID: .codex,
+            providerRevision: 1,
+            report: try makeProviderReport(
+                providerID: .codex,
+                marker: 43
+            )
+        )
+        usage.values[profile.id] = linkedSentinel
 
         let identicalRelink = try manager.linkCodexHome(
             homeURL.path,
             for: profile.id
         )
         XCTAssertEqual(identicalRelink.providerRevision, 1)
-        XCTAssertEqual(usage.values[profile.id], sentinel)
+        XCTAssertEqual(usage.values[profile.id], linkedSentinel)
         XCTAssertEqual(eventCount, 1)
 
         let unlinked = try manager.unlinkCodexHome(for: profile.id)
         XCTAssertEqual(unlinked.providerRevision, 2)
         XCTAssertEqual(eventCount, 2)
-        usage.values[profile.id] = sentinel
+        let unlinkedSentinel = ProfileCurrentUsage(
+            providerID: .codex,
+            providerRevision: 2,
+            report: try makeProviderReport(
+                providerID: .codex,
+                marker: 44
+            )
+        )
+        usage.values[profile.id] = unlinkedSentinel
 
         let repeatedUnlink = try manager.unlinkCodexHome(for: profile.id)
         XCTAssertEqual(repeatedUnlink.providerRevision, 2)
-        XCTAssertEqual(usage.values[profile.id], sentinel)
+        XCTAssertEqual(usage.values[profile.id], unlinkedSentinel)
         XCTAssertEqual(eventCount, 2)
     }
 
@@ -882,18 +887,16 @@ final class ProfileProviderCoreTests: HostedAppTestCase {
         )
         try seedProfilesForTesting([profile], in: store)
         let previousUsage = ProfileCurrentUsage(
-            apiUsage: APIUsage(
-                currentSpendCents: 55,
-                resetsAt: Date(),
-                prepaidCreditsCents: 100,
-                currency: "USD",
-                apiTokenCostCents: nil,
-                apiCostByModel: nil,
-                costBySource: nil,
-                dailyCostCents: nil
+            providerID: .codex,
+            providerRevision: profile.providerRevision,
+            report: try makeProviderReport(
+                providerID: .codex,
+                marker: 55
             )
         )
         usage.values[profile.id] = previousUsage
+        XCTAssertNil(previousUsage.claudeUsage)
+        XCTAssertNil(previousUsage.apiUsage)
         defaults.corruptNextProfileWrite = true
 
         XCTAssertThrowsError(
@@ -939,15 +942,11 @@ final class ProfileProviderCoreTests: HostedAppTestCase {
         )
         try seedProfilesForTesting([profile], in: store)
         usage.values[profile.id] = ProfileCurrentUsage(
-            apiUsage: APIUsage(
-                currentSpendCents: 77,
-                resetsAt: Date(),
-                prepaidCreditsCents: 100,
-                currency: "USD",
-                apiTokenCostCents: nil,
-                apiCostByModel: nil,
-                costBySource: nil,
-                dailyCostCents: nil
+            providerID: .codex,
+            providerRevision: profile.providerRevision,
+            report: try makeProviderReport(
+                providerID: .codex,
+                marker: 77
             )
         )
         defaults.corruptNextProfileWrite = true
@@ -1023,15 +1022,11 @@ final class ProfileProviderCoreTests: HostedAppTestCase {
         )
         try seedProfilesForTesting([profile], in: store)
         usage.values[profile.id] = ProfileCurrentUsage(
-            apiUsage: APIUsage(
-                currentSpendCents: 99,
-                resetsAt: Date(),
-                prepaidCreditsCents: 100,
-                currency: "USD",
-                apiTokenCostCents: nil,
-                apiCostByModel: nil,
-                costBySource: nil,
-                dailyCostCents: nil
+            providerID: .codex,
+            providerRevision: profile.providerRevision,
+            report: try makeProviderReport(
+                providerID: .codex,
+                marker: 99
             )
         )
         usage.deleteError = ProviderTestError.expected
@@ -1082,7 +1077,10 @@ final class ProfileProviderCoreTests: HostedAppTestCase {
             providerRevision: 7
         )
         try seedProfilesForTesting([profile], in: store)
-        usage.values[profile.id] = ProfileCurrentUsage()
+        usage.values[profile.id] = ProfileCurrentUsage(
+            providerID: .codex,
+            providerRevision: profile.providerRevision
+        )
         defaults.corruptNextProfileWrite = true
         usage.saveError = ProviderTestError.expected
         XCTAssertThrowsError(
@@ -1249,7 +1247,10 @@ final class ProfileProviderCoreTests: HostedAppTestCase {
             providerConfiguration: .codex(.init())
         )
         try seedProfilesForTesting([target, survivor], in: store)
-        usage.values[target.id] = ProfileCurrentUsage()
+        usage.values[target.id] = ProfileCurrentUsage(
+            providerID: .codex,
+            providerRevision: target.providerRevision
+        )
         defaults.corruptNextProfileWrite = true
         usage.saveError = ProviderTestError.expected
         XCTAssertThrowsError(
@@ -2158,6 +2159,23 @@ final class ProfileProviderCoreTests: HostedAppTestCase {
             withIntermediateDirectories: true
         )
         return url
+    }
+
+    private func makeProviderReport(
+        providerID: ProviderID,
+        marker: TimeInterval
+    ) throws -> UsageReport {
+        let date = Date(timeIntervalSinceReferenceDate: marker)
+        return try UsageReport(
+            providerID: providerID,
+            health: ProviderHealth(
+                status: .healthy,
+                checkedAt: date
+            ),
+            limitGroups: [],
+            fetchedAt: date,
+            staleAt: date.addingTimeInterval(60)
+        )
     }
 }
 
