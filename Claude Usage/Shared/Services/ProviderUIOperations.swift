@@ -688,7 +688,15 @@ final class ProviderUIDependencies {
 @MainActor
 final class ProviderUICompositionRoot {
     static let shared = ProviderUICompositionRoot()
+    static let application: ProviderUICompositionRoot = {
+#if UI_TESTING
+        UITestApplicationBootstrap.compositionRoot
+#else
+        shared
+#endif
+    }()
 
+    let profileManager: ProfileManager
     let codexProviderFactory: CodexProviderFactory
     let dependencies: ProviderUIDependencies
 
@@ -700,9 +708,11 @@ final class ProviderUICompositionRoot {
         let factory =
             codexProviderFactory
             ?? CodexProviderFactory(availability: availability)
+        let manager = profileManager ?? .shared
+        self.profileManager = manager
         self.codexProviderFactory = factory
         dependencies = ProviderUIDependencies(
-            profileManager: profileManager ?? .shared,
+            profileManager: manager,
             codexProviderFactory: factory
         )
     }

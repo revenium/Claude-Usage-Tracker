@@ -54,7 +54,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         ProviderUICompositionRoot
 
     override convenience init() {
-        self.init(providerUICompositionRoot: .shared)
+        self.init(providerUICompositionRoot: .application)
     }
 
     init(providerUICompositionRoot: ProviderUICompositionRoot) {
@@ -69,6 +69,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         guard !Self.isRunningHostedUnitTests else {
             return
         }
+
+#if UI_TESTING
+        // The UITesting configuration is fail-closed: it never falls through
+        // to migration, shared profile hydration, Keychain, updates,
+        // notifications, browser launches, prompts, or background monitors.
+        setupWindow = UITestApplicationBootstrap.launch(
+            compositionRoot: providerUICompositionRoot
+        )
+        return
+#endif
 
         // Disable window restoration for menu bar app
         UserDefaults.standard.set(false, forKey: "NSQuitAlwaysKeepsWindows")
@@ -86,7 +96,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         ProfileMigrationService.shared.migrateIfNeeded()
 
         // Load profiles into ProfileManager (synchronously)
-        ProfileManager.shared.loadProfiles()
+        providerUICompositionRoot.profileManager.loadProfiles()
 
         // Initialize update manager to enable automatic update checks
         _ = UpdateManager.shared
@@ -185,7 +195,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             hasShownWizardOnce: hasShownWizardOnce,
             hasCompletedSetup:
                 SharedDataStore.shared.hasCompletedSetup(),
-            activeProfile: ProfileManager.shared.activeProfile
+            activeProfile:
+                providerUICompositionRoot.profileManager.activeProfile
         ) {
             let valid = hasValidSystemCLICredentials()
             if valid {
@@ -302,7 +313,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         let apiService = ClaudeAPIService()
         let statusService = ClaudeStatusService()
         let runtime = UsageRefreshRuntime.live(
-            profileManager: .shared,
+            profileManager:
+                providerUICompositionRoot.profileManager,
             apiService: apiService,
             statusService: statusService,
             codexProviderFactory:
@@ -311,7 +323,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         return MenuBarManager(
             apiService: apiService,
             statusService: statusService,
-            profileManager: .shared,
+            profileManager:
+                providerUICompositionRoot.profileManager,
             refreshRuntime: runtime,
             providerUIDependencies:
                 providerUICompositionRoot.dependencies

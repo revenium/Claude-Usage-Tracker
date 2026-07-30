@@ -9,7 +9,7 @@ struct ClaudeUsageTrackerApp: App {
         Settings {
             SettingsView(
                 dependencies:
-                    ProviderUICompositionRoot.shared.dependencies
+                    ProviderUICompositionRoot.application.dependencies
             )
         }
     }
