@@ -322,6 +322,51 @@ final class CodexUsageProviderTests: XCTestCase {
         XCTAssertLessThan(Date().timeIntervalSince(startedAt), 1)
     }
 
+    func testConcurrentWaitAndCancelNeverCompeteForProtocolFrames()
+        async throws
+    {
+        let fake = try FakeCodexAppServer(
+            scenario: "provider_login_timeout",
+            limits: try fastLimits()
+        )
+        let attempt = try await CodexUsageProvider(
+            client: fake.client
+        ).startLogin(.browser())
+        let processIdentifier = try await fake.processIdentifier()
+
+        let waitTask = Task {
+            do {
+                _ = try await attempt.waitForCompletion()
+                return Optional<UsageProviderError>.none
+            } catch let error as UsageProviderError {
+                return error
+            } catch {
+                return UsageProviderError.transportFailure
+            }
+        }
+        let cancelTask = Task {
+            do {
+                _ = try await attempt.cancel()
+                return Optional<UsageProviderError>.none
+            } catch let error as UsageProviderError {
+                return error
+            } catch {
+                return UsageProviderError.transportFailure
+            }
+        }
+
+        let errors = await [waitTask.value, cancelTask.value].compactMap { $0 }
+        XCTAssertEqual(errors.count, 2)
+        XCTAssertEqual(
+            errors.filter { $0 == .invalidConfiguration }.count,
+            1
+        )
+        XCTAssertEqual(errors.filter { $0 == .timedOut }.count, 1)
+        XCTAssertFalse(errors.contains(.protocolFailure))
+        XCTAssertFalse(errors.contains(.transportFailure))
+        try await fake.assertProcessExited(processIdentifier)
+    }
+
     func testDisconnectNeverLogsOutOrMutatesCredentials() async throws {
         let providerOnly = try FakeCodexAppServer(
             scenario: "provider_current"

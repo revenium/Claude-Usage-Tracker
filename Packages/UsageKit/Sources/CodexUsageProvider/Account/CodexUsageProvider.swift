@@ -458,10 +458,18 @@ public struct CodexUsageProvider: UsageProvider, Sendable {
 }
 
 public actor CodexLoginAttempt {
+    private enum TerminalOperation {
+        case idle
+        case waitingForCompletion
+        case cancelling
+        case disconnecting
+        case closed
+    }
+
     public nonisolated let challenge: CodexLoginChallenge
 
     private let session: CodexAppServerSession
-    private var isClosed = false
+    private var terminalOperation = TerminalOperation.idle
 
     init(
         challenge: CodexLoginChallenge,
@@ -472,7 +480,7 @@ public actor CodexLoginAttempt {
     }
 
     public func waitForCompletion() async throws -> CodexLoginOutcome {
-        try ensureOpen()
+        try begin(.waitingForCompletion)
         do {
             let notification = try await session.nextNotification(
                 matching: .accountLoginCompleted
@@ -494,7 +502,7 @@ public actor CodexLoginAttempt {
     }
 
     public func cancel() async throws -> CodexLoginCancellationOutcome {
-        try ensureOpen()
+        try begin(.cancelling)
         do {
             let rawResponse = try await session.request(
                 .accountLoginCancel,
@@ -538,6 +546,7 @@ public actor CodexLoginAttempt {
 
     /// Closes the login-scoped app-server without logging the Codex account out.
     public func disconnect() async throws {
+        try begin(.disconnecting)
         try await close()
     }
 
@@ -557,15 +566,16 @@ public actor CodexLoginAttempt {
         return completion
     }
 
-    private func ensureOpen() throws {
-        guard !isClosed else {
+    private func begin(_ operation: TerminalOperation) throws {
+        guard terminalOperation == .idle else {
             throw UsageProviderError.invalidConfiguration
         }
+        terminalOperation = operation
     }
 
     private func close() async throws {
-        guard !isClosed else { return }
-        isClosed = true
+        guard terminalOperation != .closed else { return }
+        terminalOperation = .closed
         try await session.close()
     }
 }
