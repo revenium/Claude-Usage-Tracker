@@ -30,8 +30,7 @@ final class ProviderDiagnosticsPresentationModel: ObservableObject {
     @Published private(set) var isRefreshing = false
 
     private let snapshotter: Snapshotter
-    private var latestRequest:
-        ProviderDiagnosticRequestIdentity?
+    private var latestRequestGeneration: UUID?
 
     init(
         snapshotter: @escaping Snapshotter = {
@@ -42,14 +41,12 @@ final class ProviderDiagnosticsPresentationModel: ObservableObject {
     }
 
     func refresh(for profile: Profile?) async {
-        let identity = ProviderDiagnosticRequestIdentity(
-            profile: profile
-        )
-        latestRequest = identity
+        let generation = UUID()
+        latestRequestGeneration = generation
         isRefreshing = true
         let candidate = await snapshotter(profile)
         guard !Task.isCancelled,
-              latestRequest == identity else {
+              latestRequestGeneration == generation else {
             return
         }
         snapshot = candidate

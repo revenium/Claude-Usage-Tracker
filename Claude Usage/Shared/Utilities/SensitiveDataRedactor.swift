@@ -65,6 +65,15 @@ nonisolated enum SensitiveDataRedactor {
             in: result,
             with: redactedValue
         )
+        // JWTs are frequently embedded as bare values without an
+        // Authorization label. Requiring the encoded JSON header prefix and
+        // substantial base64url segments avoids treating dotted versions or
+        // hostnames as tokens.
+        result = replacing(
+            #"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}(?![A-Za-z0-9_-])"#,
+            in: result,
+            with: redactedValue
+        )
         result = replacing(
             #"(?i)\b(CODEX_HOME|HOME|workingDirectory|homePath)\s*=\s*["']?[^\s"',;]+"#,
             in: result,
@@ -313,9 +322,10 @@ nonisolated enum SensitiveDataRedactor {
             + "…<truncated>"
     }
 
-    /// Roots that may identify a user, machine layout, application data, or a
-    /// locally installed executable. Provider homes outside these roots are
-    /// still removed when attached to a path-bearing key such as CODEX_HOME.
+    /// Absolute filesystem paths can reveal user or machine identity even
+    /// under uncommon/custom roots. The boundary assertion prevents matching
+    /// URL paths: a slash following a URI character is not treated as the
+    /// beginning of a local path. `file:///...` is intentionally included.
     private static let localPathPattern =
-        #"(?:file://)?/(?:Users|home|Volumes|private|tmp|var|opt|usr/local)/[^/\s"'?]+(?:/[^\s"'?,;)\]}]*)?"#
+        #"file:///[^\s"'?,;)\]}]+|(?<![A-Za-z0-9._~/?#\[\]@!$&'()*+,;%-])/(?!/)[^\s"'?,;)\]}]+"#
 }

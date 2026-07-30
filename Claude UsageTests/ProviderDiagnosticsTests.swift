@@ -62,6 +62,12 @@ final class ProviderDiagnosticsTests: HostedAppTestCase {
     private let environmentSecret =
         "p14EnvironmentSecret123456"
     private let customHome = "/custom/private/location"
+    private let bareCustomHome =
+        "/srv/p14-private/codex/accounts/default"
+    private let jwt =
+        "eyJhbGciOiJIUzI1NiJ9."
+        + "eyJzdWIiOiJwMTRKd1RTZWNyZXQifQ."
+        + "p14JWTSignatureSecret123456789"
 
     private var secretFixtures: [String] {
         [
@@ -74,6 +80,8 @@ final class ProviderDiagnosticsTests: HostedAppTestCase {
             rpcSecret,
             environmentSecret,
             customHome,
+            bareCustomHome,
+            jwt,
             "p14-sensitive"
         ]
     }
@@ -141,6 +149,26 @@ final class ProviderDiagnosticsTests: HostedAppTestCase {
                 SensitiveDataRedactor.redactedPath
             ),
             (
+                "bare-custom-home",
+                "Provider home \(bareCustomHome)",
+                SensitiveDataRedactor.redactedPath
+            ),
+            (
+                "bare-custom-home-after-colon",
+                "Provider home:\(bareCustomHome)",
+                SensitiveDataRedactor.redactedPath
+            ),
+            (
+                "bare-custom-home-after-equals",
+                "provider_root=\(bareCustomHome)",
+                SensitiveDataRedactor.redactedPath
+            ),
+            (
+                "standalone-jwt",
+                "Probe returned \(jwt)",
+                SensitiveDataRedactor.redactedValue
+            ),
+            (
                 "custom-auth-file",
                 "Credential file: /custom/private/auth.json",
                 SensitiveDataRedactor.redactedPath
@@ -165,6 +193,31 @@ final class ProviderDiagnosticsTests: HostedAppTestCase {
             )
             assertNoSecrets(result, context: fixture.name)
         }
+    }
+
+    func testRedactorPreservesBenignVersionsAndPublicURLs() {
+        let version = "codex-cli 1.2.3"
+        let publicURL =
+            "https://example.test/releases/codex-cli/1.2.3"
+
+        XCTAssertEqual(
+            SensitiveDataRedactor.redact(version),
+            version
+        )
+        XCTAssertEqual(
+            SensitiveDataRedactor.redact(publicURL),
+            publicURL
+        )
+        XCTAssertFalse(
+            SensitiveDataRedactor.redact(
+                "home: \(bareCustomHome)"
+            ).contains(bareCustomHome)
+        )
+        XCTAssertFalse(
+            SensitiveDataRedactor.redact(
+                "token: \(jwt)"
+            ).contains(jwt)
+        )
     }
 
     func testEveryLoggingEntryPointUsesCentralRedactionBoundary() {
@@ -443,6 +496,84 @@ final class ProviderDiagnosticsTests: HostedAppTestCase {
                 at: root,
                 includingPropertiesForKeys: nil
             ).isEmpty
+        )
+    }
+
+    func testNetworkLoggerFailsClosedWhenUnsafeLegacyRemovalFails()
+        throws
+    {
+        struct StorageFailure: Error {}
+
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let storageURL =
+            root.appendingPathComponent("network_logs.json")
+        let legacy = UnsafeLegacyNetworkSession(
+            isActive: false,
+            startTime: nil,
+            endTime: nil,
+            duration: 900,
+            logs: [
+                UnsafeLegacyNetworkLog(
+                    id: UUID(),
+                    timestamp: Date(),
+                    url: "https://example.test",
+                    method: "POST",
+                    statusCode: 200,
+                    duration: 0.1,
+                    requestBody: "GITHUB_TOKEN=\(environmentSecret)",
+                    responsePreview: nil,
+                    fullResponseSize: nil,
+                    errorMessage: nil
+                )
+            ]
+        )
+        try JSONEncoder().encode(legacy).write(
+            to: storageURL,
+            options: .atomic
+        )
+        var logOutput: [String] = []
+        let logger = retain(
+            NetworkLoggerService(
+                storageURL: storageURL,
+                loggingService: LoggingService {
+                    logOutput.append($0)
+                },
+                storageOperations: NetworkLogStorageOperations(
+                    fileExists: {
+                        FileManager.default.fileExists(
+                            atPath: $0.path
+                        )
+                    },
+                    read: { try Data(contentsOf: $0) },
+                    writeAtomically: { _, _ in
+                        throw StorageFailure()
+                    },
+                    remove: { _ in
+                        throw StorageFailure()
+                    }
+                )
+            )
+        )
+
+        XCTAssertEqual(
+            logger.storageFailure,
+            .unsafeLegacyCaptureRetained
+        )
+        XCTAssertTrue(logger.session.logs.isEmpty)
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: storageURL.path
+            )
+        )
+        assertNoSecrets(
+            logOutput.joined(separator: "\n"),
+            context: "legacy removal failure"
         )
     }
 
@@ -764,6 +895,71 @@ final class ProviderDiagnosticsTests: HostedAppTestCase {
         XCTAssertFalse(model.isRefreshing)
     }
 
+    func testDiagnosticsPresentationRejectsFirstRequestInABAOverlap()
+        async
+    {
+        let firstGate = ProviderDiagnosticsTestGate()
+        let firstStarted = expectation(
+            description: "first A diagnostics request started"
+        )
+        let profileID = UUID()
+        let profileA = Profile(
+            id: profileID,
+            name: "A",
+            providerRevision: 7
+        )
+        let profileB = Profile(
+            id: profileID,
+            name: "B",
+            providerRevision: 8
+        )
+        var invocation = 0
+        let model = retain(
+            ProviderDiagnosticsPresentationModel { profile in
+                invocation += 1
+                let call = invocation
+                if call == 1 {
+                    firstStarted.fulfill()
+                    await firstGate.wait()
+                }
+                return ProviderDiagnosticSnapshot(
+                    generatedAt: Date(
+                        timeIntervalSince1970:
+                            TimeInterval(call)
+                    ),
+                    appVersion:
+                        "call-\(call)-revision-"
+                        + "\(profile?.providerRevision ?? 0)",
+                    appBuild: nil,
+                    osVersion: "macOS",
+                    providerID: "claude",
+                    codexExecutableStatus: .notApplicable,
+                    codexVersion: nil,
+                    appServerCapability: .notApplicable,
+                    homeFingerprint: nil,
+                    health: nil,
+                    requestDurationMilliseconds: nil,
+                    recentErrorCategories: []
+                )
+            }
+        )
+
+        let firstTask = Task {
+            await model.refresh(for: profileA)
+        }
+        await fulfillment(of: [firstStarted], timeout: 1)
+        await model.refresh(for: profileB)
+        await model.refresh(for: profileA)
+        await firstGate.open()
+        await firstTask.value
+
+        XCTAssertEqual(
+            model.snapshot?.appVersion,
+            "call-3-revision-7"
+        )
+        XCTAssertFalse(model.isRefreshing)
+    }
+
     func testDiagnosticFixturesCoverEveryHealthClassSafely() {
         let logger = ErrorLogger()
         logger.log(
@@ -1038,6 +1234,95 @@ final class ProviderDiagnosticsTests: HostedAppTestCase {
         await assertProcessExited(childPID)
     }
 
+    func testVersionProbeContinuousWriterCannotDefeatDeadline()
+        async throws
+    {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let rootPIDFile =
+            root.appendingPathComponent("writer-root.pid")
+        let script =
+            root.appendingPathComponent("continuous-writer")
+        try makeExecutableScript(
+            at: script,
+            body:
+                "trap '' TERM\n"
+                + "printf '%s\\n' \"$$\" > "
+                + shellQuoted(rootPIDFile.path)
+                + "\nwhile :; do printf x; done"
+        )
+
+        let startedAt = Date()
+        let result = await CodexVersionProbe.readVersion(
+            script,
+            timeout: 0.2,
+            terminationGrace: 0.05
+        )
+
+        XCTAssertNil(result)
+        XCTAssertLessThan(
+            Date().timeIntervalSince(startedAt),
+            1.5
+        )
+        await assertProcessExited(
+            try readPID(from: rootPIDFile)
+        )
+    }
+
+    func testVersionProbeCleansTrackedSetsidDescendant()
+        async throws
+    {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let childPIDFile =
+            root.appendingPathComponent("setsid-child.pid")
+        let script =
+            root.appendingPathComponent("setsid-version")
+        let perlProgram =
+            "POSIX::setsid(); $SIG{TERM}='IGNORE'; "
+            + "open(my $f, '>', $ARGV[0]) or die; "
+            + "print $f \"$$\\n\"; close($f); "
+            + "while (1) { select(undef, undef, undef, 0.1); }"
+        try makeExecutableScript(
+            at: script,
+            body:
+                "/usr/bin/perl -MPOSIX -e "
+                + shellQuoted(perlProgram)
+                + " "
+                + shellQuoted(childPIDFile.path)
+                + " &\n"
+                + "while [ ! -s "
+                + shellQuoted(childPIDFile.path)
+                + " ]; do /bin/sleep 0.01; done\n"
+                // Keep the parent-child relationship observable across more
+                // than one probe census. A hostile instant reparent is
+                // explicitly outside the trusted-executable contract.
+                + "/bin/sleep 0.1\n"
+                + "printf 'codex-cli 9.9.9\\n'"
+        )
+
+        let version = await CodexVersionProbe.readVersion(
+            script,
+            timeout: 2,
+            terminationGrace: 0.05
+        )
+
+        XCTAssertEqual(version, "codex-cli 9.9.9")
+        let childPID = try readPID(from: childPIDFile)
+        defer { _ = Darwin.kill(childPID, SIGKILL) }
+        await assertProcessExited(childPID)
+    }
+
     func testVersionProbeKillsStubbornProcessTreeOnTimeout()
         async throws
     {
@@ -1086,20 +1371,23 @@ final class ProviderDiagnosticsTests: HostedAppTestCase {
                 + shellQuoted(rootPIDFile.path)
                 + "\n"
                 + shellQuoted(childScript.path)
-                + " &\nwhile :; do /bin/sleep 1; done"
+                + " &\nwhile [ ! -s "
+                + shellQuoted(grandchildPIDFile.path)
+                + " ]; do /bin/sleep 0.01; done\n"
+                + "while :; do /bin/sleep 1; done"
         )
 
         let startedAt = Date()
         let result = await CodexVersionProbe.readVersion(
             rootScript,
-            timeout: 0.5,
+            timeout: 1.5,
             terminationGrace: 0.05
         )
 
         XCTAssertNil(result)
         XCTAssertLessThan(
             Date().timeIntervalSince(startedAt),
-            1.5
+            3.5
         )
         let processIdentifiers = try [
             readPID(from: rootPIDFile),

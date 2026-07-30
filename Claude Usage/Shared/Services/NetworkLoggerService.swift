@@ -8,10 +8,38 @@
 import Foundation
 import Combine
 
+enum NetworkLogStorageFailure: Equatable {
+    case unsafeLegacyCaptureRetained
+}
+
+struct NetworkLogStorageOperations {
+    let fileExists: (URL) -> Bool
+    let read: (URL) throws -> Data
+    let writeAtomically: (Data, URL) throws -> Void
+    let remove: (URL) throws -> Void
+
+    static let live = NetworkLogStorageOperations(
+        fileExists: {
+            FileManager.default.fileExists(atPath: $0.path)
+        },
+        read: {
+            try Data(contentsOf: $0)
+        },
+        writeAtomically: {
+            try $0.write(to: $1, options: .atomic)
+        },
+        remove: {
+            try FileManager.default.removeItem(at: $0)
+        }
+    )
+}
+
 final class NetworkLoggerService: ObservableObject {
     static let shared = NetworkLoggerService()
 
     @Published private(set) var session: NetworkLoggingSession
+    @Published private(set) var storageFailure:
+        NetworkLogStorageFailure?
 
     private var timer: Timer?
     private let maxLogs = 500
@@ -20,6 +48,7 @@ final class NetworkLoggerService: ObservableObject {
     private let responsePreviewMaxLength = 1000
     private let storageURLOverride: URL?
     private let loggingService: LoggingService
+    private let storageOperations: NetworkLogStorageOperations
 
     private var storageURL: URL {
         if let storageURLOverride {
@@ -47,17 +76,34 @@ final class NetworkLoggerService: ObservableObject {
     init(
         session: NetworkLoggingSession? = nil,
         storageURL: URL? = nil,
-        loggingService: LoggingService = .shared
+        loggingService: LoggingService = .shared,
+        storageOperations: NetworkLogStorageOperations = .live
     ) {
         storageURLOverride = storageURL
         self.loggingService = loggingService
-        self.session =
-            session
-            ?? Self.loadSession(
+        self.storageOperations = storageOperations
+        if let session {
+            self.session = session
+            storageFailure = nil
+        } else {
+            switch Self.loadSession(
                 from: storageURL ?? Self.defaultStorageURL(),
-                loggingService: loggingService
-            )
-            ?? NetworkLoggingSession()
+                loggingService: loggingService,
+                storageOperations: storageOperations
+            ) {
+            case .loaded(let loaded):
+                self.session = loaded
+                storageFailure = nil
+            case .absent:
+                self.session = NetworkLoggingSession()
+                storageFailure = nil
+            case .failed(let failure):
+                // Never expose a decoded in-memory copy when the unsafe
+                // source could not be replaced or verifiably removed.
+                self.session = NetworkLoggingSession()
+                storageFailure = failure
+            }
+        }
 
         // Resume timer if session was active
         if self.session.isActive,
@@ -184,15 +230,20 @@ final class NetworkLoggerService: ObservableObject {
                     session.logs.removeFirst()
                     let newData = try JSONEncoder().encode(session)
                     if newData.count <= maxFileSizeBytes {
-                        try newData.write(
-                            to: storageURL,
-                            options: .atomic
+                        try storageOperations.writeAtomically(
+                            newData,
+                            storageURL
                         )
+                        storageFailure = nil
                         return
                     }
                 }
             } else {
-                try data.write(to: storageURL, options: .atomic)
+                try storageOperations.writeAtomically(
+                    data,
+                    storageURL
+                )
+                storageFailure = nil
             }
         } catch {
             loggingService.logStorageError(
@@ -204,13 +255,14 @@ final class NetworkLoggerService: ObservableObject {
 
     private static func loadSession(
         from url: URL,
-        loggingService: LoggingService
-    ) -> NetworkLoggingSession? {
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            return nil
+        loggingService: LoggingService,
+        storageOperations: NetworkLogStorageOperations
+    ) -> NetworkLogLoadResult {
+        guard storageOperations.fileExists(url) else {
+            return .absent
         }
         do {
-            let data = try Data(contentsOf: url)
+            let data = try storageOperations.read(url)
             let session = try JSONDecoder().decode(
                 NetworkLoggingSession.self,
                 from: data
@@ -221,40 +273,72 @@ final class NetworkLoggerService: ObservableObject {
                 // sanitized representation immediately so a later process
                 // can never rediscover raw legacy credentials.
                 let sanitized = try JSONEncoder().encode(session)
-                try sanitized.write(to: url, options: .atomic)
+                try storageOperations.writeAtomically(
+                    sanitized,
+                    url
+                )
             } catch {
-                discardLegacyCapture(url)
-                loggingService.logStorageError(
-                    "sanitizeLegacyNetworkLogs",
-                    error: NetworkLogStorageError.rewriteFailed
+                return discardLegacyCapture(
+                    url,
+                    operation: "sanitizeLegacyNetworkLogs",
+                    reason: .rewriteFailed,
+                    loggingService: loggingService,
+                    storageOperations: storageOperations
                 )
             }
-            return session
+            return .loaded(session)
         } catch {
-            discardLegacyCapture(url)
-            loggingService.logStorageError(
-                "loadNetworkLogs",
-                error: NetworkLogStorageError.legacyDataRejected
+            return discardLegacyCapture(
+                url,
+                operation: "loadNetworkLogs",
+                reason: .legacyDataRejected,
+                loggingService: loggingService,
+                storageOperations: storageOperations
             )
-            return nil
         }
     }
 
-    private static func discardLegacyCapture(_ url: URL) {
-        let fileManager = FileManager.default
-        guard fileManager.fileExists(atPath: url.path) else {
-            return
+    private static func discardLegacyCapture(
+        _ url: URL,
+        operation: String,
+        reason: NetworkLogStorageError,
+        loggingService: LoggingService,
+        storageOperations: NetworkLogStorageOperations
+    ) -> NetworkLogLoadResult {
+        do {
+            if storageOperations.fileExists(url) {
+                try storageOperations.remove(url)
+            }
+            guard !storageOperations.fileExists(url) else {
+                throw NetworkLogStorageError.removalNotVerified
+            }
+            loggingService.logStorageError(
+                operation,
+                error: reason
+            )
+            return .absent
+        } catch {
+            // The source may still contain raw pre-redaction bytes. Report a
+            // safe typed failure and never claim it was discarded.
+            loggingService.logStorageError(
+                operation,
+                error: NetworkLogStorageError.removalNotVerified
+            )
+            return .failed(.unsafeLegacyCaptureRetained)
         }
-        // Network diagnostics are disposable app-owned data. If legacy
-        // bytes cannot be sanitized and atomically replaced, retaining them
-        // under a different filename would merely preserve the secret.
-        try? fileManager.removeItem(at: url)
     }
+}
+
+private enum NetworkLogLoadResult {
+    case absent
+    case loaded(NetworkLoggingSession)
+    case failed(NetworkLogStorageFailure)
 }
 
 private enum NetworkLogStorageError: LocalizedError {
     case legacyDataRejected
     case rewriteFailed
+    case removalNotVerified
 
     var errorDescription: String? {
         switch self {
@@ -262,6 +346,8 @@ private enum NetworkLogStorageError: LocalizedError {
             "Legacy network diagnostics were rejected and discarded."
         case .rewriteFailed:
             "Sanitized network diagnostics could not be committed; the raw capture was discarded."
+        case .removalNotVerified:
+            "Unsafe legacy network diagnostics could not be removed."
         }
     }
 }

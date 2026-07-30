@@ -409,14 +409,22 @@ private extension Optional where Wrapped == String {
     }
 }
 
-/// A diagnostics-only subprocess boundary with the same ownership guarantees
-/// as provider requests: bounded output, no inherited credentials, bounded
-/// execution, and a proven reap before returning on every launched path.
+/// A diagnostics-only boundary for invoking the trusted, locally installed
+/// Codex executable. Output, environment, execution, cleanup, and direct-child
+/// reaping are bounded before a version can be accepted.
+///
+/// A process group handles the ordinary executable tree. We additionally
+/// snapshot process identities and parentage so a descendant that calls
+/// `setsid`/`setpgid` remains individually owned and terminated. No user-space
+/// implementation can promise discovery of a deliberately malicious
+/// double-fork that exits and reparents entirely between snapshots, so this is
+/// intentionally not presented as a sandbox for an untrusted executable.
 nonisolated enum CodexVersionProbe {
     private static let maximumOutputBytes = 4_096
     private static let defaultTimeout: TimeInterval = 2
     private static let defaultTerminationGrace: TimeInterval = 0.25
     private static let pollIntervalMilliseconds: Int32 = 5
+    private static let maximumReadsPerDrain = 32
 
     static func readVersion(
         _ executableURL: URL
@@ -460,78 +468,61 @@ nonisolated enum CodexVersionProbe {
         }
         let processIdentifier = spawned.processIdentifier
         let outputDescriptor = spawned.outputDescriptor
+        var ownedProcesses = OwnedProcessTracker(
+            leader: processIdentifier
+        )
         var timedOut = false
         let executionDeadline = deadline(after: timeout)
-        while !hasExited(processIdentifier) {
-            drain(outputDescriptor, into: output)
+        while true {
+            ownedProcesses.refresh()
+            if hasExited(processIdentifier) {
+                break
+            }
+            guard drain(
+                outputDescriptor,
+                into: output,
+                until: executionDeadline
+            ) else {
+                timedOut = true
+                break
+            }
             guard DispatchTime.now().uptimeNanoseconds
                     < executionDeadline else {
                 timedOut = true
                 break
             }
-            waitForReadable(outputDescriptor)
+            waitForReadable(
+                outputDescriptor,
+                until: executionDeadline
+            )
         }
-        drain(outputDescriptor, into: output)
+        ownedProcesses.refresh()
 
-        let descendantsExited = terminateProcessGroup(
-            processIdentifier,
+        let containment = terminateOwnedProcesses(
+            processGroup: processIdentifier,
+            ownedProcesses: &ownedProcesses,
             outputDescriptor: outputDescriptor,
             output: output,
             grace: terminationGrace
         )
 
-        var status: Int32 = 0
-        var reaped = false
-        let reapDeadline = deadline(
-            after: max(terminationGrace, 1)
+        let reaping = reapDirectChild(
+            processIdentifier,
+            outputDescriptor: outputDescriptor,
+            output: output,
+            timeout: max(terminationGrace, 1)
         )
-        while DispatchTime.now().uptimeNanoseconds
-                < reapDeadline {
-            let result = waitpid(
-                processIdentifier,
-                &status,
-                WNOHANG
-            )
-            if result == processIdentifier {
-                reaped = true
-                break
-            }
-            if result == -1 {
-                break
-            }
-            drain(outputDescriptor, into: output)
-            waitForReadable(outputDescriptor)
-        }
-        if !reaped {
-            _ = Darwin.kill(-processIdentifier, SIGKILL)
-            // A blocking wait is safe only after waitid(WNOWAIT) has proven
-            // the direct child exited. Otherwise preserve the caller's
-            // bounded return and leave the unreaped PID ownership-stable
-            // while a utility worker completes the reaping barrier.
-            if hasExited(processIdentifier) {
-                while !reaped {
-                    let result = waitpid(
-                        processIdentifier,
-                        &status,
-                        0
-                    )
-                    if result == processIdentifier {
-                        reaped = true
-                    } else if result == -1, errno != EINTR {
-                        break
-                    }
-                }
-            } else {
-                deferReaping(processIdentifier)
-            }
-        }
-        drain(outputDescriptor, into: output)
+        _ = drain(
+            outputDescriptor,
+            into: output,
+            until: deadline(after: terminationGrace)
+        )
         _ = Darwin.close(outputDescriptor)
 
         guard !timedOut,
-              descendantsExited,
-              reaped,
-              exitedSuccessfully(status),
+              containment,
+              reaping.reaped,
+              exitedSuccessfully(reaping.status),
               let data = output.value,
               let value = String(data: data, encoding: .utf8) else {
             return nil
@@ -709,40 +700,169 @@ nonisolated enum CodexVersionProbe {
         )
     }
 
-    private static func terminateProcessGroup(
-        _ processGroup: pid_t,
+    private struct ProcessIdentity: Hashable {
+        let processIdentifier: pid_t
+        let startSeconds: UInt64
+        let startMicroseconds: UInt64
+    }
+
+    private struct ProcessSnapshot {
+        let identity: ProcessIdentity
+        let parentIdentifier: pid_t
+        let isZombie: Bool
+    }
+
+    private enum ProcessCensus {
+        case available([ProcessSnapshot])
+        case unavailable
+    }
+
+    private enum ProcessGroupState: Equatable {
+        case clear
+        case live
+        case unknown
+    }
+
+    private struct OwnedProcessTracker {
+        let leader: pid_t
+        private(set) var descendants: Set<ProcessIdentity> = []
+        private(set) var censusReliable = true
+
+        mutating func refresh() {
+            var pending = [leader]
+            var visited = Set<pid_t>()
+            for identity in descendants
+            where isSameLiveProcess(identity) {
+                pending.append(identity.processIdentifier)
+            }
+            while let parent = pending.popLast() {
+                guard visited.insert(parent).inserted else {
+                    continue
+                }
+                guard case .available(let children) =
+                        directChildren(of: parent) else {
+                    censusReliable = false
+                    continue
+                }
+                for snapshot in children {
+                    descendants.insert(snapshot.identity)
+                    pending.append(
+                        snapshot.identity.processIdentifier
+                    )
+                }
+            }
+        }
+
+        func signalDescendants(_ signal: Int32) {
+            for identity in descendants {
+                guard let snapshot = processSnapshot(
+                    identity.processIdentifier
+                ),
+                snapshot.identity == identity,
+                !snapshot.isZombie else {
+                    continue
+                }
+                _ = Darwin.kill(
+                    identity.processIdentifier,
+                    signal
+                )
+            }
+        }
+
+        mutating func markCensusUnreliable() {
+            censusReliable = false
+        }
+
+        var hasLiveDescendants: Bool {
+            descendants.contains(where: isSameLiveProcess)
+        }
+    }
+
+    private static func terminateOwnedProcesses(
+        processGroup: pid_t,
+        ownedProcesses: inout OwnedProcessTracker,
         outputDescriptor: Int32,
         output: CodexVersionOutputBuffer,
         grace: TimeInterval
     ) -> Bool {
         _ = Darwin.kill(-processGroup, SIGTERM)
+        // The direct child PID cannot be reused before we reap it. Signal it
+        // independently in case the executable changed its own process group.
+        _ = Darwin.kill(processGroup, SIGTERM)
+        ownedProcesses.signalDescendants(SIGTERM)
         let gracefulDeadline = deadline(after: grace)
-        while hasLiveMembers(processGroup) {
-            drain(outputDescriptor, into: output)
-            guard DispatchTime.now().uptimeNanoseconds
-                    < gracefulDeadline else {
-                break
-            }
-            waitForReadable(outputDescriptor)
+        if waitForOwnedProcessesToExit(
+            processGroup: processGroup,
+            ownedProcesses: &ownedProcesses,
+            outputDescriptor: outputDescriptor,
+            output: output,
+            until: gracefulDeadline
+        ) {
+            return ownedProcesses.censusReliable
         }
-        if hasLiveMembers(processGroup) {
-            _ = Darwin.kill(-processGroup, SIGKILL)
-        }
+
+        _ = Darwin.kill(-processGroup, SIGKILL)
+        _ = Darwin.kill(processGroup, SIGKILL)
+        ownedProcesses.signalDescendants(SIGKILL)
         let killDeadline = deadline(after: max(grace, 1))
-        while hasLiveMembers(processGroup) {
-            drain(outputDescriptor, into: output)
-            guard DispatchTime.now().uptimeNanoseconds
-                    < killDeadline else {
-                return false
-            }
-            waitForReadable(outputDescriptor)
-        }
-        return true
+        let exited = waitForOwnedProcessesToExit(
+            processGroup: processGroup,
+            ownedProcesses: &ownedProcesses,
+            outputDescriptor: outputDescriptor,
+            output: output,
+            until: killDeadline
+        )
+        return exited && ownedProcesses.censusReliable
     }
 
-    private static func hasLiveMembers(
-        _ processGroup: pid_t
+    private static func waitForOwnedProcessesToExit(
+        processGroup: pid_t,
+        ownedProcesses: inout OwnedProcessTracker,
+        outputDescriptor: Int32,
+        output: CodexVersionOutputBuffer,
+        until deadline: UInt64
     ) -> Bool {
+        while DispatchTime.now().uptimeNanoseconds < deadline {
+            ownedProcesses.refresh()
+            let groupState = processGroupState(
+                processGroup,
+                leader: ownedProcesses.leader
+            )
+            if groupState == .clear,
+               !ownedProcesses.hasLiveDescendants {
+                return true
+            }
+            if groupState == .unknown {
+                ownedProcesses.markCensusUnreliable()
+            }
+            guard drain(
+                outputDescriptor,
+                into: output,
+                until: deadline
+            ) else {
+                break
+            }
+            waitForReadable(
+                outputDescriptor,
+                until: deadline
+            )
+        }
+        ownedProcesses.refresh()
+        let groupState = processGroupState(
+            processGroup,
+            leader: ownedProcesses.leader
+        )
+        if groupState == .unknown {
+            ownedProcesses.markCensusUnreliable()
+        }
+        return groupState == .clear
+            && !ownedProcesses.hasLiveDescendants
+    }
+
+    private static func processGroupState(
+        _ processGroup: pid_t,
+        leader: pid_t
+    ) -> ProcessGroupState {
         var capacity = 16
         let maximumCapacity = 4_096
         while capacity <= maximumCapacity {
@@ -758,37 +878,93 @@ nonisolated enum CodexVersionProbe {
                         Int32(buffer.count)
                     )
                 }
-            guard returnedCount >= 0 else {
-                return true
+            guard returnedCount > 0 else {
+                // libproc is documented in practice to return zero both for
+                // an empty result and some errors. Independently establish
+                // absence instead of interpreting the ambiguous value as
+                // success.
+                errno = 0
+                if Darwin.kill(-processGroup, 0) == -1,
+                   errno == ESRCH {
+                    return .clear
+                }
+                if hasExited(leader) {
+                    // A zombie leader can keep the group identifier visible
+                    // to kill(2), but does not execute or retain stdout.
+                    return .unknown
+                }
+                return .live
             }
             // libproc returns a PID count (not a byte count); the byte size
             // supplied above is only the capacity of the destination buffer.
             let count = Int(returnedCount)
             let candidates =
                 identifiers.prefix(min(count, capacity))
-            if candidates.contains(where: {
+            let hasLiveCandidate = candidates.contains(where: {
                 guard $0 > 0 else { return false }
                 if $0 == processGroup {
                     return !hasExited($0)
                 }
-                return !isZombie($0)
-            }) {
-                return true
+                return isProcessLive($0)
+            })
+            if hasLiveCandidate {
+                return .live
             }
             if count < capacity {
-                return false
+                return .clear
             }
             if capacity == maximumCapacity {
-                return true
+                return .unknown
             }
             capacity *= 2
         }
-        return true
+        return .unknown
     }
 
-    private static func isZombie(
+    private static func directChildren(
+        of parent: pid_t
+    ) -> ProcessCensus {
+        var capacity = 16
+        let maximumCapacity = 4_096
+        while capacity <= maximumCapacity {
+            var identifiers = [pid_t](
+                repeating: 0,
+                count: capacity
+            )
+            errno = 0
+            let returnedCount =
+                identifiers.withUnsafeMutableBytes { buffer in
+                    proc_listchildpids(
+                        parent,
+                        buffer.baseAddress,
+                        Int32(buffer.count)
+                    )
+                }
+            guard returnedCount >= 0,
+                  returnedCount != 0 || errno == 0 else {
+                return .unavailable
+            }
+            let count = Int(returnedCount)
+            if count >= capacity {
+                guard capacity < maximumCapacity else {
+                    return .unavailable
+                }
+                capacity = min(capacity * 2, maximumCapacity)
+                continue
+            }
+            let snapshots = identifiers
+                .prefix(count)
+                .compactMap(processSnapshot)
+                .filter { $0.parentIdentifier == parent }
+            return .available(snapshots)
+        }
+        return .unavailable
+    }
+
+    private static func processSnapshot(
         _ processIdentifier: pid_t
-    ) -> Bool {
+    ) -> ProcessSnapshot? {
+        guard processIdentifier > 0 else { return nil }
         var info = proc_bsdinfo()
         let expectedSize = MemoryLayout<proc_bsdinfo>.size
         let returnedSize = withUnsafeMutablePointer(to: &info) {
@@ -800,8 +976,45 @@ nonisolated enum CodexVersionProbe {
                 Int32(expectedSize)
             )
         }
-        return returnedSize == expectedSize
-            && info.pbi_status == UInt32(SZOMB)
+        guard returnedSize == expectedSize else {
+            return nil
+        }
+        return ProcessSnapshot(
+            identity: ProcessIdentity(
+                processIdentifier: processIdentifier,
+                startSeconds: info.pbi_start_tvsec,
+                startMicroseconds: info.pbi_start_tvusec
+            ),
+            parentIdentifier: pid_t(info.pbi_ppid),
+            isZombie: info.pbi_status == UInt32(SZOMB)
+        )
+    }
+
+    private static func isSameLiveProcess(
+        _ identity: ProcessIdentity
+    ) -> Bool {
+        guard let snapshot = processSnapshot(
+            identity.processIdentifier
+        ) else {
+            errno = 0
+            return Darwin.kill(
+                identity.processIdentifier,
+                0
+            ) == 0 || errno != ESRCH
+        }
+        return snapshot.identity == identity
+            && !snapshot.isZombie
+    }
+
+    private static func isProcessLive(
+        _ processIdentifier: pid_t
+    ) -> Bool {
+        if let snapshot = processSnapshot(processIdentifier) {
+            return !snapshot.isZombie
+        }
+        errno = 0
+        return Darwin.kill(processIdentifier, 0) == 0
+            || errno != ESRCH
     }
 
     /// Observes exit without reaping so the process-group identifier remains
@@ -826,12 +1039,19 @@ nonisolated enum CodexVersionProbe {
         }
     }
 
+    @discardableResult
     private static func drain(
         _ descriptor: Int32,
-        into output: CodexVersionOutputBuffer
-    ) {
+        into output: CodexVersionOutputBuffer,
+        until deadline: UInt64
+    ) -> Bool {
         var bytes = [UInt8](repeating: 0, count: 1_024)
-        while true {
+        var reads = 0
+        while reads < maximumReadsPerDrain {
+            guard DispatchTime.now().uptimeNanoseconds
+                    < deadline else {
+                return false
+            }
             let count = Darwin.read(
                 descriptor,
                 &bytes,
@@ -841,19 +1061,26 @@ nonisolated enum CodexVersionProbe {
                 output.consume(
                     Data(bytes.prefix(Int(count)))
                 )
+                reads += 1
                 continue
             }
             if count == -1,
                errno == EINTR {
                 continue
             }
-            return
+            return true
         }
+        return DispatchTime.now().uptimeNanoseconds < deadline
     }
 
     private static func waitForReadable(
-        _ descriptor: Int32
+        _ descriptor: Int32,
+        until deadline: UInt64
     ) {
+        guard DispatchTime.now().uptimeNanoseconds
+                < deadline else {
+            return
+        }
         var descriptorState = pollfd(
             fd: descriptor,
             events: Int16(POLLIN | POLLHUP),
@@ -875,20 +1102,41 @@ nonisolated enum CodexVersionProbe {
             && ((status >> 8) & 0xff) == 0
     }
 
-    private static func deferReaping(
-        _ processIdentifier: pid_t
-    ) {
-        DispatchQueue.global(qos: .utility).async {
-            var status: Int32 = 0
-            while waitpid(
+    private static func reapDirectChild(
+        _ processIdentifier: pid_t,
+        outputDescriptor: Int32,
+        output: CodexVersionOutputBuffer,
+        timeout: TimeInterval
+    ) -> (reaped: Bool, status: Int32) {
+        var status: Int32 = 0
+        let reapDeadline = deadline(after: timeout)
+        while DispatchTime.now().uptimeNanoseconds
+                < reapDeadline {
+            let result = waitpid(
                 processIdentifier,
                 &status,
-                0
-            ) == -1,
-            errno == EINTR {
-                // Retry only interrupted waits.
+                WNOHANG
+            )
+            if result == processIdentifier {
+                return (true, status)
             }
+            if result == -1, errno != EINTR {
+                return (false, status)
+            }
+            _ = drain(
+                outputDescriptor,
+                into: output,
+                until: reapDeadline
+            )
+            waitForReadable(
+                outputDescriptor,
+                until: reapDeadline
+            )
         }
+        // Do not hand an unbounded wait to a background worker. The caller
+        // receives no version unless the direct child was observably reaped
+        // within this bounded path.
+        return (false, status)
     }
 
     private static func deadline(
