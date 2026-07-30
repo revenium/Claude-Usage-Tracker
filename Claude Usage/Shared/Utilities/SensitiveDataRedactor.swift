@@ -92,7 +92,8 @@ nonisolated enum SensitiveDataRedactor {
 
     static func redact(url value: String) -> String {
         guard var components = URLComponents(string: value),
-              components.scheme != nil else {
+              components.scheme != nil
+                || components.host != nil else {
             return redact(value)
         }
         if components.scheme?.lowercased() == "file" {

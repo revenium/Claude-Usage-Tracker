@@ -476,6 +476,102 @@ final class ProviderDiagnosticsTests: HostedAppTestCase {
         XCTAssertFalse(tracker.containmentReliable)
     }
 
+    func testTraversalRevisitsPIDAfterSameRefreshIdentityReuse()
+    {
+        let leader: pid_t = 43_000
+        let bridgeIdentity = CodexVersionProbe.ProcessIdentity(
+            processIdentifier: 43_001,
+            startSeconds: 10,
+            startMicroseconds: 20
+        )
+        let firstIdentity = CodexVersionProbe.ProcessIdentity(
+            processIdentifier: 43_002,
+            startSeconds: 30,
+            startMicroseconds: 40
+        )
+        let reusedIdentity = CodexVersionProbe.ProcessIdentity(
+            processIdentifier: 43_002,
+            startSeconds: 50,
+            startMicroseconds: 60
+        )
+        let escapedChildIdentity =
+            CodexVersionProbe.ProcessIdentity(
+                processIdentifier: 43_003,
+                startSeconds: 70,
+                startMicroseconds: 80
+            )
+        let bridgeSnapshot = CodexVersionProbe.ProcessSnapshot(
+            identity: bridgeIdentity,
+            parentIdentifier: leader,
+            isZombie: false
+        )
+        let firstSnapshot = CodexVersionProbe.ProcessSnapshot(
+            identity: firstIdentity,
+            parentIdentifier: leader,
+            isZombie: false
+        )
+        let reusedSnapshot = CodexVersionProbe.ProcessSnapshot(
+            identity: reusedIdentity,
+            parentIdentifier: bridgeIdentity.processIdentifier,
+            isZombie: false
+        )
+        let escapedChildSnapshot =
+            CodexVersionProbe.ProcessSnapshot(
+                identity: escapedChildIdentity,
+                parentIdentifier:
+                    reusedIdentity.processIdentifier,
+                isZombie: false
+            )
+        var reusedIdentityChecks = 0
+        var reusedPIDEnumerations = 0
+        var tracker = CodexVersionProbe.OwnedProcessTracker(
+            leader: leader
+        )
+
+        tracker.refresh(
+            identityStateProvider: { identity in
+                if identity == reusedIdentity {
+                    reusedIdentityChecks += 1
+                    return reusedIdentityChecks == 1
+                        ? .sameLiveProcess
+                        : .exitedOrReused
+                }
+                return .sameLiveProcess
+            },
+            directChildrenProvider: { parent in
+                switch parent {
+                case leader:
+                    // LIFO traversal observes the first identity before the
+                    // bridge discovers the reused identity for the same PID.
+                    return .available([
+                        bridgeSnapshot,
+                        firstSnapshot
+                    ])
+                case bridgeIdentity.processIdentifier:
+                    return .available([reusedSnapshot])
+                case firstIdentity.processIdentifier:
+                    reusedPIDEnumerations += 1
+                    return reusedPIDEnumerations == 1
+                        ? .available([])
+                        : .available([escapedChildSnapshot])
+                default:
+                    return .available([])
+                }
+            }
+        )
+
+        XCTAssertEqual(reusedPIDEnumerations, 2)
+        XCTAssertEqual(reusedIdentityChecks, 2)
+        XCTAssertTrue(
+            tracker.descendants.contains(reusedIdentity)
+        )
+        XCTAssertFalse(
+            tracker.descendants.contains(escapedChildIdentity)
+        )
+        XCTAssertFalse(tracker.identityReliable)
+        XCTAssertFalse(tracker.containmentReliable)
+    }
+
     func testEveryLoggingEntryPointUsesCentralRedactionBoundary() {
         var output: [String] = []
         let logger = retain(
@@ -650,6 +746,58 @@ final class ProviderDiagnosticsTests: HostedAppTestCase {
         ] {
             XCTAssertTrue(
                 log.url.hasPrefix("https://api.example.test/"),
+                context
+            )
+            XCTAssertTrue(
+                log.url.contains("redacted-path"),
+                context
+            )
+            XCTAssertFalse(log.url.contains(organizationID), context)
+            XCTAssertFalse(log.url.contains(userID), context)
+            XCTAssertFalse(log.url.contains("/users/"), context)
+        }
+    }
+
+    func testNetworkModelRedactsProtocolRelativePathsForNewAndLegacy()
+        throws
+    {
+        let organizationID = "org-p14-network-relative"
+        let userID = "user-p14-network-relative"
+        let hostileURL =
+            "//api.example.test/organizations/"
+            + organizationID
+            + "/users/"
+            + userID
+            + "?token=\(query)"
+
+        let newLog = NetworkRequestLog(
+            timestamp: Date(),
+            url: hostileURL,
+            method: "GET"
+        )
+        let legacy = UnsafeLegacyNetworkLog(
+            id: UUID(),
+            timestamp: Date(),
+            url: hostileURL,
+            method: "GET",
+            statusCode: 200,
+            duration: 0.1,
+            requestBody: nil,
+            responsePreview: nil,
+            fullResponseSize: nil,
+            errorMessage: nil
+        )
+        let decoded = try JSONDecoder().decode(
+            NetworkRequestLog.self,
+            from: JSONEncoder().encode(legacy)
+        )
+
+        for (context, log) in [
+            ("new protocol-relative URL", newLog),
+            ("legacy protocol-relative URL", decoded)
+        ] {
+            XCTAssertTrue(
+                log.url.hasPrefix("//api.example.test/"),
                 context
             )
             XCTAssertTrue(

@@ -796,7 +796,8 @@ nonisolated enum CodexVersionProbe {
                 expectedIdentity: ProcessIdentity?
             )] = CodexVersionProbe.hasExited(leader)
                 ? [] : [(leader, nil)]
-            var visited = Set<pid_t>()
+            var visitedLeader = false
+            var visitedDescendants = Set<ProcessIdentity>()
             for identity in descendants {
                 switch identityStateProvider(identity) {
                 case .sameLiveProcess:
@@ -813,10 +814,16 @@ nonisolated enum CodexVersionProbe {
                 }
             }
             while let parent = pending.popLast() {
-                guard visited.insert(
-                    parent.processIdentifier
-                ).inserted else {
-                    continue
+                if let expectedIdentity =
+                        parent.expectedIdentity {
+                    guard visitedDescendants.insert(
+                        expectedIdentity
+                    ).inserted else {
+                        continue
+                    }
+                } else {
+                    guard !visitedLeader else { continue }
+                    visitedLeader = true
                 }
                 if let expectedIdentity =
                         parent.expectedIdentity,
