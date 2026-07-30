@@ -138,10 +138,10 @@ enum CodexReportMapper {
             )
         }
 
-        let validBuckets = try validDailyBuckets(
-            response.dailyUsageBuckets ?? []
+        let validBuckets = try response.dailyUsageBuckets.map(
+            validDailyBuckets
         )
-        if !validBuckets.isEmpty {
+        if let validBuckets, !validBuckets.isEmpty {
             let total = try validBuckets.reduce(Int64(0)) { total, bucket in
                 let (sum, overflow) = total.addingReportingOverflow(
                     bucket.tokens
@@ -167,17 +167,35 @@ enum CodexReportMapper {
             )
         }
 
-        guard !metrics.isEmpty else { return nil }
+        guard response.summary != nil
+                || response.dailyUsageBuckets != nil else {
+            return nil
+        }
 
-        let dates = validBuckets.map(\.date)
+        let dates = validBuckets?.map(\.date) ?? []
         let periodStart = dates.min()
         // Daily bucket dates are parsed at midnight UTC. Add one exact UTC day
         // so the persisted period is independent of the host time zone and DST.
         let periodEnd = dates.max()?.addingTimeInterval(86_400)
+        let dailyBuckets = try validBuckets?.map { bucket in
+            try UsageDailyBucket(
+                startedAt: bucket.date,
+                endsAt: bucket.date.addingTimeInterval(86_400),
+                metrics: [
+                    UsageMetric(
+                        id: UsageMetricID("codex.tokens"),
+                        displayName: "Tokens",
+                        value: Double(bucket.tokens),
+                        unit: .tokens
+                    )
+                ]
+            )
+        }
         return try UsageSummary(
             metrics: metrics,
             periodStartedAt: periodStart,
-            periodEndsAt: periodEnd
+            periodEndsAt: periodEnd,
+            dailyBuckets: dailyBuckets
         )
     }
 
@@ -261,17 +279,17 @@ enum CodexReportMapper {
         formatter.isLenient = false
 
         var seenDates = Set<Date>()
-        return try buckets.compactMap { bucket in
+        return try buckets.map { bucket in
             guard bucket.tokens >= 0,
                   let date = formatter.date(from: bucket.startDate)
             else {
                 throw UsageProviderError.malformedResponse
             }
             guard seenDates.insert(date).inserted else {
-                return nil
+                throw UsageProviderError.malformedResponse
             }
             return (date, bucket.tokens)
-        }
+        }.sorted { $0.date < $1.date }
     }
 
     private static func unixDate(_ seconds: Int64) -> Date {

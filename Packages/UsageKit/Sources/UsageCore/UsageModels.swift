@@ -255,15 +255,62 @@ public struct UsageMetric: Codable, Equatable, Sendable, Identifiable {
     }
 }
 
+/// A provider-neutral daily slice of a usage summary.
+///
+/// The metric identifiers and units remain provider-defined. An optional
+/// collection of these buckets on ``UsageSummary`` preserves the difference
+/// between a provider omitting its daily surface (`nil`) and returning an
+/// explicitly empty series (`[]`).
+public struct UsageDailyBucket: Codable, Equatable, Sendable, Identifiable {
+    public var startedAt: Date
+    public var endsAt: Date?
+    public var metrics: [UsageMetric]
+
+    public var id: Date { startedAt }
+
+    public init(
+        startedAt: Date,
+        endsAt: Date? = nil,
+        metrics: [UsageMetric]
+    ) throws {
+        if let endsAt, endsAt <= startedAt {
+            throw UsageCoreValidationError.invalidDateRange(
+                field: "usageDailyBucket"
+            )
+        }
+        var seen = Set<UsageMetricID>()
+        for metric in metrics where !seen.insert(metric.id).inserted {
+            throw UsageCoreValidationError.duplicateIdentifier(
+                kind: "daily usage metric",
+                identifier: metric.id.rawValue
+            )
+        }
+        self.startedAt = startedAt
+        self.endsAt = endsAt
+        self.metrics = metrics
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(
+            startedAt: container.decode(Date.self, forKey: .startedAt),
+            endsAt: container.decodeIfPresent(Date.self, forKey: .endsAt),
+            metrics: container.decode([UsageMetric].self, forKey: .metrics)
+        )
+    }
+}
+
 public struct UsageSummary: Codable, Equatable, Sendable {
     public var metrics: [UsageMetric]
     public var periodStartedAt: Date?
     public var periodEndsAt: Date?
+    public var dailyBuckets: [UsageDailyBucket]?
 
     public init(
         metrics: [UsageMetric],
         periodStartedAt: Date? = nil,
-        periodEndsAt: Date? = nil
+        periodEndsAt: Date? = nil,
+        dailyBuckets: [UsageDailyBucket]? = nil
     ) throws {
         var seen = Set<UsageMetricID>()
         for metric in metrics where !seen.insert(metric.id).inserted {
@@ -275,9 +322,20 @@ public struct UsageSummary: Codable, Equatable, Sendable {
         if let periodStartedAt, let periodEndsAt, periodEndsAt < periodStartedAt {
             throw UsageCoreValidationError.invalidDateRange(field: "usageSummary")
         }
+        if let dailyBuckets {
+            var seenStarts = Set<Date>()
+            for bucket in dailyBuckets
+            where !seenStarts.insert(bucket.startedAt).inserted {
+                throw UsageCoreValidationError.duplicateIdentifier(
+                    kind: "daily usage bucket",
+                    identifier: bucket.startedAt.description
+                )
+            }
+        }
         self.metrics = metrics
         self.periodStartedAt = periodStartedAt
         self.periodEndsAt = periodEndsAt
+        self.dailyBuckets = dailyBuckets
     }
 
     public init(from decoder: Decoder) throws {
@@ -285,7 +343,11 @@ public struct UsageSummary: Codable, Equatable, Sendable {
         try self.init(
             metrics: container.decode([UsageMetric].self, forKey: .metrics),
             periodStartedAt: container.decodeIfPresent(Date.self, forKey: .periodStartedAt),
-            periodEndsAt: container.decodeIfPresent(Date.self, forKey: .periodEndsAt)
+            periodEndsAt: container.decodeIfPresent(Date.self, forKey: .periodEndsAt),
+            dailyBuckets: container.decodeIfPresent(
+                [UsageDailyBucket].self,
+                forKey: .dailyBuckets
+            )
         )
     }
 }

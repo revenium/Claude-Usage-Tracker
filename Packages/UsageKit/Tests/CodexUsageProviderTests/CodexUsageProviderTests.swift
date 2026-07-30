@@ -74,6 +74,19 @@ final class CodexUsageProviderTests: XCTestCase {
         )
         XCTAssertNotNil(summary.periodStartedAt)
         XCTAssertNotNil(summary.periodEndsAt)
+        XCTAssertEqual(summary.dailyBuckets?.count, 2)
+        XCTAssertEqual(
+            summary.dailyBuckets?.map(\.startedAt),
+            summary.dailyBuckets?.map(\.startedAt).sorted()
+        )
+        XCTAssertEqual(
+            summary.dailyBuckets?.compactMap {
+                $0.metrics.first {
+                    $0.id.rawValue == "codex.tokens"
+                }?.value
+            },
+            [12_345, 23_456]
+        )
 
         XCTAssertEqual(provider.capabilities[.account], .available)
         XCTAssertEqual(provider.capabilities[.usageSummary], .unknown)
@@ -240,6 +253,98 @@ final class CodexUsageProviderTests: XCTestCase {
             ),
             86_400
         )
+        XCTAssertEqual(
+            summary.dailyBuckets?.first?.endsAt?.timeIntervalSince(
+                try XCTUnwrap(summary.dailyBuckets?.first?.startedAt)
+            ),
+            86_400
+        )
+    }
+
+    func testUsageSummaryPreservesAbsentEmptyAndPartialDailySurfaces()
+        throws
+    {
+        let absent = try CodexDomainDecoder.decode(
+            CodexAccountTokenUsageResponse.self,
+            from: .object([
+                "summary": .object([
+                    "lifetimeTokens": .integer(12)
+                ])
+            ])
+        )
+        let empty = try CodexDomainDecoder.decode(
+            CodexAccountTokenUsageResponse.self,
+            from: .object([
+                "dailyUsageBuckets": .array([])
+            ])
+        )
+        let partial = try CodexDomainDecoder.decode(
+            CodexAccountTokenUsageResponse.self,
+            from: .object([
+                "dailyUsageBuckets": .array([
+                    .object([
+                        "startDate": .string("2026-07-02"),
+                        "tokens": .integer(0)
+                    ])
+                ])
+            ])
+        )
+
+        XCTAssertNil(
+            try XCTUnwrap(
+                CodexReportMapper.usageSummary(from: absent)
+            ).dailyBuckets
+        )
+        XCTAssertEqual(
+            try XCTUnwrap(
+                CodexReportMapper.usageSummary(from: empty)
+            ).dailyBuckets,
+            []
+        )
+        let mappedPartial = try XCTUnwrap(
+            CodexReportMapper.usageSummary(from: partial)
+        )
+        XCTAssertEqual(mappedPartial.dailyBuckets?.count, 1)
+        XCTAssertEqual(
+            mappedPartial.dailyBuckets?.first?.metrics.first?.value,
+            0
+        )
+        XCTAssertEqual(
+            metric(
+                "codex.reported-daily-bucket-tokens",
+                in: mappedPartial
+            )?.value,
+            0
+        )
+    }
+
+    func testDuplicateDailyBucketDatesFailInsteadOfUndercounting()
+        throws
+    {
+        let response = try CodexDomainDecoder.decode(
+            CodexAccountTokenUsageResponse.self,
+            from: .object([
+                "dailyUsageBuckets": .array([
+                    .object([
+                        "startDate": .string("2026-07-02"),
+                        "tokens": .integer(10)
+                    ]),
+                    .object([
+                        "startDate": .string("2026-07-02"),
+                        "tokens": .integer(20)
+                    ])
+                ])
+            ])
+        )
+
+        XCTAssertThrowsError(
+            try CodexReportMapper.usageSummary(from: response)
+        ) { error in
+            XCTAssertEqual(
+                error as? UsageProviderError,
+                .malformedResponse
+            )
+        }
     }
 
     func testRefreshSharesOneOverallDeadlineAcrossAllRPCs() async throws {
@@ -293,7 +398,9 @@ final class CodexUsageProviderTests: XCTestCase {
         )
         XCTAssertEqual(report.limitGroups[0].windows[0].usedPercentage, 12.5)
         XCTAssertEqual(report.limitGroups[0].windows[0].duration, 3_600)
-        XCTAssertNil(report.usageSummary)
+        let summary = try XCTUnwrap(report.usageSummary)
+        XCTAssertTrue(summary.metrics.isEmpty)
+        XCTAssertNil(summary.dailyBuckets)
     }
 
     func testMalformedDynamicBucketIsSkippedWhenAValidBucketExists()

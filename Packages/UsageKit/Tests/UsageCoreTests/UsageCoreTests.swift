@@ -43,7 +43,20 @@ final class UsageCoreTests: XCTestCase {
                 )
             ],
             periodStartedAt: fetchedAt.addingTimeInterval(-86_400),
-            periodEndsAt: fetchedAt.addingTimeInterval(86_400)
+            periodEndsAt: fetchedAt.addingTimeInterval(86_400),
+            dailyBuckets: [
+                UsageDailyBucket(
+                    startedAt: fetchedAt.addingTimeInterval(-86_400),
+                    endsAt: fetchedAt,
+                    metrics: [
+                        UsageMetric(
+                            id: UsageMetricID("input-tokens"),
+                            value: 1_234,
+                            unit: .tokens
+                        )
+                    ]
+                )
+            ]
         )
         let report = try UsageReport(
             providerID: providerID,
@@ -75,6 +88,10 @@ final class UsageCoreTests: XCTestCase {
         XCTAssertEqual(decoded, report)
         XCTAssertEqual(decoded.limitGroups[0].windows.map(\.id.rawValue), ["primary", "secondary"])
         XCTAssertEqual(decoded.usageSummary?.metrics.count, 2)
+        XCTAssertEqual(
+            decoded.usageSummary?.dailyBuckets?.first?.metrics.first?.value,
+            1_234
+        )
         let encodedObject = try XCTUnwrap(
             JSONSerialization.jsonObject(with: data) as? [String: Any]
         )
@@ -327,6 +344,74 @@ final class UsageCoreTests: XCTestCase {
 
         let quantity = try UsageQuantity(used: 250, limit: 1_000, unit: .tokens)
         XCTAssertEqual(quantity.calculatedUsedPercentage, 25)
+    }
+
+    func testDailySummaryBucketsPreserveAbsentEmptyAndPartialSemantics()
+        throws
+    {
+        let metric = try UsageMetric(
+            id: UsageMetricID("tokens"),
+            value: 0,
+            unit: .tokens
+        )
+        let absent = try UsageSummary(metrics: [])
+        let empty = try UsageSummary(metrics: [], dailyBuckets: [])
+        let partial = try UsageSummary(
+            metrics: [],
+            dailyBuckets: [
+                UsageDailyBucket(
+                    startedAt: fetchedAt,
+                    metrics: [metric]
+                )
+            ]
+        )
+
+        XCTAssertNil(absent.dailyBuckets)
+        XCTAssertEqual(empty.dailyBuckets, [])
+        XCTAssertEqual(partial.dailyBuckets?.first?.metrics, [metric])
+
+        let oldPayload = Data(#"{"metrics":[]}"#.utf8)
+        XCTAssertNil(
+            try JSONDecoder()
+                .decode(UsageSummary.self, from: oldPayload)
+                .dailyBuckets
+        )
+        XCTAssertEqual(
+            try JSONDecoder().decode(
+                UsageSummary.self,
+                from: JSONEncoder().encode(empty)
+            ),
+            empty
+        )
+
+        XCTAssertThrowsError(
+            try UsageSummary(
+                metrics: [],
+                dailyBuckets: [
+                    UsageDailyBucket(
+                        startedAt: fetchedAt,
+                        metrics: []
+                    ),
+                    UsageDailyBucket(
+                        startedAt: fetchedAt,
+                        metrics: []
+                    )
+                ]
+            )
+        )
+        XCTAssertThrowsError(
+            try UsageDailyBucket(
+                startedAt: fetchedAt,
+                endsAt: fetchedAt,
+                metrics: []
+            )
+        )
+        XCTAssertThrowsError(
+            try UsageDailyBucket(
+                startedAt: fetchedAt,
+                metrics: [metric, metric]
+            )
+        )
     }
 
     func testCurrencyCodesAreExplicitNormalizedAndCodableAcrossValueTypes() throws {
