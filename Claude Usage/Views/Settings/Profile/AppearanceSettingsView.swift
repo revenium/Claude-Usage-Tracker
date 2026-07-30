@@ -6,15 +6,46 @@
 //
 
 import SwiftUI
+import UsageCore
 
 /// Menu bar icon appearance and customization with multi-metric support
 struct AppearanceSettingsView: View {
     @ObservedObject private var profileManager = ProfileManager.shared
+    @ObservedObject private var catalogStore =
+        ProviderMenuCatalogStore.shared
     @State private var configuration: MenuBarIconConfiguration = .default
     @State private var saveDebounceTimer: Timer?
+    private let metricCatalogProvider:
+        ((Profile) -> [ProviderMetricDescriptor])?
+
+    init(
+        metricCatalogProvider:
+            ((Profile) -> [ProviderMetricDescriptor])? = nil
+    ) {
+        self.metricCatalogProvider = metricCatalogProvider
+    }
 
     private var isMultiProfileMode: Bool {
         profileManager.displayMode == .multi
+    }
+
+    private var activeProfile: Profile? {
+        profileManager.activeProfile
+    }
+
+    private var isProviderNeutralCatalog: Bool {
+        activeProfile?.providerID != .claude
+    }
+
+    private var providerCatalog: [ProviderMetricDescriptor] {
+        guard let activeProfile else { return [] }
+        if let metricCatalogProvider {
+            return metricCatalogProvider(activeProfile)
+        }
+        return catalogStore.catalog(
+            for: activeProfile,
+            configuration: configuration
+        )
     }
 
     var body: some View {
@@ -125,7 +156,10 @@ struct AppearanceSettingsView: View {
                 ) {
                     VStack(alignment: .leading, spacing: DesignTokens.Spacing.small) {
                         // Info message when all metrics are disabled
-                        if configuration.metrics.filter({ $0.isEnabled }).isEmpty {
+                        if configuration.metricSelectionMode == .custom,
+                           configuration.metrics.filter({
+                               $0.isEnabled
+                           }).isEmpty {
                             HStack(alignment: .top, spacing: 8) {
                                 Image(systemName: "info.circle.fill")
                                     .font(.system(size: 12))
@@ -149,46 +183,10 @@ struct AppearanceSettingsView: View {
                             )
                         }
 
-                        // Session Usage
-                        if let sessionIndex = configuration.metrics.firstIndex(where: { $0.metricType == .session }) {
-                            MetricIconCard(
-                                metricType: .session,
-                                config: Binding(
-                                    get: { configuration.metrics[sessionIndex] },
-                                    set: { newValue in
-                                        configuration.metrics[sessionIndex] = newValue
-                                    }
-                                ),
-                                onConfigChanged: { saveConfiguration() }
-                            )
-                        }
-
-                        // Week Usage
-                        if let weekIndex = configuration.metrics.firstIndex(where: { $0.metricType == .week }) {
-                            MetricIconCard(
-                                metricType: .week,
-                                config: Binding(
-                                    get: { configuration.metrics[weekIndex] },
-                                    set: { newValue in
-                                        configuration.metrics[weekIndex] = newValue
-                                    }
-                                ),
-                                onConfigChanged: { saveConfiguration() }
-                            )
-                        }
-
-                        // API Credits
-                        if let apiIndex = configuration.metrics.firstIndex(where: { $0.metricType == .api }) {
-                            MetricIconCard(
-                                metricType: .api,
-                                config: Binding(
-                                    get: { configuration.metrics[apiIndex] },
-                                    set: { newValue in
-                                        configuration.metrics[apiIndex] = newValue
-                                    }
-                                ),
-                                onConfigChanged: { saveConfiguration() }
-                            )
+                        if isProviderNeutralCatalog {
+                            providerMetricConfiguration
+                        } else {
+                            legacyClaudeMetricConfiguration
                         }
                     }
                 }
@@ -203,17 +201,140 @@ struct AppearanceSettingsView: View {
             // Load configuration from active profile
             if let activeProfile = profileManager.activeProfile {
                 configuration = activeProfile.iconConfig
+                    .adaptedForProvider(activeProfile.providerID)
             }
         }
         .onChange(of: profileManager.activeProfile?.id) { _, newProfileId in
             // Reload configuration when profile changes
             if let activeProfile = profileManager.activeProfile {
                 configuration = activeProfile.iconConfig
+                    .adaptedForProvider(activeProfile.providerID)
             }
         }
     }
 
     // MARK: - Helper Methods
+
+    @ViewBuilder
+    private var legacyClaudeMetricConfiguration: some View {
+        ForEach(
+            MenuBarMetricType.allCases.filter { metricType in
+                configuration.metrics.contains {
+                    $0.metricID.legacyMetricType == metricType
+                }
+            }
+        ) { metricType in
+            if let index = configuration.metrics.firstIndex(
+                where: { $0.metricID.legacyMetricType == metricType }
+            ) {
+                MetricIconCard(
+                    metricType: metricType,
+                    config: Binding(
+                        get: { configuration.metrics[index] },
+                        set: { configuration.metrics[index] = $0 }
+                    ),
+                    onConfigChanged: saveConfiguration
+                )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var providerMetricConfiguration: some View {
+        SettingToggle(
+            title: NSLocalizedString(
+                "appearance.metric_selection.automatic.title",
+                value: "Choose a metric automatically",
+                comment: ""
+            ),
+            description: NSLocalizedString(
+                "appearance.metric_selection.automatic.description",
+                value: "Shows the first usable provider limit and adapts when the provider adds or removes windows.",
+                comment: ""
+            ),
+            isOn: Binding(
+                get: {
+                    configuration.metricSelectionMode == .automatic
+                },
+                set: { automatic in
+                    configuration.metricSelectionMode =
+                        automatic ? .automatic : .custom
+                    if !automatic {
+                        var seeded = configuration
+                        for (index, descriptor) in
+                            providerCatalog.enumerated()
+                        where seeded.config(for: descriptor.id) == nil {
+                            seeded.updateConfig(
+                                MetricIconConfig(
+                                    metricID: descriptor.id,
+                                    isEnabled: false,
+                                    order: index
+                                )
+                            )
+                        }
+                        seeded.metricSelectionMode = .custom
+                        configuration = seeded
+                    }
+                    saveConfiguration()
+                }
+            )
+        )
+
+        if configuration.metricSelectionMode == .automatic {
+            let selected = providerCatalog.first(where: \.isUsable)
+            Text(
+                selected.map {
+                    String(
+                        format: NSLocalizedString(
+                            "appearance.metric_selection.automatic.selected",
+                            value: "Automatic: %@ — %@",
+                            comment: ""
+                        ),
+                        $0.groupName,
+                        $0.metricName
+                    )
+                } ?? NSLocalizedString(
+                    "appearance.metric_selection.waiting",
+                    value: "Waiting for the provider to publish a usable limit.",
+                    comment: ""
+                )
+            )
+            .font(.system(size: 10))
+            .foregroundColor(.secondary)
+        } else if providerCatalog.isEmpty {
+            Text(
+                NSLocalizedString(
+                    "appearance.metric_selection.unavailable",
+                    value: "Refresh this profile to discover its available usage limits.",
+                    comment: ""
+                )
+            )
+            .font(.system(size: 10))
+            .foregroundColor(.secondary)
+        } else {
+            ForEach(providerCatalog) { descriptor in
+                ProviderMetricSettingsRow(
+                    descriptor: descriptor,
+                    config: providerMetricBinding(for: descriptor),
+                    onConfigChanged: saveConfiguration
+                )
+            }
+        }
+    }
+
+    private func providerMetricBinding(
+        for descriptor: ProviderMetricDescriptor
+    ) -> Binding<MetricIconConfig> {
+        Binding(
+            get: {
+                configuration.config(for: descriptor.id)
+                    ?? MetricIconConfig(metricID: descriptor.id)
+            },
+            set: { newValue in
+                configuration.updateConfig(newValue)
+            }
+        )
+    }
 
     private func saveConfiguration() {
         // Allow all metrics to be disabled - will show default app logo
@@ -232,6 +353,64 @@ struct AppearanceSettingsView: View {
 
         let enabledCount = configuration.metrics.filter { $0.isEnabled }.count
         LoggingService.shared.log("Saved icon configuration to profile (enabled: \(enabledCount))")
+    }
+}
+
+private struct ProviderMetricSettingsRow: View {
+    let descriptor: ProviderMetricDescriptor
+    @Binding var config: MetricIconConfig
+    let onConfigChanged: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.small) {
+            HStack {
+                Image(
+                    systemName: ProviderAppearance.forProvider(
+                        descriptor.providerID
+                    ).symbolName
+                )
+                .frame(width: 20)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("\(descriptor.groupName) — \(descriptor.metricName)")
+                        .font(DesignTokens.Typography.body)
+                    if let reason = descriptor.unavailableReason {
+                        Text(reason)
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                    }
+                }
+                Spacer()
+                Toggle(
+                    "",
+                    isOn: Binding(
+                        get: { config.isEnabled },
+                        set: {
+                            config.isEnabled = $0
+                            onConfigChanged()
+                        }
+                    )
+                )
+                .labelsHidden()
+                .disabled(!descriptor.isUsable)
+            }
+            if config.isEnabled && descriptor.isUsable {
+                IconStylePicker(
+                    selectedStyle: Binding(
+                        get: { config.iconStyle },
+                        set: {
+                            config.iconStyle = $0
+                            onConfigChanged()
+                        }
+                    )
+                )
+            }
+        }
+        .padding(DesignTokens.Spacing.small)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(DesignTokens.Colors.cardBackground)
+        )
+        .opacity(descriptor.isUsable ? 1 : 0.6)
     }
 }
 

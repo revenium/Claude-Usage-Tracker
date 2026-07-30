@@ -8,9 +8,423 @@
 import Cocoa
 
 /// Handles rendering of individual metric icons for the menu bar
-final class MenuBarIconRenderer {
+struct MenuBarIconRenderer {
 
     // MARK: - Public Methods
+
+    /// Renders an arbitrary provider/window metric without assuming a fixed
+    /// number of limit groups. Provider and state remain distinguishable in
+    /// monochrome and high-contrast modes through text and shape, not color.
+    func createProviderMetricImage(
+        _ presentation: ProviderMetricPresentation?,
+        appearance: ProviderAppearance,
+        metricConfig: MetricIconConfig,
+        globalConfig: MenuBarIconConfiguration,
+        isDarkMode: Bool,
+        showProviderLabel: Bool,
+        visualLabel: String? = nil,
+        placeholderState: ProviderMetricDisplayState = .noData
+    ) -> NSImage {
+        let state = presentation?.state ?? placeholderState
+        let percentage = presentation?.displayedPercentage.flatMap {
+            $0.isFinite ? min(max($0, 0), 100) : nil
+        }
+        let valueText = percentage.map { "\(Int($0.rounded()))%" } ?? "—"
+        let stateMark = providerStateMark(state)
+        let foreground = menuBarForegroundColor(isDarkMode: isDarkMode)
+        let rawElapsed = presentation?.elapsedFraction
+        let effectiveStatus: UsageStatusLevel
+        if globalConfig.usePaceColoring,
+           let used = presentation?.usedPercentage,
+           let rawElapsed {
+            effectiveStatus = UsageStatusCalculator.calculateStatus(
+                usedPercentage: used,
+                showRemaining:
+                    presentation?.showRemaining == true,
+                elapsedFraction: rawElapsed
+            )
+        } else {
+            effectiveStatus = presentation?.statusLevel ?? .safe
+        }
+        let color: NSColor
+        if state == .error || state == .degraded {
+            color = globalConfig.colorMode == .monochrome
+                ? foreground
+                : NSColor.systemOrange
+        } else if presentation != nil {
+            color = getColorForMode(
+                globalConfig.colorMode,
+                statusLevel: effectiveStatus,
+                singleColorHex: globalConfig.singleColorHex,
+                isDarkMode: isDarkMode
+            )
+        } else {
+            color = foreground
+        }
+        let marker = globalConfig.showTimeMarker
+            ? rawElapsed.map {
+                CGFloat(
+                    presentation?.showRemaining == true ? 1 - $0 : $0
+                )
+            }
+            : nil
+        let pace: PaceStatus?
+        if globalConfig.showPaceMarker,
+           let used = presentation?.usedPercentage,
+           let rawElapsed {
+            pace = PaceStatus.calculate(
+                usedPercentage: used,
+                elapsedFraction: rawElapsed
+            )
+        } else {
+            pace = nil
+        }
+        let label = showProviderLabel
+            ? visualLabel ?? appearance.compactBadge
+            : ""
+
+        switch metricConfig.iconStyle {
+        case .battery:
+            return createProviderBarImage(
+                value: percentage,
+                valueText: valueText,
+                providerLabel: label,
+                stateMark: stateMark,
+                color: color,
+                foreground: foreground,
+                marker: marker,
+                paceStatus: pace,
+                showPaceMarker: globalConfig.showPaceMarker,
+                isDarkMode: isDarkMode,
+                stackedLabel: true
+            )
+        case .progressBar:
+            return createProviderBarImage(
+                value: percentage,
+                valueText: valueText,
+                providerLabel: label,
+                stateMark: stateMark,
+                color: color,
+                foreground: foreground,
+                marker: marker,
+                paceStatus: pace,
+                showPaceMarker: globalConfig.showPaceMarker,
+                isDarkMode: isDarkMode,
+                stackedLabel: false
+            )
+        case .percentageOnly:
+            return createProviderTextImage(
+                text: [label, valueText + stateMark]
+                    .filter { !$0.isEmpty }
+                    .joined(separator: " "),
+                color: color,
+                paceStatus: pace,
+                showPaceMarker: globalConfig.showPaceMarker
+            )
+        case .icon:
+            return createProviderRingImage(
+                value: percentage,
+                providerLabel: label,
+                stateMark: stateMark,
+                color: color,
+                foreground: foreground,
+                marker: marker,
+                paceStatus: pace,
+                showPaceMarker: globalConfig.showPaceMarker,
+                isDarkMode: isDarkMode
+            )
+        case .compact:
+            return createProviderCompactImage(
+                providerLabel: label,
+                stateMark: stateMark,
+                color: color,
+                foreground: foreground,
+                paceStatus: pace,
+                showPaceMarker: globalConfig.showPaceMarker
+            )
+        }
+    }
+
+    private func providerStateMark(
+        _ state: ProviderMetricDisplayState
+    ) -> String {
+        switch state {
+        case .ready: return ""
+        case .loading: return "…"
+        case .stale: return "◷"
+        case .degraded: return "!"
+        case .error: return "×"
+        case .noData: return "—"
+        }
+    }
+
+    private func createProviderTextImage(
+        text: String,
+        color: NSColor,
+        paceStatus: PaceStatus?,
+        showPaceMarker: Bool
+    ) -> NSImage {
+        let font = NSFont.monospacedDigitSystemFont(
+            ofSize: 11,
+            weight: .semibold
+        )
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: color
+        ]
+        let size = (text as NSString).size(withAttributes: attributes)
+        let paceWidth: CGFloat =
+            showPaceMarker && paceStatus != nil ? 7 : 0
+        let image = NSImage(
+            size: NSSize(
+                width: max(18, ceil(size.width) + 4 + paceWidth),
+                height: 18
+            )
+        )
+        image.lockFocus()
+        defer { image.unlockFocus() }
+        (text as NSString).draw(
+            at: NSPoint(x: 2, y: (18 - size.height) / 2),
+            withAttributes: attributes
+        )
+        if showPaceMarker, let paceStatus {
+            paceStatus.color.setFill()
+            NSBezierPath(
+                ovalIn: NSRect(
+                    x: 4 + size.width,
+                    y: 7,
+                    width: 4,
+                    height: 4
+                )
+            ).fill()
+        }
+        return image
+    }
+
+    private func createProviderBarImage(
+        value: Double?,
+        valueText: String,
+        providerLabel: String,
+        stateMark: String,
+        color: NSColor,
+        foreground: NSColor,
+        marker: CGFloat?,
+        paceStatus: PaceStatus?,
+        showPaceMarker: Bool,
+        isDarkMode: Bool,
+        stackedLabel: Bool
+    ) -> NSImage {
+        let barWidth: CGFloat = 40
+        let labelText = [providerLabel, valueText + stateMark]
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(
+                ofSize: stackedLabel ? 8 : 7,
+                weight: .semibold
+            ),
+            .foregroundColor: foreground
+        ]
+        let text = labelText as NSString
+        let textSize = text.size(withAttributes: attributes)
+        let labelWidth = ceil(textSize.width)
+        let totalWidth = stackedLabel
+            ? max(barWidth, labelWidth + 2)
+            : labelWidth + 4 + barWidth
+        let image = NSImage(
+            size: NSSize(
+                width: totalWidth,
+                height: stackedLabel ? 28 : 18
+            )
+        )
+        image.lockFocus()
+        defer { image.unlockFocus() }
+        let barX: CGFloat = stackedLabel
+            ? (totalWidth - barWidth) / 2
+            : labelWidth + 4
+        let barY: CGFloat = stackedLabel ? 15 : 5
+        let barHeight: CGFloat = 8
+        foreground.withAlphaComponent(0.22).setFill()
+        NSBezierPath(
+            roundedRect: NSRect(
+                x: barX,
+                y: barY,
+                width: barWidth,
+                height: barHeight
+            ),
+            xRadius: 3,
+            yRadius: 3
+        ).fill()
+        if let value {
+            let fillWidth = barWidth * CGFloat(value / 100)
+            if fillWidth > 0 {
+                color.setFill()
+                NSBezierPath(
+                    roundedRect: NSRect(
+                        x: barX,
+                        y: barY,
+                        width: fillWidth,
+                        height: barHeight
+                    ),
+                    xRadius: 3,
+                    yRadius: 3
+                ).fill()
+            }
+        }
+        if let marker {
+            let tick = NSBezierPath()
+            let x = barX + barWidth * min(max(marker, 0), 1)
+            tick.move(to: NSPoint(x: x, y: barY - 1))
+            tick.line(to: NSPoint(x: x, y: barY + barHeight + 1))
+            drawPaceMarkerTick(
+                tick,
+                paceStatus: paceStatus,
+                showPaceMarker: showPaceMarker,
+                isDarkMode: isDarkMode
+            )
+        }
+        let point = stackedLabel
+            ? NSPoint(
+                x: max(0, (totalWidth - textSize.width) / 2),
+                y: 1
+            )
+            : NSPoint(
+                x: 0,
+                y: (18 - textSize.height) / 2
+            )
+        text.draw(at: point, withAttributes: attributes)
+        return image
+    }
+
+    private func createProviderRingImage(
+        value: Double?,
+        providerLabel: String,
+        stateMark: String,
+        color: NSColor,
+        foreground: NSColor,
+        marker: CGFloat?,
+        paceStatus: PaceStatus?,
+        showPaceMarker: Bool,
+        isDarkMode: Bool
+    ) -> NSImage {
+        let text = (providerLabel + stateMark) as NSString
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedSystemFont(
+                ofSize: 7,
+                weight: .bold
+            ),
+            .foregroundColor: foreground
+        ]
+        let textSize = text.size(withAttributes: attributes)
+        let width: CGFloat = providerLabel.isEmpty
+            ? 18
+            : max(35, ceil(textSize.width) + 19)
+        let image = NSImage(size: NSSize(width: width, height: 18))
+        image.lockFocus()
+        defer { image.unlockFocus() }
+        let center = NSPoint(x: 9, y: 9)
+        let background = NSBezierPath()
+        background.appendArc(
+            withCenter: center,
+            radius: 6,
+            startAngle: 0,
+            endAngle: 360
+        )
+        foreground.withAlphaComponent(0.25).setStroke()
+        background.lineWidth = 2
+        background.stroke()
+        if let value, value > 0 {
+            let progress = NSBezierPath()
+            progress.appendArc(
+                withCenter: center,
+                radius: 6,
+                startAngle: 90,
+                endAngle: 90 - 360 * CGFloat(value / 100),
+                clockwise: true
+            )
+            color.setStroke()
+            progress.lineWidth = 2
+            progress.lineCapStyle = .round
+            progress.stroke()
+        }
+        if let marker {
+            let angle = (90 - 360 * min(max(marker, 0), 1))
+                * .pi / 180
+            let tick = NSBezierPath()
+            tick.move(
+                to: NSPoint(
+                    x: center.x + 4 * cos(angle),
+                    y: center.y + 4 * sin(angle)
+                )
+            )
+            tick.line(
+                to: NSPoint(
+                    x: center.x + 8 * cos(angle),
+                    y: center.y + 8 * sin(angle)
+                )
+            )
+            drawPaceMarkerTick(
+                tick,
+                paceStatus: paceStatus,
+                showPaceMarker: showPaceMarker,
+                isDarkMode: isDarkMode
+            )
+        }
+        text.draw(
+            at: NSPoint(x: 17, y: 4),
+            withAttributes: attributes
+        )
+        return image
+    }
+
+    private func createProviderCompactImage(
+        providerLabel: String,
+        stateMark: String,
+        color: NSColor,
+        foreground: NSColor,
+        paceStatus: PaceStatus?,
+        showPaceMarker: Bool
+    ) -> NSImage {
+        let text = (providerLabel + stateMark) as NSString
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedSystemFont(
+                ofSize: 8,
+                weight: .bold
+            ),
+            .foregroundColor: foreground
+        ]
+        let textSize = text.size(withAttributes: attributes)
+        let paceWidth: CGFloat =
+            showPaceMarker && paceStatus != nil ? 6 : 0
+        let image = NSImage(
+            size: NSSize(
+                width: max(15, 7 + textSize.width + paceWidth),
+                height: 18
+            )
+        )
+        image.lockFocus()
+        defer { image.unlockFocus() }
+        color.setFill()
+        NSBezierPath(
+            ovalIn: NSRect(x: 1, y: 6, width: 6, height: 6)
+        ).fill()
+        text.draw(
+            at: NSPoint(x: 8, y: (18 - textSize.height) / 2),
+            withAttributes: attributes
+        )
+        if showPaceMarker, let paceStatus {
+            paceStatus.color.setFill()
+            NSBezierPath(
+                ovalIn: NSRect(
+                    x: 9 + textSize.width,
+                    y: 7,
+                    width: 4,
+                    height: 4
+                )
+            ).fill()
+        }
+        return image
+    }
 
     /// Creates an image for a specific metric
     func createImage(

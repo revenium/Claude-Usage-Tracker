@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import UsageCore
 
 /// Compact row for selecting profiles in multi-profile display mode
 struct ProfileSelectionRow: View {
@@ -13,6 +14,8 @@ struct ProfileSelectionRow: View {
     let isSelected: Bool
     let isActive: Bool
     let onToggle: () -> Void
+    @ObservedObject private var catalogStore =
+        ProviderMenuCatalogStore.shared
 
     var body: some View {
         Button(action: onToggle) {
@@ -27,6 +30,20 @@ struct ProfileSelectionRow: View {
                     .font(DesignTokens.Typography.body)
                     .lineLimit(1)
                     .truncationMode(.tail)
+
+                Text(
+                    ProviderAppearance.forProvider(
+                        profile.providerID
+                    ).compactBadge
+                )
+                .font(.system(size: 8, weight: .bold))
+                .foregroundColor(.primary)
+                .padding(.horizontal, 4)
+                .padding(.vertical, 2)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 3)
+                        .stroke(Color.secondary, lineWidth: 1)
+                )
 
                 // Active badge
                 if isActive {
@@ -43,14 +60,22 @@ struct ProfileSelectionRow: View {
 
                 // Metric indicators (compact badges showing enabled metrics)
                 HStack(spacing: 4) {
-                    if hasSessionMetric {
-                        MetricBadge(letter: "S", color: .blue)
+                    ForEach(
+                        Array(enabledMetrics.prefix(2).enumerated()),
+                        id: \.element.metricID
+                    ) { index, metric in
+                        MetricBadge(
+                            letter: badgeLetter(
+                                for: metric,
+                                dynamicIndex: index
+                            ),
+                            color: profile.providerID == .claude
+                                ? legacyBadgeColor(for: metric)
+                                : .green
+                        )
                     }
-                    if hasWeekMetric {
-                        MetricBadge(letter: "W", color: .purple)
-                    }
-                    if hasAPIMetric {
-                        MetricBadge(letter: "A", color: .orange)
+                    if enabledMetrics.count > 2 {
+                        MetricBadge(letter: "+", color: .secondary)
                     }
                 }
             }
@@ -62,16 +87,47 @@ struct ProfileSelectionRow: View {
 
     // MARK: - Computed Properties
 
-    private var hasSessionMetric: Bool {
-        profile.iconConfig.metrics.first(where: { $0.metricType == .session })?.isEnabled ?? false
+    private var enabledMetrics: [MetricIconConfig] {
+        Self.displayedMetrics(
+            for: profile,
+            catalog: catalogStore.catalog(
+                for: profile,
+                configuration: profile.iconConfig
+                    .adaptedForProvider(profile.providerID)
+            )
+        )
     }
 
-    private var hasWeekMetric: Bool {
-        profile.iconConfig.metrics.first(where: { $0.metricType == .week })?.isEnabled ?? false
+    static func displayedMetrics(
+        for profile: Profile,
+        catalog: [ProviderMetricDescriptor]
+    ) -> [MetricIconConfig] {
+        profile.iconConfig
+            .adaptedForProvider(profile.providerID)
+            .resolvedMetrics(catalog: catalog)
     }
 
-    private var hasAPIMetric: Bool {
-        profile.iconConfig.metrics.first(where: { $0.metricType == .api })?.isEnabled ?? false
+    private func badgeLetter(
+        for metric: MetricIconConfig,
+        dynamicIndex: Int
+    ) -> String {
+        switch metric.metricID.legacyMetricType {
+        case .session: return "S"
+        case .week: return "W"
+        case .api: return "A"
+        case nil: return "\(dynamicIndex + 1)"
+        }
+    }
+
+    private func legacyBadgeColor(
+        for metric: MetricIconConfig
+    ) -> Color {
+        switch metric.metricID.legacyMetricType {
+        case .session: return .blue
+        case .week: return .purple
+        case .api: return .orange
+        case nil: return .green
+        }
     }
 }
 

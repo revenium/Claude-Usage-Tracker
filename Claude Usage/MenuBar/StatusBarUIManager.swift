@@ -7,6 +7,7 @@
 
 import Cocoa
 import Combine
+import UsageCore
 
 /// Manages multiple menu bar status items for different metrics
 final class StatusBarUIManager {
@@ -14,8 +15,12 @@ final class StatusBarUIManager {
     // Using a constant instead of UUID() prevents a new random key on every call to setupMultiProfile.
     private static let multiProfileDefaultPlaceholderID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
 
-    // Dictionary to hold multiple status items keyed by metric type (single profile mode)
-    private var statusItems: [MenuBarMetricType: NSStatusItem] = [:]
+    // Stable provider-neutral metric identity prevents dynamic windows from
+    // colliding with the legacy Claude session/week buckets.
+    private var statusItems: [MenuBarMetricID: NSStatusItem] = [:]
+    private var singleMetricOrder: [MenuBarMetricID] = []
+    private var statusItemIdentities:
+        [ObjectIdentifier: ProviderStatusItemIdentity] = [:]
 
     // Dictionary to hold status items keyed by profile ID (multi-profile mode)
     private var multiProfileStatusItems: [UUID: NSStatusItem] = [:]
@@ -38,6 +43,52 @@ final class StatusBarUIManager {
 
     init() {}
 
+    static func autosaveName(
+        for metricID: MenuBarMetricID,
+        isLegacyPlaceholder: Bool = false
+    ) -> String {
+        if isLegacyPlaceholder {
+            return "claude-usage-tracker.session"
+        }
+        if let legacy = metricID.legacyMetricType {
+            return "claude-usage-tracker.\(legacy.rawValue)"
+        }
+        return "claude-usage-tracker.metric.\(metricID.stableValue)"
+    }
+
+    static func desiredProviderMetricIDs(
+        for presentation: ProviderMenuPresentation
+    ) -> [MenuBarMetricID] {
+        let metricIDs = presentation.metrics.map(\.id)
+        return metricIDs.isEmpty
+            ? [.providerPlaceholder(presentation.identity.providerID)]
+            : metricIDs
+    }
+
+    /// A dynamic status item must remain identifiable without relying on
+    /// color or the optional long-name setting. Include the provider and
+    /// selected window; qualify duplicate window names with their group.
+    static func providerMetricVisualLabel(
+        for metric: ProviderMetricPresentation?,
+        in presentation: ProviderMenuPresentation,
+        showLongProviderName: Bool
+    ) -> String {
+        let provider = showLongProviderName
+            ? presentation.appearance.displayName
+            : presentation.appearance.compactBadge
+        guard let metric else { return provider }
+        let hasDuplicateWindowName = presentation.metrics.contains {
+            $0.id != metric.id
+                && $0.descriptor.metricName
+                    == metric.descriptor.metricName
+        }
+        let window = hasDuplicateWindowName
+            ? "\(metric.descriptor.groupName)/"
+                + metric.descriptor.metricName
+            : metric.descriptor.metricName
+        return "\(provider)·\(window)"
+    }
+
     // MARK: - Setup
 
     /// Sets up status bar items based on configuration
@@ -50,7 +101,10 @@ final class StatusBarUIManager {
             // No credentials/metrics - show default app logo
             let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
             // Stable identifier so Bartender and similar tools can reliably track this item
-            statusItem.autosaveName = "claude-usage-tracker.session"
+            statusItem.autosaveName = Self.autosaveName(
+                for: .claudeSession,
+                isLegacyPlaceholder: true
+            )
             // Override a persisted hidden state from a prior Command-drag.
             statusItem.isVisible = true
 
@@ -65,14 +119,16 @@ final class StatusBarUIManager {
             }
 
             // Use a special key to identify the default icon
-            statusItems[.session] = statusItem  // Use session as placeholder key
+            statusItems[.claudeSession] = statusItem
             LoggingService.shared.logUIEvent("Status bar initialized with default app logo (no credentials)")
         } else {
             // Create status items for enabled metrics
             for metricConfig in config.enabledMetrics {
                 let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
                 // Stable identifier so Bartender and similar tools can reliably track this item
-                statusItem.autosaveName = "claude-usage-tracker.\(metricConfig.metricType.rawValue)"
+                statusItem.autosaveName = Self.autosaveName(
+                    for: metricConfig.metricID
+                )
                 statusItem.isVisible = true
 
                 if let button = statusItem.button {
@@ -80,14 +136,21 @@ final class StatusBarUIManager {
                     button.target = target
                     button.sendAction(on: [.leftMouseUp, .rightMouseUp])
                 } else {
-                    LoggingService.shared.logWarning("Status bar button is nil for \(metricConfig.metricType.displayName) - screens: \(NSScreen.screens.count)")
+                    LoggingService.shared.logWarning(
+                        "Status bar button is nil for "
+                            + "\(metricConfig.metricID.stableValue) - "
+                            + "screens: \(NSScreen.screens.count)"
+                    )
                 }
 
-                statusItems[metricConfig.metricType] = statusItem
+                statusItems[metricConfig.metricID] = statusItem
             }
 
             LoggingService.shared.logUIEvent("Status bar initialized with \(config.enabledMetrics.count) metrics")
         }
+        singleMetricOrder = config.enabledMetrics.isEmpty
+            ? [.claudeSession]
+            : config.enabledMetrics.map(\.metricID)
 
         observeAppearanceChanges()
     }
@@ -95,12 +158,12 @@ final class StatusBarUIManager {
     /// Updates status bar items based on new configuration (incremental approach)
     func updateConfiguration(target: AnyObject, action: Selector, config: MenuBarIconConfiguration) {
         // Determine what the new set of items should be
-        let newMetricTypes: Set<MenuBarMetricType>
+        let newMetricTypes: Set<MenuBarMetricID>
         if config.enabledMetrics.isEmpty {
             // No credentials/metrics - show default app logo using .session as placeholder
-            newMetricTypes = [.session]
+            newMetricTypes = [.claudeSession]
         } else {
-            newMetricTypes = Set(config.enabledMetrics.map { $0.metricType })
+            newMetricTypes = Set(config.enabledMetrics.map(\.metricID))
         }
 
         let currentMetricTypes = Set(statusItems.keys)
@@ -110,12 +173,20 @@ final class StatusBarUIManager {
         for metricType in itemsToRemove {
             if let statusItem = statusItems[metricType] {
                 if let button = statusItem.button {
+                    lastImageData.removeValue(
+                        forKey: ObjectIdentifier(button)
+                    )
+                    statusItemIdentities.removeValue(
+                        forKey: ObjectIdentifier(button)
+                    )
                     button.image = nil
                     button.action = nil
                     button.target = nil
                 }
                 NSStatusBar.system.removeStatusItem(statusItem)
-                LoggingService.shared.logUIEvent("Removed status item for \(metricType.displayName)")
+                LoggingService.shared.logUIEvent(
+                    "Removed status item for \(metricType.stableValue)"
+                )
             }
             statusItems.removeValue(forKey: metricType)
         }
@@ -125,32 +196,199 @@ final class StatusBarUIManager {
         for metricType in itemsToAdd {
             let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
             // Stable identifier so Bartender and similar tools can reliably track this item
-            statusItem.autosaveName = "claude-usage-tracker.\(metricType.rawValue)"
+            statusItem.autosaveName = Self.autosaveName(
+                for: metricType,
+                isLegacyPlaceholder:
+                    config.enabledMetrics.isEmpty
+                        && metricType == .claudeSession
+            )
             statusItem.isVisible = true
 
             if let button = statusItem.button {
                 button.action = action
                 button.target = target
                 button.sendAction(on: [.leftMouseUp, .rightMouseUp])
-                if metricType == .session {
+                if metricType == .claudeSession {
                     // Default logo placeholder
                     button.title = ""
                 }
             }
 
             statusItems[metricType] = statusItem
-            LoggingService.shared.logUIEvent("Created status item for \(metricType.displayName)")
+            LoggingService.shared.logUIEvent(
+                "Created status item for \(metricType.stableValue)"
+            )
         }
 
         // Step 3: Items that already exist don't need recreation, just keep them
         // Their images will be updated by updateAllButtons() or updateButton()
+        singleMetricOrder = config.enabledMetrics.isEmpty
+            ? [.claudeSession]
+            : config.enabledMetrics.map(\.metricID)
 
         LoggingService.shared.logUIEvent("Status bar configuration updated: removed=\(itemsToRemove.count), added=\(itemsToAdd.count), kept=\(currentMetricTypes.intersection(newMetricTypes).count)")
+    }
+
+    /// Reconciles and renders a provider-neutral single-profile catalog.
+    /// Dynamic metrics are keyed exclusively by `MenuBarMetricID`; the legacy
+    /// `metricType` compatibility facade is intentionally not used here.
+    func updateProviderSingle(
+        presentation: ProviderMenuPresentation,
+        target: AnyObject,
+        action: Selector,
+        config: MenuBarIconConfiguration
+    ) {
+        // A display-mode transition must remove the one-item-per-profile
+        // collection before reconciling the one-item-per-metric collection.
+        if isMultiProfileMode {
+            cleanup()
+        }
+        isMultiProfileMode = false
+        let desiredMetricIDs = presentation.metrics.map(\.id)
+        let reconciledIDs = Self.desiredProviderMetricIDs(
+            for: presentation
+        )
+        let desiredIDs = Set(reconciledIDs)
+        let currentIDs = Set(statusItems.keys)
+
+        for metricID in currentIDs.subtracting(desiredIDs) {
+            guard let item = statusItems.removeValue(forKey: metricID)
+            else { continue }
+            if let button = item.button {
+                lastImageData.removeValue(forKey: ObjectIdentifier(button))
+                statusItemIdentities.removeValue(
+                    forKey: ObjectIdentifier(button)
+                )
+                button.image = nil
+                button.action = nil
+                button.target = nil
+            }
+            NSStatusBar.system.removeStatusItem(item)
+        }
+
+        let idsToAdd = desiredIDs.subtracting(currentIDs)
+        for metricID in reconciledIDs where idsToAdd.contains(metricID) {
+            let item = NSStatusBar.system.statusItem(
+                withLength: NSStatusItem.variableLength
+            )
+            item.autosaveName = desiredMetricIDs.isEmpty
+                ? "claude-usage-tracker.provider."
+                    + "\(presentation.identity.profileID.uuidString).default"
+                : Self.autosaveName(for: metricID)
+            item.isVisible = true
+            if let button = item.button {
+                button.action = action
+                button.target = target
+                button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+            }
+            statusItems[metricID] = item
+        }
+        singleMetricOrder = reconciledIDs
+
+        for (index, metricID) in (
+            reconciledIDs
+        ).enumerated() {
+            guard let item = statusItems[metricID],
+                  let button = item.button else {
+                continue
+            }
+            item.autosaveName = desiredMetricIDs.isEmpty
+                ? "claude-usage-tracker.provider."
+                    + "\(presentation.identity.profileID.uuidString).default"
+                : Self.autosaveName(for: metricID)
+            let metric = presentation.metrics.first { $0.id == metricID }
+            let identity = ProviderStatusItemIdentity(
+                profileID: presentation.identity.profileID,
+                providerID: presentation.identity.providerID,
+                providerRevision: presentation.identity.providerRevision,
+                metricID: metric?.id
+            )
+            statusItemIdentities[ObjectIdentifier(button)] = identity
+            let menuBarIsDark = button.effectiveAppearance.bestMatch(
+                from: [.darkAqua, .aqua]
+            ) == .darkAqua
+            let metricConfig = metric.flatMap {
+                config.config(for: $0.id)
+            } ?? MetricIconConfig(
+                metricID: metricID,
+                isEnabled: metric != nil
+            )
+            let image = renderer.createProviderMetricImage(
+                metric,
+                appearance: presentation.appearance,
+                metricConfig: metricConfig,
+                globalConfig: config,
+                isDarkMode: menuBarIsDark,
+                showProviderLabel: true,
+                visualLabel: Self.providerMetricVisualLabel(
+                    for: metric,
+                    in: presentation,
+                    showLongProviderName: config.showIconNames
+                ),
+                placeholderState: presentation.state
+            )
+            image.isTemplate = config.colorMode == .monochrome
+                && !config.showPaceMarker
+            setButtonImage(button, image: image)
+            let accessibility = metric?.accessibilityLabel
+                ?? "\(presentation.appearance.displayName), "
+                    + presentation.state.accessibilityText
+            let activeAccessibility = accessibility + ", active profile"
+            button.setAccessibilityLabel(activeAccessibility)
+            button.toolTip = activeAccessibility
+            button.tag = index
+        }
+
+        if appearanceObservers.isEmpty {
+            observeAppearanceChanges()
+        }
+    }
+
+    /// Associates characterized legacy Claude status items with their captured
+    /// profile identity without changing their renderer or pixel output.
+    func bindLegacySingleProfile(_ profile: Profile) {
+        for (metricID, statusItem) in statusItems {
+            guard let button = statusItem.button else { continue }
+            statusItemIdentities[ObjectIdentifier(button)] =
+                ProviderStatusItemIdentity(
+                    profileID: profile.id,
+                    providerID: profile.providerID,
+                    providerRevision: profile.providerRevision,
+                    metricID: metricID
+                )
+        }
+    }
+
+    func statusIdentity(
+        for sender: NSStatusBarButton?
+    ) -> ProviderStatusItemIdentity? {
+        guard let sender else { return nil }
+        return statusItemIdentities[ObjectIdentifier(sender)]
+    }
+
+    func autosaveName(
+        for sender: NSStatusBarButton?
+    ) -> String? {
+        guard let sender else { return nil }
+        return statusItems.values.first {
+            $0.button === sender
+        }?.autosaveName
+            ?? multiProfileStatusItems.values.first {
+                $0.button === sender
+            }?.autosaveName
+    }
+
+    var orderedSingleButtonsForTesting: [NSStatusBarButton] {
+        singleMetricOrder.compactMap {
+            statusItems[$0]?.button
+        }
     }
 
     func cleanup() {
         appearanceObservers.forEach { $0.invalidate() }
         appearanceObservers.removeAll()
+        appearanceDebounceTimer?.invalidate()
+        appearanceDebounceTimer = nil
 
         // Clean up single profile status items
         for (_, statusItem) in statusItems {
@@ -164,6 +402,8 @@ final class StatusBarUIManager {
             NSStatusBar.system.removeStatusItem(statusItem)
         }
         statusItems.removeAll()
+        singleMetricOrder.removeAll()
+        statusItemIdentities.removeAll()
 
         // Clean up multi-profile status items
         for (_, statusItem) in multiProfileStatusItems {
@@ -227,6 +467,15 @@ final class StatusBarUIManager {
                 }
 
                 multiProfileStatusItems[profile.id] = statusItem
+                if let button = statusItem.button {
+                    statusItemIdentities[ObjectIdentifier(button)] =
+                        ProviderStatusItemIdentity(
+                            profileID: profile.id,
+                            providerID: profile.providerID,
+                            providerRevision: profile.providerRevision,
+                            metricID: nil
+                        )
+                }
             }
 
             LoggingService.shared.logUIEvent("Multi-profile: Created \(selectedProfiles.count) status items")
@@ -254,6 +503,9 @@ final class StatusBarUIManager {
             if let statusItem = multiProfileStatusItems.removeValue(forKey: profileID) {
                 if let button = statusItem.button {
                     lastImageData.removeValue(forKey: ObjectIdentifier(button))
+                    statusItemIdentities.removeValue(
+                        forKey: ObjectIdentifier(button)
+                    )
                     button.image = nil
                     button.action = nil
                     button.target = nil
@@ -288,6 +540,15 @@ final class StatusBarUIManager {
                     button.sendAction(on: [.leftMouseUp, .rightMouseUp])
                 }
                 multiProfileStatusItems[profile.id] = statusItem
+                if let button = statusItem.button {
+                    statusItemIdentities[ObjectIdentifier(button)] =
+                        ProviderStatusItemIdentity(
+                            profileID: profile.id,
+                            providerID: profile.providerID,
+                            providerRevision: profile.providerRevision,
+                            metricID: nil
+                        )
+                }
                 LoggingService.shared.logUIEvent("Multi-profile: Added status item for \(profile.name)")
             }
         }
@@ -317,7 +578,9 @@ final class StatusBarUIManager {
     func updateMultiProfileButtons(profiles: [Profile], config: MultiProfileDisplayConfig, activeProfileId: UUID? = nil) {
         guard isMultiProfileMode else { return }
 
-        for profile in profiles where profile.isSelectedForDisplay {
+        for profile in profiles
+        where profile.isSelectedForDisplay
+            && profile.providerID == .claude {
             guard let statusItem = multiProfileStatusItems[profile.id],
                   let button = statusItem.button else {
                 continue
@@ -475,6 +738,145 @@ final class StatusBarUIManager {
                 image.isTemplate = useMonochrome && !config.showPaceMarker
                 button.image = image
             }
+            statusItemIdentities[ObjectIdentifier(button)] =
+                ProviderStatusItemIdentity(
+                    profileID: profile.id,
+                    providerID: profile.providerID,
+                    providerRevision: profile.providerRevision,
+                    metricID: nil
+                )
+            let appearance = ProviderAppearance.forProvider(
+                profile.providerID
+            )
+            let activeText = isActive ? "active profile" : "not active"
+            let label = "\(appearance.displayName), \(profile.name), "
+                + "\(Int(sessionDisplay.rounded()))% "
+                + "\(showRemaining ? "remaining" : "used"), "
+                + activeText
+            button.setAccessibilityLabel(label)
+            button.toolTip = label
+        }
+    }
+
+    /// Overrides non-Claude multi-profile buttons with provider-neutral
+    /// dynamic metrics while leaving characterized Claude icons untouched.
+    func updateProviderMultiProfileButtons(
+        presentations: [ProviderMenuPresentation],
+        profiles: [Profile],
+        config: MultiProfileDisplayConfig,
+        activeProfileID: UUID?
+    ) {
+        updateMultiProfileButtons(
+            profiles: profiles,
+            config: config,
+            activeProfileId: activeProfileID
+        )
+        for presentation in presentations
+        where presentation.identity.providerID != .claude {
+            guard let item =
+                    multiProfileStatusItems[presentation.identity.profileID],
+                  let button = item.button else {
+                continue
+            }
+            let menuBarIsDark = button.effectiveAppearance.bestMatch(
+                from: [.darkAqua, .aqua]
+            ) == .darkAqua
+            let profile = profiles.first {
+                $0.id == presentation.identity.profileID
+            }
+            var iconConfig = profile?.iconConfig.adaptedForProvider(
+                presentation.identity.providerID
+            ) ?? .default(
+                for: presentation.identity.providerID
+            )
+            iconConfig.colorMode = config.useSystemColor
+                ? .monochrome
+                : .multiColor
+            iconConfig.showRemainingPercentage =
+                config.showRemainingPercentage
+            iconConfig.showTimeMarker = config.showTimeMarker
+            iconConfig.showPaceMarker = config.showPaceMarker
+            iconConfig.usePaceColoring = config.usePaceColoring
+            let renderedMetric =
+                ProviderMenuPresentationBuilder.metric(
+                    presentation.metric,
+                    applying: config
+                )
+            var metricConfig = renderedMetric.flatMap {
+                iconConfig.config(for: $0.id)
+            } ?? MetricIconConfig(
+                metricID: renderedMetric?.id
+                    ?? .providerPlaceholder(
+                        presentation.identity.providerID
+                    ),
+                isEnabled: renderedMetric != nil
+            )
+            switch config.iconStyle {
+            case .concentric:
+                metricConfig.iconStyle = .icon
+            case .progressBar:
+                metricConfig.iconStyle = .progressBar
+            case .compact:
+                metricConfig.iconStyle = .compact
+            case .percentage:
+                metricConfig.iconStyle = .percentageOnly
+            }
+            let profileInitial = config.showProfileLabel
+                ? String(presentation.profileName.prefix(1)).uppercased()
+                : ""
+            let renderAppearance = ProviderAppearance(
+                providerID: presentation.appearance.providerID,
+                displayName: presentation.appearance.displayName,
+                compactBadge:
+                    presentation.appearance.compactBadge
+                        + profileInitial,
+                symbolName: presentation.appearance.symbolName
+            )
+            let baseVisualLabel = Self.providerMetricVisualLabel(
+                for: renderedMetric,
+                in: presentation,
+                showLongProviderName: false
+            )
+            let visualLabel = profileInitial.isEmpty
+                ? baseVisualLabel
+                : baseVisualLabel.replacingOccurrences(
+                    of: presentation.appearance.compactBadge,
+                    with: presentation.appearance.compactBadge
+                        + profileInitial,
+                    options: [.anchored]
+                )
+            let image = renderer.createProviderMetricImage(
+                renderedMetric,
+                appearance: renderAppearance,
+                metricConfig: metricConfig,
+                globalConfig: iconConfig,
+                isDarkMode: menuBarIsDark,
+                showProviderLabel: true,
+                visualLabel: visualLabel,
+                placeholderState: presentation.state
+            )
+            image.isTemplate = config.useSystemColor
+                && !iconConfig.showPaceMarker
+            if presentation.identity.profileID == activeProfileID {
+                let underlined = addGreenUnderline(to: image)
+                underlined.isTemplate = false
+                setButtonImage(button, image: underlined)
+            } else {
+                setButtonImage(button, image: image)
+            }
+            statusItemIdentities[ObjectIdentifier(button)] =
+                presentation.identity
+            let activeText =
+                presentation.identity.profileID == activeProfileID
+                    ? "active profile"
+                    : "not active"
+            let label = "\(presentation.profileName), "
+                + (presentation.metric?.accessibilityLabel
+                    ?? "\(presentation.appearance.displayName), "
+                        + presentation.state.accessibilityText)
+                + ", \(activeText)"
+            button.setAccessibilityLabel(label)
+            button.toolTip = label
         }
     }
 
@@ -532,7 +934,7 @@ final class StatusBarUIManager {
         let hasUsageCredentials = profile?.hasUsageCredentials ?? false
         if !hasUsageCredentials || config.enabledMetrics.isEmpty {
             // Show default app logo
-            if let statusItem = statusItems[.session],  // We use .session as placeholder key
+            if let statusItem = statusItems[.claudeSession],
                let button = statusItem.button {
                 // Get actual menu bar appearance from the button
                 let menuBarIsDark = button.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
@@ -545,7 +947,7 @@ final class StatusBarUIManager {
 
         // Normal metric display
         for metricConfig in config.enabledMetrics {
-            guard let statusItem = statusItems[metricConfig.metricType],
+            guard let statusItem = statusItems[metricConfig.metricID],
                   let button = statusItem.button else {
                 continue
             }
@@ -578,7 +980,13 @@ final class StatusBarUIManager {
         usage: ClaudeUsage,
         apiUsage: APIUsage?
     ) {
-        guard let statusItem = statusItems[metricType],
+        let metricID: MenuBarMetricID
+        switch metricType {
+        case .session: metricID = .claudeSession
+        case .week: metricID = .claudeWeek
+        case .api: metricID = .claudeAPI
+        }
+        guard let statusItem = statusItems[metricID],
               let button = statusItem.button else {
             return
         }
@@ -612,16 +1020,28 @@ final class StatusBarUIManager {
 
     /// Get button for a specific metric (used for popover positioning)
     func button(for metricType: MenuBarMetricType) -> NSStatusBarButton? {
-        return statusItems[metricType]?.button
+        let metricID: MenuBarMetricID
+        switch metricType {
+        case .session: metricID = .claudeSession
+        case .week: metricID = .claudeWeek
+        case .api: metricID = .claudeAPI
+        }
+        return statusItems[metricID]?.button
     }
 
     /// Get the first enabled metric's button (for backwards compatibility)
     var primaryButton: NSStatusBarButton? {
         let config = DataStore.shared.loadMenuBarIconConfiguration()
-        guard let firstMetric = config.enabledMetrics.first else {
-            return nil
+        if let firstMetric = config.enabledMetrics.first,
+           let button = statusItems[firstMetric.metricID]?.button {
+            return button
         }
-        return statusItems[firstMetric.metricType]?.button
+        for metricID in singleMetricOrder {
+            if let button = statusItems[metricID]?.button {
+                return button
+            }
+        }
+        return statusItems.values.compactMap(\.button).first
     }
 
     /// Find which metric type owns the given button (sender)
@@ -629,9 +1049,9 @@ final class StatusBarUIManager {
         guard let sender = sender else { return nil }
 
         // Find which status item has this button
-        for (metricType, statusItem) in statusItems {
+        for (metricID, statusItem) in statusItems {
             if statusItem.button === sender {
-                return metricType
+                return metricID.legacyMetricType
             }
         }
         return nil
@@ -680,7 +1100,13 @@ final class StatusBarUIManager {
               let data = cgImage.dataProvider?.data else {
             return nil
         }
-        return data as Data
+        let length = CFDataGetLength(data)
+        guard length > 0, let bytes = CFDataGetBytePtr(data) else {
+            return Data()
+        }
+        // `CGDataProvider.data` may be backed by provider-owned storage.
+        // Copy the bytes so the cache never outlives that provider.
+        return Data(bytes: bytes, count: length)
     }
 
     /// Debounces appearance change notifications so multiple displays/buttons

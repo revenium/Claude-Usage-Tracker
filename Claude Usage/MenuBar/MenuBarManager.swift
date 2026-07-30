@@ -224,6 +224,7 @@ class MenuBarManager: NSObject, ObservableObject {
     private var statusItem: NSStatusItem?  // Legacy - kept for backwards compatibility
     private var statusBarUIManager: StatusBarUIManager?
     private var refreshTimer: Timer?
+    private var freshnessDeadlineTimer: Timer?
     @Published private(set) var profileUsagePresentations:
         [UUID: PresentationSnapshot] = [:]
     @Published private(set) var usage: ClaudeUsage = .empty
@@ -277,6 +278,12 @@ class MenuBarManager: NSObject, ObservableObject {
 
     // Track which button is currently showing the popover
     private weak var currentPopoverButton: NSStatusBarButton?
+    private var contextMenuTarget: ProviderStatusItemIdentity?
+
+    /// Compile-safe P10 composition-root seam for typed settings navigation.
+    /// The existing settings window remains the fallback until installed.
+    var settingsNavigationHandler:
+        ((SettingsNavigationDestination) -> Void)?
 
     private let dataStore = DataStore.shared
     private let networkMonitor = NetworkMonitor.shared
@@ -405,6 +412,10 @@ class MenuBarManager: NSObject, ObservableObject {
             .sink { [weak self] snapshots in
                 guard let self else { return }
                 self.profileUsagePresentations = snapshots
+                ProviderMenuCatalogStore.shared.publish(
+                    profiles: self.profileManager.profiles,
+                    snapshots: snapshots
+                )
                 guard let snapshot =
                         Self.selectDisplayedUsagePresentation(
                             displayMode:
@@ -541,6 +552,12 @@ class MenuBarManager: NSObject, ObservableObject {
                     for: .codex
                 )
         }
+    }
+
+    private func effectiveIconConfiguration(
+        for profile: Profile
+    ) -> MenuBarIconConfiguration {
+        profile.iconConfig.adaptedForProvider(profile.providerID)
     }
 
     nonisolated static func usageProjectionTarget(
@@ -949,29 +966,44 @@ class MenuBarManager: NSObject, ObservableObject {
             setupMultiProfileMode(refreshTrigger: nil)
         } else {
             // Single profile mode - setup with active profile's config
-            let config = profileManager.activeProfile?.iconConfig ?? .default
-            let canRefresh = profileManager.activeProfile.map(
-                canAttemptUsageRefresh
-            ) ?? false
-
-            // If no usage credentials, create empty config to show default logo
-            let displayConfig: MenuBarIconConfiguration
-            if !canRefresh {
-                displayConfig = MenuBarIconConfiguration(
-                    colorMode: config.colorMode,
-                    singleColorHex: config.singleColorHex,
-                    showIconNames: config.showIconNames,
-                    metrics: config.metrics.map { metric in
-                        var updatedMetric = metric
-                        updatedMetric.isEnabled = false
-                        return updatedMetric
-                    }
+            if let profile = profileManager.activeProfile,
+               profile.providerID != .claude {
+                updateProviderSingleDisplay(
+                    profile: profile,
+                    config: effectiveIconConfiguration(for: profile)
                 )
             } else {
-                displayConfig = config
-            }
+                let config = profileManager.activeProfile.map {
+                    effectiveIconConfiguration(for: $0)
+                } ?? .default
+                let canRefresh = profileManager.activeProfile.map(
+                    canAttemptUsageRefresh
+                ) ?? false
 
-            statusBarUIManager?.setup(target: self, action: #selector(togglePopover), config: displayConfig)
+                // Preserve the characterized Claude placeholder and autosave
+                // behavior when usage credentials are unavailable.
+                let displayConfig: MenuBarIconConfiguration
+                if !canRefresh {
+                    displayConfig = MenuBarIconConfiguration(
+                        colorMode: config.colorMode,
+                        singleColorHex: config.singleColorHex,
+                        showIconNames: config.showIconNames,
+                        metrics: config.metrics.map { metric in
+                            var updatedMetric = metric
+                            updatedMetric.isEnabled = false
+                            return updatedMetric
+                        }
+                    )
+                } else {
+                    displayConfig = config
+                }
+
+                statusBarUIManager?.setup(
+                    target: self,
+                    action: #selector(togglePopover),
+                    config: displayConfig
+                )
+            }
         }
 
         // Setup popover
@@ -1100,6 +1132,8 @@ class MenuBarManager: NSObject, ObservableObject {
         ShortcutManager.shared.stopListening()
         refreshTimer?.invalidate()
         refreshTimer = nil
+        freshnessDeadlineTimer?.invalidate()
+        freshnessDeadlineTimer = nil
         networkMonitor.stopMonitoring()
         autoStartService.stop()
         profileUsagePresentations.removeAll()
@@ -1161,6 +1195,7 @@ class MenuBarManager: NSObject, ObservableObject {
         statusItem = nil
         statusBarUIManager?.cleanup()
         statusBarUIManager = nil
+        contextMenuTarget = nil
 
         // Clean up history tracking dictionaries to prevent memory leaks
         lastKnownSessionResetTime.removeAll()
@@ -1270,13 +1305,12 @@ class MenuBarManager: NSObject, ObservableObject {
             // assign new internal window IDs even when autosaveNames are identical.  Tools like
             // Bartender / Ice track items by those IDs, so rebuilding defeats the static-ID goal.
             // The set of displayed profiles hasn't changed; only the data needs refreshing.
-            let config = profileManager.multiProfileConfig
-            // Use profile.id (the parameter) rather than profileManager.activeProfile?.id to
-            // avoid a TOCTOU race where the published activeProfile may not yet reflect the switch.
-            statusBarUIManager?.updateMultiProfileButtons(profiles: profileManager.profiles, config: config, activeProfileId: profile.id)
+            updateAllStatusBarIcons()
         } else {
             // Single profile mode - update menu bar configuration
-            updateMenuBarDisplay(with: profile.iconConfig)
+            updateMenuBarDisplay(
+                with: effectiveIconConfiguration(for: profile)
+            )
         }
 
         // 4. Recreate popover with new profile data
@@ -1319,6 +1353,15 @@ class MenuBarManager: NSObject, ObservableObject {
             return
         }
 
+        if let profile = profileManager.activeProfile,
+           profile.providerID != .claude {
+            updateProviderSingleDisplay(
+                profile: profile,
+                config: config.adaptedForProvider(profile.providerID)
+            )
+            return
+        }
+
         // Check if active profile has usage credentials (not just CLI)
         let canRefresh = profileManager.activeProfile.map(
             canAttemptUsageRefresh
@@ -1352,6 +1395,27 @@ class MenuBarManager: NSObject, ObservableObject {
         DispatchQueue.main.async { [weak self] in
             self?.updateAllStatusBarIcons()
         }
+    }
+
+    private func updateProviderSingleDisplay(
+        profile: Profile,
+        config: MenuBarIconConfiguration
+    ) {
+        let now = Date()
+        let presentation =
+            ProviderMenuPresentationBuilder.presentation(
+                profile: profile,
+                snapshot: profileUsagePresentations[profile.id],
+                now: now,
+                isActive: true
+            )
+        statusBarUIManager?.updateProviderSingle(
+            presentation: presentation,
+            target: self,
+            action: #selector(togglePopover),
+            config: config
+        )
+        scheduleFreshnessDeadline(for: [presentation], now: now)
     }
 
     private func restartAutoRefreshWithInterval(_ interval: TimeInterval) {
@@ -1388,11 +1452,16 @@ class MenuBarManager: NSObject, ObservableObject {
         let contentView = PopoverContentView(
             manager: self,
             onRefresh: { [weak self] in
-                self?.refreshUsage()
+                guard let self else { return }
+                self.refreshPopover(
+                    target: self.popoverActionTarget()
+                )
             },
             onPreferences: { [weak self] in
-                self?.closePopoverOrWindow()
-                self?.preferencesClicked()
+                guard let self else { return }
+                self.openPopoverSettings(
+                    target: self.popoverActionTarget()
+                )
             }
         )
 
@@ -1400,6 +1469,61 @@ class MenuBarManager: NSObject, ObservableObject {
         hostingController.preferredContentSize = Constants.WindowSizes.popoverSize
         hostingController.sizingOptions = .preferredContentSize
         return hostingController
+    }
+
+    private func popoverActionTarget() -> ProviderStatusItemIdentity? {
+        let profileID = profileManager.displayMode == .multi
+            ? clickedProfileId ?? profileManager.activeProfile?.id
+            : profileManager.activeProfile?.id
+        guard let profileID,
+              let profile = profileManager.profiles.first(
+                where: { $0.id == profileID }
+              ) else {
+            return nil
+        }
+        return ProviderStatusItemIdentity(
+            profileID: profile.id,
+            providerID: profile.providerID,
+            providerRevision: profile.providerRevision,
+            metricID: nil
+        )
+    }
+
+    private func refreshPopover(
+        target: ProviderStatusItemIdentity?
+    ) {
+        guard let target,
+              let profile = currentProfile(for: target) else {
+            return
+        }
+        lastRefreshTriggerTime = Date()
+        refreshRuntime.refresh(profiles: [profile], trigger: .manual)
+    }
+
+    private func openPopoverSettings(
+        target: ProviderStatusItemIdentity?
+    ) {
+        guard let target,
+              currentProfile(for: target) != nil else {
+            return
+        }
+        if let destination = Self.popoverSettingsDestination(
+            for: target
+        ) {
+            navigateToSettings(destination)
+        } else {
+            // Preserve the characterized Claude Preferences behavior.
+            closePopoverOrWindow()
+            preferencesClicked()
+        }
+    }
+
+    nonisolated static func popoverSettingsDestination(
+        for target: ProviderStatusItemIdentity
+    ) -> SettingsNavigationDestination? {
+        target.providerID == .claude
+            ? nil
+            : .providerAccount(profileID: target.profileID)
     }
 
     @objc private func togglePopover(_ sender: Any?) {
@@ -1423,10 +1547,22 @@ class MenuBarManager: NSObject, ObservableObject {
         }
 
         guard let button = clickedButton else { return }
+        if let identity = statusBarUIManager?.statusIdentity(for: button),
+           !ProviderMenuPresentationBuilder.isStillCurrent(
+                identity,
+                profiles: profileManager.profiles
+           ) {
+            LoggingService.shared.logWarning(
+                "Ignored status-item action for stale provider identity"
+            )
+            return
+        }
 
         // In multi-profile mode, determine which profile was clicked
         if statusBarUIManager?.isInMultiProfileMode == true,
-           let profileId = statusBarUIManager?.profileId(for: button),
+           let profileId =
+                statusBarUIManager?.statusIdentity(for: button)?.profileID
+                    ?? statusBarUIManager?.profileId(for: button),
            let profile = profileManager.profiles.first(where: { $0.id == profileId }) {
             clickedProfileId = profileId
             let snapshot = refreshRuntime.presentationStore.snapshot(
@@ -1539,22 +1675,212 @@ class MenuBarManager: NSObject, ObservableObject {
         return menu
     }
 
+    static func makeProviderContextMenu(
+        presentation: ProviderMenuPresentation,
+        target: AnyObject,
+        activateAction: Selector,
+        refreshAction: Selector,
+        accountSettingsAction: Selector,
+        appearanceAction: Selector,
+        manageProfilesAction: Selector,
+        quitAction: Selector
+    ) -> NSMenu {
+        let menu = NSMenu()
+        let heading = NSMenuItem(
+            title: "\(presentation.appearance.displayName) — "
+                + presentation.profileName,
+            action: nil,
+            keyEquivalent: ""
+        )
+        heading.isEnabled = false
+        menu.addItem(heading)
+        if presentation.actions.contains(where: {
+            $0.kind == .activate
+        }) {
+            let activate = NSMenuItem(
+                title: "Make Active",
+                action: activateAction,
+                keyEquivalent: ""
+            )
+            activate.target = target
+            menu.addItem(activate)
+        }
+        let refresh = NSMenuItem(
+            title: "common.refresh".localized,
+            action: refreshAction,
+            keyEquivalent: ""
+        )
+        refresh.target = target
+        menu.addItem(refresh)
+        menu.addItem(.separator())
+
+        let account = NSMenuItem(
+            title: "\(presentation.appearance.displayName) Account…",
+            action: accountSettingsAction,
+            keyEquivalent: ""
+        )
+        account.target = target
+        menu.addItem(account)
+        let appearance = NSMenuItem(
+            title: "Appearance…",
+            action: appearanceAction,
+            keyEquivalent: ""
+        )
+        appearance.target = target
+        menu.addItem(appearance)
+        let profiles = NSMenuItem(
+            title: "Manage Profiles…",
+            action: manageProfilesAction,
+            keyEquivalent: ""
+        )
+        profiles.target = target
+        menu.addItem(profiles)
+        menu.addItem(.separator())
+        let quit = NSMenuItem(
+            title: "common.quit".localized,
+            action: quitAction,
+            keyEquivalent: "q"
+        )
+        quit.keyEquivalentModifierMask = .command
+        quit.target = target
+        menu.addItem(quit)
+        return menu
+    }
+
+    nonisolated static func usesLegacyContextMenu(
+        for providerID: ProviderID
+    ) -> Bool {
+        providerID == .claude
+    }
+
     private func showContextMenu(for button: NSStatusBarButton?) {
         guard let button, let window = button.window else { return }
-
-        let menu = Self.makeContextMenu(
-            target: self,
-            refreshAction: #selector(contextMenuRefresh),
-            settingsAction: #selector(preferencesClicked),
-            quitAction: #selector(quitClicked)
-        )
+        let fallbackProfile = profileManager.activeProfile
+        let identity = statusBarUIManager?.statusIdentity(for: button)
+            ?? fallbackProfile.map {
+                ProviderStatusItemIdentity(
+                    profileID: $0.id,
+                    providerID: $0.providerID,
+                    providerRevision: $0.providerRevision,
+                    metricID: nil
+                )
+            }
+        guard let identity,
+              let profile = currentProfile(for: identity) else {
+            return
+        }
+        contextMenuTarget = identity
+        let presentation =
+            ProviderMenuPresentationBuilder.presentation(
+                profile: profile,
+                snapshot: profileUsagePresentations[profile.id],
+                now: Date(),
+                isActive: profile.id == profileManager.activeProfile?.id
+            )
+        let menu: NSMenu
+        if Self.usesLegacyContextMenu(for: profile.providerID) {
+            menu = Self.makeContextMenu(
+                target: self,
+                refreshAction: #selector(contextMenuRefresh),
+                settingsAction: #selector(contextMenuLegacySettings),
+                quitAction: #selector(quitClicked)
+            )
+        } else {
+            menu = Self.makeProviderContextMenu(
+                presentation: presentation,
+                target: self,
+                activateAction: #selector(contextMenuActivate),
+                refreshAction: #selector(contextMenuRefresh),
+                accountSettingsAction:
+                    #selector(contextMenuProviderSettings),
+                appearanceAction: #selector(contextMenuAppearance),
+                manageProfilesAction:
+                    #selector(contextMenuManageProfiles),
+                quitAction: #selector(quitClicked)
+            )
+        }
         let buttonRect = button.convert(button.bounds, to: nil)
         let screenRect = window.convertToScreen(buttonRect)
         menu.popUp(positioning: nil, at: screenRect.origin, in: nil)
     }
 
     @objc private func contextMenuRefresh() {
-        refreshUsage()
+        guard let target = contextMenuTarget,
+              let profile = currentProfile(for: target) else {
+            return
+        }
+        lastRefreshTriggerTime = Date()
+        refreshRuntime.refresh(profiles: [profile], trigger: .manual)
+    }
+
+    @objc private func contextMenuActivate() {
+        guard let target = contextMenuTarget,
+              currentProfile(for: target) != nil else {
+            return
+        }
+        Task { @MainActor [weak self] in
+            guard let self,
+                  self.currentProfile(for: target) != nil else {
+                return
+            }
+            await self.profileManager.activateProfile(target.profileID)
+        }
+    }
+
+    @objc private func contextMenuProviderSettings() {
+        guard let target = contextMenuTarget,
+              currentProfile(for: target) != nil else {
+            return
+        }
+        navigateToSettings(
+            .providerAccount(profileID: target.profileID)
+        )
+    }
+
+    @objc private func contextMenuLegacySettings() {
+        guard let target = contextMenuTarget,
+              currentProfile(for: target) != nil else {
+            return
+        }
+        preferencesClicked()
+    }
+
+    @objc private func contextMenuAppearance() {
+        guard let target = contextMenuTarget,
+              currentProfile(for: target) != nil else {
+            return
+        }
+        navigateToSettings(.appearance(profileID: target.profileID))
+    }
+
+    @objc private func contextMenuManageProfiles() {
+        guard let target = contextMenuTarget,
+              currentProfile(for: target) != nil else {
+            return
+        }
+        navigateToSettings(.manageProfiles)
+    }
+
+    private func currentProfile(
+        for target: ProviderStatusItemIdentity
+    ) -> Profile? {
+        profileManager.profiles.first {
+            $0.id == target.profileID
+                && $0.providerID == target.providerID
+                && $0.providerRevision == target.providerRevision
+                && !$0.deletionInProgress
+        }
+    }
+
+    private func navigateToSettings(
+        _ destination: SettingsNavigationDestination
+    ) {
+        closePopoverOrWindow()
+        if let settingsNavigationHandler {
+            settingsNavigationHandler(destination)
+        } else {
+            preferencesClicked()
+        }
     }
 
     private func closePopover() {
@@ -1597,22 +1923,82 @@ class MenuBarManager: NSObject, ObservableObject {
 
     /// Updates all enabled status bar icons
     private func updateAllStatusBarIcons() {
-        // Check if in multi-profile mode
+        let now = Date()
         if profileManager.displayMode == .multi {
-            // Update multi-profile icons using profiles from profileManager
+            let visible = profileManager.profiles.filter(
+                \.isSelectedForDisplay
+            )
+            let presentations =
+                ProviderMenuPresentationBuilder.presentations(
+                    profiles: visible,
+                    snapshots: profileUsagePresentations,
+                    now: now,
+                    activeProfileID: profileManager.activeProfile?.id
+                )
             let config = profileManager.multiProfileConfig
-            statusBarUIManager?.updateMultiProfileButtons(
+            statusBarUIManager?.updateProviderMultiProfileButtons(
+                presentations: presentations,
                 profiles: profileManager.profiles,
                 config: config,
-                activeProfileId: profileManager.activeProfile?.id
+                activeProfileID: profileManager.activeProfile?.id
             )
+            scheduleFreshnessDeadline(for: presentations, now: now)
         } else {
-            // Single profile mode - use the standard update
-            statusBarUIManager?.updateAllButtons(
-                usage: usage,
-                apiUsage: apiUsage
+            guard let profile = profileManager.activeProfile else {
+                freshnessDeadlineTimer?.invalidate()
+                freshnessDeadlineTimer = nil
+                return
+            }
+            let presentation =
+                ProviderMenuPresentationBuilder.presentation(
+                    profile: profile,
+                    snapshot: profileUsagePresentations[profile.id],
+                    now: now,
+                    isActive: true
+                )
+            if profile.providerID == .claude {
+                statusBarUIManager?.updateAllButtons(
+                    usage: usage,
+                    apiUsage: apiUsage
+                )
+                statusBarUIManager?.bindLegacySingleProfile(profile)
+            } else {
+                statusBarUIManager?.updateProviderSingle(
+                    presentation: presentation,
+                    target: self,
+                    action: #selector(togglePopover),
+                    config: effectiveIconConfiguration(for: profile)
+                )
+            }
+            scheduleFreshnessDeadline(
+                for: [presentation],
+                now: now
             )
         }
+    }
+
+    private func scheduleFreshnessDeadline(
+        for presentations: [ProviderMenuPresentation],
+        now: Date
+    ) {
+        freshnessDeadlineTimer?.invalidate()
+        freshnessDeadlineTimer = nil
+        guard let deadline =
+                ProviderMenuPresentationBuilder.nextFreshnessDeadline(
+                    presentations: presentations
+                ) else {
+            return
+        }
+        let interval = max(0.01, deadline.timeIntervalSince(now))
+        freshnessDeadlineTimer = Timer.scheduledTimer(
+            withTimeInterval: interval,
+            repeats: false
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.updateAllStatusBarIcons()
+            }
+        }
+        freshnessDeadlineTimer?.tolerance = min(1, interval * 0.05)
     }
 
     /// Updates a specific metric's status bar icon
@@ -1807,7 +2193,9 @@ class MenuBarManager: NSObject, ObservableObject {
                     LoggingService.shared.logInfo("Credentials changed but no usage credentials - showing default logo")
 
                     // Reconfigure menu bar to show default logo
-                    let config = self.profileManager.activeProfile?.iconConfig ?? .default
+                    let config = self.profileManager.activeProfile.map {
+                        self.effectiveIconConfiguration(for: $0)
+                    } ?? .default
                     self.updateMenuBarDisplay(with: config)
                     return
                 }
@@ -1815,7 +2203,7 @@ class MenuBarManager: NSObject, ObservableObject {
                 LoggingService.shared.logInfo("Credentials changed - triggering immediate refresh")
 
                 // Reconfigure menu bar to show metrics (in case we were showing default logo)
-                let config = profile.iconConfig
+                let config = self.effectiveIconConfiguration(for: profile)
                 self.updateMenuBarDisplay(with: config)
 
                 // Mark this as user-triggered
@@ -1840,6 +2228,10 @@ class MenuBarManager: NSObject, ObservableObject {
                     guard let self, let profileID else {
                         return
                     }
+                    ProviderMenuCatalogStore.shared.publish(
+                        profiles: self.profileManager.profiles,
+                        snapshots: self.profileUsagePresentations
+                    )
                     self.refreshRuntime.invalidate(
                         profileID: profileID
                     )
@@ -1877,6 +2269,9 @@ class MenuBarManager: NSObject, ObservableObject {
                     guard let self, let profileID else {
                         return
                     }
+                    ProviderMenuCatalogStore.shared.invalidate(
+                        profileID: profileID
+                    )
                     self.refreshRuntime.beginDeletion(
                         profileID: profileID
                     )
@@ -1897,6 +2292,9 @@ class MenuBarManager: NSObject, ObservableObject {
                     guard let self, let profileID else {
                         return
                     }
+                    ProviderMenuCatalogStore.shared.invalidate(
+                        profileID: profileID
+                    )
                     self.refreshRuntime.completeDeletion(
                         profileID: profileID
                     )
@@ -2010,7 +2408,9 @@ class MenuBarManager: NSObject, ObservableObject {
                     self.updateMultiProfileDisplay()
                 } else {
                     // Single profile mode
-                    let newConfig = self.profileManager.activeProfile?.iconConfig ?? .default
+                    let newConfig = self.profileManager.activeProfile.map {
+                        self.effectiveIconConfiguration(for: $0)
+                    } ?? .default
                     self.updateMenuBarDisplay(with: newConfig)
                 }
             }
@@ -2103,7 +2503,6 @@ class MenuBarManager: NSObject, ObservableObject {
     ) {
         let selectedProfiles = profileManager.getSelectedProfiles()
         let config = profileManager.multiProfileConfig
-
         statusBarUIManager?.setupMultiProfile(
             profiles: selectedProfiles,
             target: self,
@@ -2112,8 +2511,7 @@ class MenuBarManager: NSObject, ObservableObject {
 
         // Defer icon update to next run loop iteration to let NSStatusBar finalize layout
         DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            self.statusBarUIManager?.updateMultiProfileButtons(profiles: self.profileManager.profiles, config: config, activeProfileId: self.profileManager.activeProfile?.id)
+            self?.updateAllStatusBarIcons()
         }
 
         LoggingService.shared.log("MenuBarManager: Multi-profile mode enabled with \(selectedProfiles.count) profiles, style=\(config.iconStyle.rawValue)")
@@ -2126,8 +2524,6 @@ class MenuBarManager: NSObject, ObservableObject {
     /// Applies multi-profile selection and visual changes without recreating
     /// retained NSStatusItems, preserving their macOS and third-party ordering.
     private func updateMultiProfileDisplay() {
-        let config = profileManager.multiProfileConfig
-
         statusBarUIManager?.updateMultiProfileConfiguration(
             profiles: profileManager.profiles,
             target: self,
@@ -2135,12 +2531,7 @@ class MenuBarManager: NSObject, ObservableObject {
         )
 
         DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            self.statusBarUIManager?.updateMultiProfileButtons(
-                profiles: self.profileManager.profiles,
-                config: config,
-                activeProfileId: self.profileManager.activeProfile?.id
-            )
+            self?.updateAllStatusBarIcons()
         }
 
         LoggingService.shared.log("MenuBarManager: Multi-profile display updated incrementally")
@@ -2171,7 +2562,18 @@ class MenuBarManager: NSObject, ObservableObject {
         guard let profile = profileManager.activeProfile else { return }
 
         let canRefresh = canAttemptUsageRefresh(profile)
-        let config = profile.iconConfig
+        let config = effectiveIconConfiguration(for: profile)
+
+        if profile.providerID != .claude {
+            updateProviderSingleDisplay(
+                profile: profile,
+                config: config
+            )
+            LoggingService.shared.log(
+                "MenuBarManager: Provider single profile mode enabled"
+            )
+            return
+        }
 
         // If no usage credentials, create empty config to show default logo
         let displayConfig: MenuBarIconConfiguration
@@ -2688,11 +3090,16 @@ extension MenuBarManager: NSPopoverDelegate {
         let contentView = PopoverContentView(
             manager: self,
             onRefresh: { [weak self] in
-                self?.refreshUsage()
+                guard let self else { return }
+                self.refreshPopover(
+                    target: self.popoverActionTarget()
+                )
             },
             onPreferences: { [weak self] in
-                self?.closePopoverOrWindow()
-                self?.preferencesClicked()
+                guard let self else { return }
+                self.openPopoverSettings(
+                    target: self.popoverActionTarget()
+                )
             }
         )
         let hostingController = NSHostingController(rootView: contentView)

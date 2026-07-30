@@ -6,6 +6,195 @@
 //
 
 import Foundation
+import UsageCore
+
+/// A stable provider-neutral menu-bar metric identity.
+///
+/// Window identities deliberately include the provider, group, and window.
+/// This prevents two providers (or two groups from one provider) from
+/// overwriting each other's preferences as catalogs grow.
+struct MenuBarMetricID: Hashable, Sendable, Codable, Identifiable {
+    enum Kind: Hashable, Sendable {
+        case usageWindow(
+            providerID: ProviderID,
+            groupID: UsageLimitGroupID,
+            windowID: UsageWindowID
+        )
+        case claudeAPI
+        case providerPlaceholder(providerID: ProviderID)
+    }
+
+    let kind: Kind
+
+    var id: String { stableValue }
+    var stableValue: String {
+        switch kind {
+        case .usageWindow(let providerID, let groupID, let windowID):
+            return [
+                "v1", "window",
+                Self.encodeComponent(providerID.rawValue),
+                Self.encodeComponent(groupID.rawValue),
+                Self.encodeComponent(windowID.rawValue)
+            ].joined(separator: ".")
+        case .claudeAPI:
+            return "v1.claude-api"
+        case .providerPlaceholder(let providerID):
+            return "v1.placeholder."
+                + Self.encodeComponent(providerID.rawValue)
+        }
+    }
+
+    init(
+        providerID: ProviderID,
+        groupID: UsageLimitGroupID,
+        windowID: UsageWindowID
+    ) {
+        kind = .usageWindow(
+            providerID: providerID,
+            groupID: groupID,
+            windowID: windowID
+        )
+    }
+
+    private init(kind: Kind) {
+        self.kind = kind
+    }
+
+    static let claudeSession = MenuBarMetricID(
+        providerID: .claude,
+        groupID: try! UsageLimitGroupID("claude.subscription"),
+        windowID: try! UsageWindowID("claude.session")
+    )
+    static let claudeWeek = MenuBarMetricID(
+        providerID: .claude,
+        groupID: try! UsageLimitGroupID("claude.subscription"),
+        windowID: try! UsageWindowID("claude.week")
+    )
+    static let claudeAPI = MenuBarMetricID(kind: .claudeAPI)
+    static func providerPlaceholder(
+        _ providerID: ProviderID
+    ) -> MenuBarMetricID {
+        MenuBarMetricID(
+            kind: .providerPlaceholder(providerID: providerID)
+        )
+    }
+
+    var legacyMetricType: MenuBarMetricType? {
+        switch self {
+        case .claudeSession:
+            return .session
+        case .claudeWeek:
+            return .week
+        case .claudeAPI:
+            return .api
+        default:
+            return nil
+        }
+    }
+
+    var providerID: ProviderID? {
+        switch kind {
+        case .usageWindow(let providerID, _, _):
+            return providerID
+        case .claudeAPI:
+            return .claude
+        case .providerPlaceholder(let providerID):
+            return providerID
+        }
+    }
+
+    var usageWindowComponents: (
+        providerID: ProviderID,
+        groupID: UsageLimitGroupID,
+        windowID: UsageWindowID
+    )? {
+        guard case .usageWindow(
+            let providerID,
+            let groupID,
+            let windowID
+        ) = kind else {
+            return nil
+        }
+        return (providerID, groupID, windowID)
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let rawValue = try container.decode(String.self)
+        guard let decoded = Self(stableValue: rawValue) else {
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Invalid menu-bar metric identity"
+            )
+        }
+        self = decoded
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(stableValue)
+    }
+
+    init?(stableValue: String) {
+        if stableValue == "v1.claude-api" {
+            self = .claudeAPI
+            return
+        }
+        let components = stableValue.split(
+            separator: ".",
+            omittingEmptySubsequences: false
+        )
+        if components.count == 3,
+           components[0] == "v1",
+           components[1] == "placeholder",
+           let provider = Self.decodeComponent(String(components[2])),
+           let providerID = try? ProviderID(provider) {
+            self = .providerPlaceholder(providerID)
+            return
+        }
+        guard components.count == 5,
+              components[0] == "v1",
+              components[1] == "window",
+              let provider = Self.decodeComponent(String(components[2])),
+              let group = Self.decodeComponent(String(components[3])),
+              let window = Self.decodeComponent(String(components[4])),
+              let providerID = try? ProviderID(provider),
+              let groupID = try? UsageLimitGroupID(group),
+              let windowID = try? UsageWindowID(window) else {
+            return nil
+        }
+        self.init(
+            providerID: providerID,
+            groupID: groupID,
+            windowID: windowID
+        )
+    }
+
+    private static func encodeComponent(_ value: String) -> String {
+        Data(value.utf8)
+            .base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+    }
+
+    private static func decodeComponent(_ value: String) -> String? {
+        var base64 = value
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        let padding = (4 - base64.count % 4) % 4
+        base64.append(String(repeating: "=", count: padding))
+        guard let data = Data(base64Encoded: base64) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+}
+
+enum MenuBarMetricSelectionMode: String, Codable, Sendable {
+    /// Select the first usable metric in the provider's canonical catalog.
+    case automatic
+    /// Respect the persisted enabled flags exactly, including all-disabled.
+    case custom
+}
 
 /// Types of metrics that can be displayed in the menu bar
 enum MenuBarMetricType: String, Codable, CaseIterable, Identifiable {
@@ -155,7 +344,7 @@ enum WeekDisplayMode: String, Codable, CaseIterable {
 
 /// Configuration for a single metric icon
 struct MetricIconConfig: Codable, Equatable {
-    var metricType: MenuBarMetricType
+    var metricID: MenuBarMetricID
     var isEnabled: Bool
     var iconStyle: MenuBarIconStyle
     var order: Int
@@ -169,6 +358,13 @@ struct MetricIconConfig: Codable, Equatable {
     /// Session-specific configuration
     var showNextSessionTime: Bool
 
+    /// Compatibility facade for existing Claude-only controls and rendering.
+    /// Provider-neutral call sites should use `metricID`.
+    var metricType: MenuBarMetricType {
+        get { metricID.legacyMetricType ?? .session }
+        set { metricID = Self.metricID(for: newValue) }
+    }
+
     init(
         metricType: MenuBarMetricType,
         isEnabled: Bool = false,
@@ -178,13 +374,111 @@ struct MetricIconConfig: Codable, Equatable {
         apiDisplayMode: APIDisplayMode = .remaining,
         showNextSessionTime: Bool = false
     ) {
-        self.metricType = metricType
+        self.metricID = Self.metricID(for: metricType)
         self.isEnabled = isEnabled
         self.iconStyle = iconStyle
         self.order = order
         self.weekDisplayMode = weekDisplayMode
         self.apiDisplayMode = apiDisplayMode
         self.showNextSessionTime = showNextSessionTime
+    }
+
+    init(
+        metricID: MenuBarMetricID,
+        isEnabled: Bool = false,
+        iconStyle: MenuBarIconStyle = .battery,
+        order: Int = 0,
+        weekDisplayMode: WeekDisplayMode = .percentage,
+        apiDisplayMode: APIDisplayMode = .remaining,
+        showNextSessionTime: Bool = false
+    ) {
+        self.metricID = metricID
+        self.isEnabled = isEnabled
+        self.iconStyle = iconStyle
+        self.order = order
+        self.weekDisplayMode = weekDisplayMode
+        self.apiDisplayMode = apiDisplayMode
+        self.showNextSessionTime = showNextSessionTime
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case metricID
+        case metricType
+        case isEnabled
+        case iconStyle
+        case order
+        case weekDisplayMode
+        case apiDisplayMode
+        case showNextSessionTime
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if let stableID = try container.decodeIfPresent(
+            MenuBarMetricID.self,
+            forKey: .metricID
+        ) {
+            metricID = stableID
+        } else {
+            let legacy = try container.decode(
+                MenuBarMetricType.self,
+                forKey: .metricType
+            )
+            metricID = Self.metricID(for: legacy)
+        }
+        isEnabled = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .isEnabled
+        ) ?? false
+        iconStyle = try container.decodeIfPresent(
+            MenuBarIconStyle.self,
+            forKey: .iconStyle
+        ) ?? .battery
+        order = try container.decodeIfPresent(Int.self, forKey: .order) ?? 0
+        weekDisplayMode = try container.decodeIfPresent(
+            WeekDisplayMode.self,
+            forKey: .weekDisplayMode
+        ) ?? .percentage
+        apiDisplayMode = try container.decodeIfPresent(
+            APIDisplayMode.self,
+            forKey: .apiDisplayMode
+        ) ?? .remaining
+        showNextSessionTime = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .showNextSessionTime
+        ) ?? false
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(metricID, forKey: .metricID)
+        // Dual-write the historical discriminator whenever it is lossless so
+        // older app versions can still read existing Claude preferences.
+        if let legacy = metricID.legacyMetricType {
+            try container.encode(legacy, forKey: .metricType)
+        }
+        try container.encode(isEnabled, forKey: .isEnabled)
+        try container.encode(iconStyle, forKey: .iconStyle)
+        try container.encode(order, forKey: .order)
+        try container.encode(weekDisplayMode, forKey: .weekDisplayMode)
+        try container.encode(apiDisplayMode, forKey: .apiDisplayMode)
+        try container.encode(
+            showNextSessionTime,
+            forKey: .showNextSessionTime
+        )
+    }
+
+    private static func metricID(
+        for metricType: MenuBarMetricType
+    ) -> MenuBarMetricID {
+        switch metricType {
+        case .session:
+            return .claudeSession
+        case .week:
+            return .claudeWeek
+        case .api:
+            return .claudeAPI
+        }
     }
 
     /// Default config for session (enabled by default)
@@ -354,6 +648,7 @@ struct MenuBarIconConfiguration: Codable, Equatable {
     var showTimeMarker: Bool
     var showPaceMarker: Bool
     var usePaceColoring: Bool
+    var metricSelectionMode: MenuBarMetricSelectionMode
     var metrics: [MetricIconConfig]
 
     init(
@@ -364,6 +659,7 @@ struct MenuBarIconConfiguration: Codable, Equatable {
         showTimeMarker: Bool = true,
         showPaceMarker: Bool = true,
         usePaceColoring: Bool = true,
+        metricSelectionMode: MenuBarMetricSelectionMode = .custom,
         metrics: [MetricIconConfig] = [
             .sessionDefault,
             .weekDefault,
@@ -377,7 +673,8 @@ struct MenuBarIconConfiguration: Codable, Equatable {
         self.showTimeMarker = showTimeMarker
         self.showPaceMarker = showPaceMarker
         self.usePaceColoring = usePaceColoring
-        self.metrics = metrics
+        self.metricSelectionMode = metricSelectionMode
+        self.metrics = Self.firstConfigurationPerMetric(metrics)
     }
 
     // MARK: - Codable (Custom decoder for backwards compatibility)
@@ -391,6 +688,7 @@ struct MenuBarIconConfiguration: Codable, Equatable {
         case showTimeMarker
         case showPaceMarker
         case usePaceColoring
+        case metricSelectionMode
         case metrics
     }
 
@@ -405,12 +703,28 @@ struct MenuBarIconConfiguration: Codable, Equatable {
         }
 
         singleColorHex = try container.decodeIfPresent(String.self, forKey: .singleColorHex) ?? "#00BFFF"
-        showIconNames = try container.decode(Bool.self, forKey: .showIconNames)
+        showIconNames = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .showIconNames
+        ) ?? true
         showRemainingPercentage = try container.decodeIfPresent(Bool.self, forKey: .showRemainingPercentage) ?? false
         showTimeMarker = try container.decodeIfPresent(Bool.self, forKey: .showTimeMarker) ?? true
         showPaceMarker = try container.decodeIfPresent(Bool.self, forKey: .showPaceMarker) ?? false
         usePaceColoring = try container.decodeIfPresent(Bool.self, forKey: .usePaceColoring) ?? false
-        metrics = try container.decode([MetricIconConfig].self, forKey: .metrics)
+        metricSelectionMode = try container.decodeIfPresent(
+            MenuBarMetricSelectionMode.self,
+            forKey: .metricSelectionMode
+        ) ?? .custom
+        metrics = Self.firstConfigurationPerMetric(
+            try container.decodeIfPresent(
+                [MetricIconConfig].self,
+                forKey: .metrics
+            ) ?? [
+                .sessionDefault,
+                .weekDefault,
+                .apiDefault
+            ]
+        )
     }
 
     func encode(to encoder: Encoder) throws {
@@ -422,31 +736,103 @@ struct MenuBarIconConfiguration: Codable, Equatable {
         try container.encode(showTimeMarker, forKey: .showTimeMarker)
         try container.encode(showPaceMarker, forKey: .showPaceMarker)
         try container.encode(usePaceColoring, forKey: .usePaceColoring)
+        try container.encode(
+            metricSelectionMode,
+            forKey: .metricSelectionMode
+        )
         try container.encode(metrics, forKey: .metrics)
         // Note: We don't encode monochromeMode anymore - it's only for reading legacy data
     }
 
     /// Get enabled metrics sorted by order
     var enabledMetrics: [MetricIconConfig] {
-        metrics
-            .filter { $0.isEnabled }
-            .sorted { $0.order < $1.order }
+        Self.firstConfigurationPerMetric(metrics)
+            .enumerated()
+            .filter { $0.element.isEnabled }
+            .sorted {
+                if $0.element.order != $1.element.order {
+                    return $0.element.order < $1.element.order
+                }
+                return $0.offset < $1.offset
+            }
+            .map(\.element)
     }
 
     /// Get config for specific metric type
     func config(for metricType: MenuBarMetricType) -> MetricIconConfig? {
-        metrics.first { $0.metricType == metricType }
+        metrics.first { $0.metricID.legacyMetricType == metricType }
+    }
+
+    func config(for metricID: MenuBarMetricID) -> MetricIconConfig? {
+        metrics.first { $0.metricID == metricID }
     }
 
     /// Update config for specific metric
     mutating func updateConfig(_ config: MetricIconConfig) {
-        if let index = metrics.firstIndex(where: { $0.metricType == config.metricType }) {
+        metricSelectionMode = .custom
+        if let index = metrics.firstIndex(
+            where: { $0.metricID == config.metricID }
+        ) {
             metrics[index] = config
+        } else {
+            metrics.append(config)
         }
     }
 
     /// Default configuration (session only, like current behavior)
     static var `default`: MenuBarIconConfiguration {
         MenuBarIconConfiguration()
+    }
+
+    static func `default`(
+        for providerID: ProviderID
+    ) -> MenuBarIconConfiguration {
+        guard providerID != .claude else { return .default }
+        return MenuBarIconConfiguration(
+            metricSelectionMode: .automatic,
+            metrics: []
+        )
+    }
+
+    /// Converts the untouched legacy Claude default into the correct default
+    /// for a newly created provider profile. Explicit custom choices, including
+    /// all-disabled, are never changed.
+    func adaptedForProvider(
+        _ providerID: ProviderID
+    ) -> MenuBarIconConfiguration {
+        guard providerID != .claude, self == .default else { return self }
+        return .default(for: providerID)
+    }
+
+    func resolvedMetrics(
+        catalog: [ProviderMetricDescriptor]
+    ) -> [MetricIconConfig] {
+        switch metricSelectionMode {
+        case .automatic:
+            guard let first = catalog.first(where: \.isUsable) else {
+                return []
+            }
+            var config = self.config(for: first.id)
+                ?? MetricIconConfig(metricID: first.id)
+            config.isEnabled = true
+            config.order = 0
+            return [config]
+        case .custom:
+            return enabledMetrics.filter { configured in
+                catalog.contains {
+                    $0.id == configured.metricID && $0.isUsable
+                }
+            }
+        }
+    }
+
+    /// Malformed persisted arrays are sanitized deterministically: the first
+    /// occurrence wins, matching the user's visible ordering and preventing
+    /// duplicate NSStatusItems for one stable metric identity.
+    private static func firstConfigurationPerMetric(
+        _ configurations: [MetricIconConfig]
+    ) -> [MetricIconConfig] {
+        var seen = Set<MenuBarMetricID>()
+        return configurations.filter { seen.insert($0.metricID).inserted }
     }
 }
