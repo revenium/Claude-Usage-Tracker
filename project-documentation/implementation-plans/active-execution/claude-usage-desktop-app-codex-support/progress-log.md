@@ -6,11 +6,11 @@
 - Linear project: `Claude Usage Desktop App Codex Support` (`8fd871e1416e`)
 - Umbrella: `PRODUCT-2276`
 - Tracking wave: W00 — complete
-- Current delivery batch: B03 — Provider core
-- Current phases: P05/P06/P07/P08/P09 implemented, validated, and pending B03 ship
-- Corrective source commit: `3c236b4`; exact validation evidence is recorded for ship
-- Current validation: exact-tree package, live Codex, full app, Debug, strict-concurrency, universal Release, TSan, localization, process-census, and safety gates pass
-- Next action: run the B03 `$codex-ship-pr skip-review --linear PRODUCT-2281 --auto-merge` pipeline
+- Current delivery batch: B04 — Provider-aware UI parity
+- Current phases: P10 setup/settings, P11 popover, and P12 menu/status/icons in parallel
+- Shared UI bootstrap commit: `cefea32`
+- Current validation: 419 app tests, 77 UsageKit tests with one expected opt-in live-smoke skip, strict-concurrency Debug build, 80 login-race stress passes, and zero-process/safety gates pass
+- Next action: implement and independently verify P10/P11/P12 in isolated worktrees, then integrate in P10 → P11 → P12 order
 
 ## Repository State at Initialization
 
@@ -43,11 +43,11 @@
 | W00 | Linear tracking initialization | 17 child issues | Complete |
 | W01 | Green baseline | P01 | Complete |
 | W02 | Safety foundations | P02, P03, P04 | Complete |
-| W03A | UsageKit boundary | P05 | Implemented and validated; pending B03 ship |
-| W03B | Transport and profile model | P06, P07 | Implemented and validated; pending B03 ship |
-| W03C | Codex provider | P08 | Implemented and validated; pending B03 ship |
-| W03D | Refresh integration | P09 | Implemented and validated; pending B03 ship |
-| W04 | Provider-aware UI parity | P10, P11, P12 | Pending |
+| W03A | UsageKit boundary | P05 | Complete |
+| W03B | Transport and profile model | P06, P07 | Complete |
+| W03C | Codex provider | P08 | Complete |
+| W03D | Refresh integration | P09 | Complete |
+| W04 | Provider-aware UI parity | P10, P11, P12 | Parallel implementation in progress |
 | W05A | Cross-cutting parity and distribution | P13, P14, P16 | Pending |
 | W05B | Localization/accessibility/UI automation | P15 | Pending |
 | W05C | Final parity and ship audit | P17 | Pending |
@@ -58,8 +58,8 @@
 |---|---|---|---|---|---|---|
 | B01 Baseline | `feature/codex-support-baseline` | [#7](https://github.com/revenium/Claude-Usage-Tracker/pull/7) | Success | Tessie clean + Greptile 5/5 | `29c7fe1` | Merged |
 | B02 Foundations | `feature/codex-support-foundations` | [#8](https://github.com/revenium/Claude-Usage-Tracker/pull/8) | Equivalent exact-head gate passed | All findings fixed; reviewer limits documented | `ab70776` | Merged |
-| B03 Provider core | `feature/codex-support-provider-core` | [#9](https://github.com/revenium/Claude-Usage-Tracker/pull/9) | Review-correction tree: UsageKit Debug/Release 74 total each; app 396/396; Debug/strict/universal Release/TSan passed | Greptile 4/5; sole finding fixed and exact-head re-review pending; Tessie size limit documented | — | Review correction validated |
-| B04 UI parity | `feature/codex-support-ui-parity` | — | — | — | — | Pending |
+| B03 Provider core | `feature/codex-support-provider-core` | [#9](https://github.com/revenium/Claude-Usage-Tracker/pull/9) | Exact-head local matrix passed; fork-wide hosted-CI exception audited | Greptile 5/5 at `728d84e`; latch valid; Tessie size limit documented | `2fd330f` | Merged |
+| B04 UI parity | `feature/codex-support-ui-parity` | — | Bootstrap `cefea32`: 419 app / 77 package tests + strict build | — | — | P10/P11/P12 in parallel |
 | B05 Release readiness | `feature/codex-support-release-readiness` | — | — | — | — | Pending |
 
 ## Completed Phases
@@ -70,11 +70,19 @@
 | P02 | PRODUCT-2280 | profile_security_integration | `747230b` final head | #8 | 2026-07-30 | Verified profile-keyed Keychain storage, backward migration, explicit credential APIs, startup guard, fail-closed deletion marker |
 | P03 | PRODUCT-2279 | profile_security_integration | `747230b` final head | #8 | 2026-07-30 | Atomic current/history files, verified migration, transactional credentials, recoverable cleanup, fault-injected rollback safety |
 | P04 | PRODUCT-2277 | menu_reliability_audit | `747230b` final head | #8 | 2026-07-30 | Context menu, stable status items, popover/window/full-screen fixes, CGImage fingerprinting, Cmd+W, captured-profile auto-switch safety |
-| P05 | PRODUCT-2281 | usagekit_contracts | `3c236b4` corrective source | Pending B03 | Pending merge | App-framework-free provider contracts validate arbitrary dynamic windows and persist typed partial-usage health without inventing data; ADRs D001–D013 record the package seam and dependency direction |
-| P06 | PRODUCT-2278 | codex_transport | `3c236b4` corrective source | Pending B03 | Pending merge | Concurrent JSON-RPC correlation, deterministic cancellation, blocked-write bounds, stable-identity process-tree teardown, retained-child re-census, immediate terminal delivery, schema provenance, and zero-process proof |
-| P07 | PRODUCT-2286 | provider_profile_model | `3c236b4` corrective source | Pending B03 | Pending merge | Provider-tagged profiles bind canonical Codex homes to device/inode identity; exact-path relink upgrades legacy unresolved links and captures same-path replacements |
-| P08 | PRODUCT-2285 | codex_provider | `3c236b4` corrective source | Pending B03 | Pending merge | Dynamic and legacy limits, optional-usage partial success, supported/unsupported account modes, complete typed login outcomes, scoped cleanup, and live installed-Codex proof |
-| P09 | PRODUCT-2288 | refresh_engine | `3c236b4` corrective source | Pending B03 | Pending merge | Profile-keyed latest-wins runtime separates durable commit from presentation and fences same-profile pending work, cross-profile concurrency, dispatch, stale/deleted/shutdown results, and overlapping timers |
+| P05 | PRODUCT-2281 | usagekit_contracts | `728d84e` final PR head | #9 | 2026-07-30 | App-framework-free provider contracts validate arbitrary dynamic windows and persist typed partial-usage health without inventing data; ADRs D001–D013 record the package seam and dependency direction |
+| P06 | PRODUCT-2278 | codex_transport | `728d84e` final PR head | #9 | 2026-07-30 | Concurrent JSON-RPC correlation, deterministic cancellation, blocked-write bounds, stable-identity process-tree teardown, retained-child re-census, immediate terminal delivery, schema provenance, and zero-process proof |
+| P07 | PRODUCT-2286 | provider_profile_model | `728d84e` final PR head | #9 | 2026-07-30 | Provider-tagged profiles bind canonical Codex homes to device/inode identity; exact-path relink upgrades legacy unresolved links and captures same-path replacements |
+| P08 | PRODUCT-2285 | codex_provider | `728d84e` final PR head | #9 | 2026-07-30 | Dynamic and legacy limits, optional-usage partial success, supported/unsupported account modes, complete typed login outcomes, scoped cleanup, and live installed-Codex proof |
+| P09 | PRODUCT-2288 | refresh_engine | `728d84e` final PR head | #9 | 2026-07-30 | Profile-keyed latest-wins runtime separates durable commit from presentation and fences same-profile pending work, cross-profile concurrency, dispatch, stale/deleted/shutdown results, and overlapping timers |
+
+## Active Parallel Phases
+
+| Phase | Linear | Branch | Worktree | Worker | Ownership |
+|---|---|---|---|---|---|
+| P10 | PRODUCT-2283 | `work/codex-ui-setup-settings` | `phase-04-ui-setup-settings` | `b04_p10_setup_settings` | Setup, profile management, settings, account/login UI |
+| P11 | PRODUCT-2287 | `work/codex-ui-popover` | `phase-04-ui-popover` | `b04_p11_popover` | Normalized popover presentation and additive daily-usage series |
+| P12 | PRODUCT-2284 | `work/codex-ui-menu-icons` | `phase-04-ui-menu-icons` | `b04_p12_menu_icons` | Status items, menus, metric configuration, appearance, icon rendering |
 
 ## Current Corrective Architecture and Safety Guarantees
 
@@ -153,12 +161,13 @@
 | 2026-07-30 | Corrective app build gates | unsigned Debug, strict-concurrency Debug, universal Release | PASS | Exact source `3c236b4`: all builds succeeded; no new B03 diagnostics; Release executable has `arm64` and `x86_64` |
 | 2026-07-30 | Corrective Thread Sanitizer gate | `UsageRefreshEngineTests` with TSan runtime | PASS | Exact source `3c236b4`: 99 passed, 0 failed/skipped; no ThreadSanitizer race signature |
 | 2026-07-30 | Corrective final safety gates | diff/JSON/XML/shell/locales/schema/secret/auth/process scans | PASS | Static syntax and all nine locale files pass; schema has 347 generated files and exact 10-method provenance; production Codex paths have no `auth.json` access; process census is empty; known locale keyset drift remains P15 |
-| 2026-07-30 | Corrective remaining gate | `$codex-ship-pr skip-review --linear PRODUCT-2281 --auto-merge` | PENDING | Local exact-source verification and independent semantic/safety reviews are clean |
+| 2026-07-30 | B03 ship gate | `$codex-ship-pr skip-review --linear PRODUCT-2281 --auto-merge` | PASS | PR #9 exact-head review reached Greptile 5/5; all audits passed; squash-merged as `2fd330f` |
+| 2026-07-30 | B04 shared UI bootstrap | full app and UsageKit suites, strict build, login stress, safety/process scans | PASS | `cefea32`: 419/419 app tests; 77 package tests with one expected live-smoke skip; 80/80 login-race stress passes; no residual fake processes |
 
 ## Blockers
 
-- No product or architecture decision is blocking B03.
-- Only the B03 commit/push/PR review/CI/auto-merge ship gate remains.
+- No product or architecture decision is blocking B04.
+- P10, P11, and P12 are intentionally isolated by file ownership and can proceed concurrently from the verified shared bootstrap.
 - Release signing, notarization, Pages/appcast, and Homebrew publication may require Revenium secrets or repository permissions; verify during P16.
 
 ## Decisions
@@ -207,3 +216,7 @@
 - A repeated exact-head comparison then reproduced a pre-waiter terminal race in which clean process exit could discard responses or notifications that had already been decoded and routed. Terminal input now preserves those frames for exactly-once draining, while explicit close atomically discards them and gives in-flight requests the typed local cancellation cause.
 - Final review-correction validation passed 38/38 transport tests and 74/74 UsageKit tests in both Debug and Release, with only the intentional opt-in live-smoke skip; terminal drain, explicit close, and FD cleanup each passed repeated cross-configuration stress runs, and the unsigned app plus strict-concurrency integration builds succeeded with no new UsageKit diagnostics.
 - An additional SwiftPM Thread Sanitizer run compiled successfully but could not start because Xcode's TSan runtime dylib was rejected by the host platform's code-signing policy; deterministic actor barriers, serial stress, and the previously passing app TSan matrix remain the concurrency evidence for this batch.
+- Shipped B03 through `$codex-ship-pr skip-review`: Greptile's exact-head re-review reached 5/5 with no new findings, the canonical score-4 latch validated, all three review surfaces and commit intent passed audit, and PR #9 squash-merged as `2fd330f`; PRODUCT-2281, PRODUCT-2278, PRODUCT-2286, PRODUCT-2285, and PRODUCT-2288 are Done.
+- Created the fresh B04 integration worktree from merged `upstream/main`; the serialized D046 provider-factory and normalized-presentation bootstrap now precedes parallel P10/P11/P12 implementation.
+- Completed and independently validated the B04 shared bootstrap at `cefea32`: stateless fresh Codex provider creation, one whole-product availability gate, profile-keyed normalized presentation projection, concurrent/idempotent login cancellation, and a provider-neutral profile-specific settings navigation seam.
+- Started P10, P11, and P12 concurrently in isolated Revenium worktrees with non-overlapping production ownership; the PM retains localization, project tracking, and integration files.

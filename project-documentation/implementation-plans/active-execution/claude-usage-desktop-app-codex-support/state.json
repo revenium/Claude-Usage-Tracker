@@ -3,10 +3,10 @@
   "project": "Claude Usage Desktop App Codex Support",
   "slug": "claude-usage-desktop-app-codex-support",
   "created_at": "2026-07-30T05:19:19Z",
-  "last_updated": "2026-07-30T14:30:42Z",
+  "last_updated": "2026-07-30T16:32:16Z",
   "status": "active",
-  "current_batch": "B03",
-  "current_phase": "P09",
+  "current_batch": "B04",
+  "current_phase": "P10",
   "feature_branch": "feature/codex-subscription-support",
   "feature_branch_role": "Durable project-control branch; delivery code uses sequential batch branches targeting upstream/main.",
   "repository": {
@@ -109,32 +109,32 @@
     },
     "W03A": {
       "name": "UsageKit boundary",
-      "status": "implemented_pending_batch_ship",
+      "status": "completed",
       "phases": ["P05"],
       "parallel": false
     },
     "W03B": {
       "name": "Transport and profile model",
-      "status": "implemented_pending_batch_ship",
+      "status": "completed",
       "phases": ["P06", "P07"],
       "parallel": true,
       "parallel_safety": "P06 is confined to Codex transport package files; P07 is confined to app profile models and stores."
     },
     "W03C": {
       "name": "Codex provider",
-      "status": "implemented_pending_batch_ship",
+      "status": "completed",
       "phases": ["P08"],
       "parallel": false
     },
     "W03D": {
       "name": "Refresh integration",
-      "status": "implemented_pending_batch_ship",
+      "status": "completed",
       "phases": ["P09"],
       "parallel": false
     },
     "W04": {
       "name": "Provider-aware UI parity",
-      "status": "pending",
+      "status": "parallel_in_progress",
       "phases": ["P10", "P11", "P12"],
       "parallel": true,
       "parallel_safety": "P10 owns onboarding/settings, P11 owns popover presentation, and P12 owns status-item/menu/icon presentation."
@@ -193,20 +193,21 @@
     },
     "B03": {
       "name": "Provider core",
-      "status": "implemented_pending_batch_ship",
+      "status": "merged",
       "branch": "feature/codex-support-provider-core",
       "worktree": "/Users/jason/gitclone/hc-repo/worktrees/Claude-Usage-Tracker/phase-03-provider-core",
       "target": "upstream/main",
       "depends_on": ["B02"],
       "phases": ["P05", "P06", "P07", "P08", "P09"],
       "primary_linear_issue": "PRODUCT-2281",
-      "pr_number": null,
-      "pr_url": null,
-      "head_sha": "3c236b489f7c3d5d8309a84ceda98f655aa36842",
+      "pr_number": 9,
+      "pr_url": "https://github.com/revenium/Claude-Usage-Tracker/pull/9",
+      "head_sha": "728d84e8901d8db3a0d1e6bb17ad3ab407f683a4",
+      "merge_sha": "2fd330fef2345e4f1eeb4704e7a4e9580d5124b7",
       "started_at": "2026-07-30T09:19:07Z",
-      "merged_at": null,
+      "merged_at": "2026-07-30T15:43:51Z",
       "corrective_working_tree": {
-        "status": "committed_validated",
+        "status": "merged",
         "historical_frozen_source_sha": "5f41158167319b2e445b29139e62822786467166",
         "architecture_guarantees": [
           "UsageKit uses Foundation plus narrowly scoped Darwin process primitives, has no app/UI/persistence dependencies, and supports provider-neutral dynamic reports with arbitrary window counts.",
@@ -234,25 +235,49 @@
           "Thread Sanitizer UsageRefreshEngineTests: 99 passed, 0 failed or skipped, with no race signature.",
           "Swift, XML, shell, fixture JSON, all-nine-locale, schema provenance, secret/auth, process-census, and scoped diff checks passed."
         ],
-        "pending_gates": [
-          "Push, open the B03 PR, and run codex-ship-pr skip-review --linear PRODUCT-2281 --auto-merge."
-        ]
+        "ship_evidence": [
+          "Greptile exact-head review: 5/5 at 728d84e, Reviews (2), no new findings.",
+          "Canonical reviewer gate: valid and latched for explicit Greptile score threshold 4.",
+          "Audit 6.0 passed with the documented fork-wide hosted-CI exception; Audits 6a and 6b passed.",
+          "PR #9 squash-merged as 2fd330f after exact-head merge guard."
+        ],
+        "pending_gates": []
       }
     },
     "B04": {
       "name": "Provider-aware UI parity",
-      "status": "pending",
+      "status": "parallel_in_progress",
       "branch": "feature/codex-support-ui-parity",
-      "worktree": null,
+      "worktree": "/Users/jason/gitclone/hc-repo/worktrees/Claude-Usage-Tracker/phase-04-ui-parity",
       "target": "upstream/main",
       "depends_on": ["B03"],
       "phases": ["P10", "P11", "P12"],
-      "primary_linear_issue": null,
+      "primary_linear_issue": "PRODUCT-2283",
       "pr_number": null,
       "pr_url": null,
-      "head_sha": null,
-      "started_at": null,
-      "merged_at": null
+      "head_sha": "cefea32cbfaeabd7dcb14d1cb07f4d4a2f681807",
+      "started_at": "2026-07-30T15:45:45Z",
+      "merged_at": null,
+      "bootstrap": {
+        "status": "completed",
+        "commit_sha": "cefea32cbfaeabd7dcb14d1cb07f4d4a2f681807",
+        "completed_at": "2026-07-30T16:32:16Z",
+        "guarantees": [
+          "One stateless factory validates the canonical Codex home identity, resolves the executable without a shell, and creates a fresh provider or fetch per operation.",
+          "One production-disabled availability gate is shared by the registry, runtime, and UI composition roots until P17.",
+          "The menu layer publishes profile-keyed normalized presentation snapshots without falling back to the active profile when a clicked profile has no snapshot.",
+          "Codex login wait, cancel, and close paths are coordinated, idempotent, bounded, and leave no fake app-server processes.",
+          "Menu and status-item code can request provider-neutral, profile-specific settings destinations without owning settings navigation."
+        ],
+        "verified": [
+          "Full serial app suite: 419 passed, 0 failed, 0 skipped.",
+          "Full UsageKit Debug warnings-as-errors suite: 77 total, 0 failures, 1 expected opt-in live-smoke skip.",
+          "Focused app suites: 167 passed, 0 failed.",
+          "Strict-concurrency Debug app build passed.",
+          "Login race stress: 80 repeated test passes across four scenarios.",
+          "Diff, shell, JSON, auth-access, executable-resolution, and zero-process checks passed."
+        ]
+      }
     },
     "B05": {
       "name": "Release readiness and final parity",
@@ -419,7 +444,7 @@
       "linear_issue_id": null,
       "batch": "B03",
       "wave": "W03A",
-      "status": "implemented_pending_batch_ship",
+      "status": "done",
       "branch": "work/codex-provider-usagekit-core",
       "worktree": "/Users/jason/gitclone/hc-repo/worktrees/Claude-Usage-Tracker/worktree-e",
       "worker": "usagekit_contracts",
@@ -464,9 +489,7 @@
           "Full serial application suite: 396 passed, 0 failed, 0 skipped.",
           "Unsigned Debug, strict-concurrency, universal Release, TSan, and final safety gates passed."
         ],
-        "pending": [
-          "B03 ship pipeline."
-        ]
+        "pending": []
       }
     },
     "P06": {
@@ -476,7 +499,7 @@
       "linear_issue_id": null,
       "batch": "B03",
       "wave": "W03B",
-      "status": "implemented_pending_batch_ship",
+      "status": "done",
       "branch": "work/codex-provider-transport",
       "worktree": "/Users/jason/gitclone/hc-repo/worktrees/Claude-Usage-Tracker/worktree-g",
       "worker": "codex_transport",
@@ -522,7 +545,7 @@
           "Transport source parse, fixture shell syntax, schema provenance JSON, and scoped diff checks passed.",
           "An additional SwiftPM TSan run compiled but the test helper was blocked before execution by the host platform's TSan runtime code-sign policy."
         ],
-        "pending": ["B03 ship pipeline."]
+        "pending": []
       }
     },
     "P07": {
@@ -532,7 +555,7 @@
       "linear_issue_id": null,
       "batch": "B03",
       "wave": "W03B",
-      "status": "implemented_pending_batch_ship",
+      "status": "done",
       "branch": "feature/codex-support-provider-core",
       "worktree": "/Users/jason/gitclone/hc-repo/worktrees/Claude-Usage-Tracker/phase-03-provider-core",
       "worker": "provider_profile_model",
@@ -573,9 +596,7 @@
           "Full serial application suite: 396 passed, 0 failed, 0 skipped.",
           "Unsigned Debug, strict-concurrency, universal Release, and final safety gates passed."
         ],
-        "pending": [
-          "B03 ship pipeline."
-        ]
+        "pending": []
       }
     },
     "P08": {
@@ -585,7 +606,7 @@
       "linear_issue_id": null,
       "batch": "B03",
       "wave": "W03C",
-      "status": "implemented_pending_batch_ship",
+      "status": "done",
       "branch": "work/codex-provider-account-usage",
       "worktree": "/Users/jason/gitclone/hc-repo/worktrees/Claude-Usage-Tracker/worktree-j",
       "worker": "codex_provider",
@@ -621,9 +642,7 @@
           "Full UsageKit Debug and Release suites each completed 74 total tests with 0 failures and 1 expected opt-in live-smoke skip.",
           "Explicit live account/rate-limit smoke against installed Codex 0.145.0: 1 passed, 0 failed."
         ],
-        "pending": [
-          "B03 ship pipeline."
-        ]
+        "pending": []
       }
     },
     "P09": {
@@ -633,7 +652,7 @@
       "linear_issue_id": null,
       "batch": "B03",
       "wave": "W03D",
-      "status": "implemented_pending_batch_ship",
+      "status": "done",
       "branch": "feature/codex-support-provider-core",
       "worktree": "/Users/jason/gitclone/hc-repo/worktrees/Claude-Usage-Tracker/phase-03-provider-core",
       "worker": "refresh_engine",
@@ -674,9 +693,7 @@
           "Overlapping automatic-timer regression: 1 passed, 0 failed.",
           "Unsigned Debug, strict-concurrency, universal Release, and final safety gates passed."
         ],
-        "pending": [
-          "B03 ship pipeline."
-        ]
+        "pending": []
       }
     },
     "P10": {
@@ -686,12 +703,12 @@
       "linear_issue_id": null,
       "batch": "B04",
       "wave": "W04",
-      "status": "pending",
+      "status": "in_progress",
       "branch": "work/codex-ui-setup-settings",
-      "worktree": null,
-      "worker": null,
+      "worktree": "/Users/jason/gitclone/hc-repo/worktrees/Claude-Usage-Tracker/phase-04-ui-setup-settings",
+      "worker": "b04_p10_setup_settings",
       "commit_sha": null,
-      "started_at": null,
+      "started_at": "2026-07-30T16:32:16Z",
       "completed_at": null,
       "depends_on": ["P07", "P08", "P09"],
       "owns_files": [
@@ -723,12 +740,12 @@
       "linear_issue_id": null,
       "batch": "B04",
       "wave": "W04",
-      "status": "pending",
+      "status": "in_progress",
       "branch": "work/codex-ui-popover",
-      "worktree": null,
-      "worker": null,
+      "worktree": "/Users/jason/gitclone/hc-repo/worktrees/Claude-Usage-Tracker/phase-04-ui-popover",
+      "worker": "b04_p11_popover",
       "commit_sha": null,
-      "started_at": null,
+      "started_at": "2026-07-30T16:32:16Z",
       "completed_at": null,
       "depends_on": ["P05", "P08", "P09"],
       "owns_files": [
@@ -758,12 +775,12 @@
       "linear_issue_id": null,
       "batch": "B04",
       "wave": "W04",
-      "status": "pending",
+      "status": "in_progress",
       "branch": "work/codex-ui-menu-icons",
-      "worktree": null,
-      "worker": null,
+      "worktree": "/Users/jason/gitclone/hc-repo/worktrees/Claude-Usage-Tracker/phase-04-ui-menu-icons",
+      "worker": "b04_p12_menu_icons",
       "commit_sha": null,
-      "started_at": null,
+      "started_at": "2026-07-30T16:32:16Z",
       "completed_at": null,
       "depends_on": ["P07", "P09"],
       "owns_files": [
