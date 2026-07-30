@@ -1,5 +1,6 @@
 import Foundation
 import UsageCore
+import UserNotifications
 import XCTest
 @testable import Claude_Usage
 
@@ -436,48 +437,80 @@ final class ProviderHistoryNotificationTests: HostedAppTestCase {
             ),
             now: { exportedAt }
         ))
-        let claude = Profile(name: "Claude, profile")
+        let dangerousNames = [
+            "=HYPERLINK(\"bad\", \"Claude\")",
+            "+SUM(1, 1)",
+            "-10+20",
+            "@SUM(1, 1)",
+            "\t=1+1",
+            "\r=1+1"
+        ]
+        let claudeProfiles = dangerousNames.map {
+            Profile(name: $0)
+        }
         let codex = Profile(
             name: "Codex profile",
             providerConfiguration: .codex(
                 CodexProfileConfiguration()
             )
         )
+        let legacyHistory = UsageHistoryData(
+            snapshots: [
+                UsageSnapshot(
+                    resetType: .weeklyReset,
+                    sessionTokensUsed: 123_456_789,
+                    weeklyTokensUsed: 987_654_321,
+                    opusWeeklyPercentage: 12.3,
+                    sonnetWeeklyPercentage: 45.6,
+                    fableWeeklyPercentage: 78.9,
+                    apiSpendCents: 12_345,
+                    apiPrepaidCreditsCents: 67_890,
+                    apiCurrency: "=USD",
+                    triggeringResetTime: exportedAt
+                )
+            ]
+        )
+        for profile in claudeProfiles {
+            service.saveHistory(
+                legacyHistory,
+                for: profile.id
+            )
+        }
         service.saveHistory(
             UsageHistoryData(
-                snapshots: [
-                    UsageSnapshot(
-                        resetType: .weeklyReset,
-                        sessionTokensUsed: 123_456_789,
-                        weeklyTokensUsed: 987_654_321,
-                        opusWeeklyPercentage: 12.3,
-                        sonnetWeeklyPercentage: 45.6,
-                        fableWeeklyPercentage: 78.9,
-                        apiSpendCents: 12_345,
-                        apiPrepaidCreditsCents: 67_890,
-                        apiCurrency: "USD",
-                        triggeringResetTime: exportedAt
+                normalizedSnapshots: [
+                    NormalizedUsageSnapshot(
+                        timestamp: exportedAt,
+                        profileID: codex.id,
+                        providerID: .codex,
+                        groupID: try UsageLimitGroupID(
+                            "@future-group"
+                        ),
+                        windowID: try UsageWindowID(
+                            "+future-window"
+                        ),
+                        cycleID: "-future-cycle",
+                        usedPercentage: 37,
+                        quantity: try UsageQuantity(
+                            used: 37,
+                            limit: 100,
+                            unit: UsageUnit("=units")
+                        ),
+                        startedAt: nil,
+                        resetsAt: exportedAt,
+                        duration: nil,
+                        sourceUpdatedAt: exportedAt,
+                        fetchedAt: exportedAt
                     )
                 ]
             ),
-            for: claude.id
-        )
-        service.recordNormalizedReport(
-            try report(
-                providerID: .codex,
-                fetchedAt: exportedAt,
-                windows: [
-                    ("future-group", "future-window", 37, 11_000)
-                ]
-            ),
             for: codex.id,
-            providerID: .codex,
-            recordedAt: exportedAt
+            providerID: .codex
         )
 
         let csv = try XCTUnwrap(
             service.exportContent(
-                profiles: [claude, codex],
+                profiles: claudeProfiles + [codex],
                 format: .csv,
                 exportedAt: exportedAt
             )
@@ -485,14 +518,45 @@ final class ProviderHistoryNotificationTests: HostedAppTestCase {
         XCTAssertTrue(csv.contains("Schema Version"))
         XCTAssertTrue(csv.contains("Session Tokens"))
         XCTAssertTrue(csv.contains("API Prepaid Credits"))
-        XCTAssertTrue(csv.contains("\"Claude, profile\""))
+        for dangerousName in dangerousNames {
+            let neutralized = "'" + dangerousName
+            let expected: String
+            if neutralized.contains(",")
+                || neutralized.contains("\"")
+                || neutralized.contains("\n")
+                || neutralized.contains("\r") {
+                expected = "\""
+                    + neutralized.replacingOccurrences(
+                        of: "\"",
+                        with: "\"\""
+                    )
+                    + "\""
+            } else {
+                expected = neutralized
+            }
+            XCTAssertTrue(
+                csv.contains(expected),
+                "Missing neutralized CSV value for \(dangerousName.debugDescription)"
+            )
+            XCTAssertFalse(csv.contains(",\(dangerousName)"))
+        }
         XCTAssertTrue(csv.contains("123456789"))
         XCTAssertTrue(csv.contains("987654321"))
         XCTAssertTrue(csv.contains("123.45"))
         XCTAssertTrue(csv.contains("678.9"))
-        XCTAssertTrue(csv.contains("future-group"))
-        XCTAssertTrue(csv.contains("future-window"))
+        XCTAssertTrue(csv.contains("'@future-group"))
+        XCTAssertTrue(csv.contains("'+future-window"))
+        XCTAssertTrue(csv.contains("'-future-cycle"))
+        XCTAssertTrue(csv.contains("'=units"))
+        XCTAssertTrue(csv.contains("'=USD"))
         XCTAssertTrue(csv.contains(",37.0,"))
+        let rows = try parseCSV(csv)
+        XCTAssertFalse(rows.isEmpty)
+        XCTAssertTrue(rows.allSatisfy { $0.count == 22 })
+        let fields = Set(rows.dropFirst().flatMap { $0 })
+        for dangerousName in dangerousNames {
+            XCTAssertTrue(fields.contains("'" + dangerousName))
+        }
     }
 
     func testNotificationCrossingDedupAndNewCycleResetRealert()
@@ -515,7 +579,7 @@ final class ProviderHistoryNotificationTests: HostedAppTestCase {
             previousStates: [:],
             sentIdentities: []
         )
-        XCTAssertTrue(baseline.events.isEmpty)
+        XCTAssertEqual(baseline.events.map(\.threshold), [95])
 
         let low = try report(
             providerID: .codex,
@@ -581,6 +645,145 @@ final class ProviderHistoryNotificationTests: HostedAppTestCase {
             }),
             [profileID]
         )
+    }
+
+    func testFirstHighObservationMatchesClaudePolicyForEveryProvider()
+        throws
+    {
+        let now = Date(timeIntervalSinceReferenceDate: 40_000)
+        for providerID in [ProviderID.claude, .codex] {
+            let groupID =
+                providerID == .claude ? "subscription" : "group"
+            let windowID =
+                providerID == .claude ? "session" : "primary"
+            let high = try report(
+                providerID: providerID,
+                fetchedAt: now,
+                windows: [(groupID, windowID, 96, 50_000)]
+            )
+            let result = UsageNotificationPolicy.evaluate(
+                report: high,
+                profileID: UUID(),
+                settings: NotificationSettings(),
+                now: now,
+                previousStates: [:],
+                sentIdentities: []
+            )
+
+            XCTAssertEqual(
+                result.events.map(\.threshold),
+                [95],
+                "First-high parity failed for \(providerID.rawValue)"
+            )
+        }
+    }
+
+    func testClaudeNotificationsIgnoreWeeklyModelAndOverageWindows()
+        throws
+    {
+        let profileID = UUID()
+        let now = Date(timeIntervalSinceReferenceDate: 45_000)
+        let initial = try report(
+            providerID: .claude,
+            fetchedAt: now,
+            windows: [
+                ("subscription", "session", 10, 55_000),
+                ("subscription", "weekly", 96, 65_000),
+                ("opus", "weekly", 96, 65_000),
+                ("extra-usage", "current", 96, 75_000)
+            ]
+        )
+        let first = UsageNotificationPolicy.evaluate(
+            report: initial,
+            profileID: profileID,
+            settings: NotificationSettings(),
+            now: now,
+            previousStates: [:],
+            sentIdentities: []
+        )
+        XCTAssertTrue(first.events.isEmpty)
+        XCTAssertEqual(
+            Set(first.states.keys.map(\.windowID.rawValue)),
+            ["session"]
+        )
+
+        let highSession = try report(
+            providerID: .claude,
+            fetchedAt: now.addingTimeInterval(1),
+            windows: [
+                ("subscription", "session", 96, 55_000),
+                ("subscription", "weekly", 96, 65_000),
+                ("opus", "weekly", 96, 65_000),
+                ("extra-usage", "current", 96, 75_000)
+            ]
+        )
+        let second = UsageNotificationPolicy.evaluate(
+            report: highSession,
+            profileID: profileID,
+            settings: NotificationSettings(),
+            now: now.addingTimeInterval(1),
+            previousStates: first.states,
+            sentIdentities: []
+        )
+        XCTAssertEqual(second.events.count, 1)
+        XCTAssertEqual(
+            second.events.first?.identity.window.groupID.rawValue,
+            "subscription"
+        )
+        XCTAssertEqual(
+            second.events.first?.identity.window.windowID.rawValue,
+            "session"
+        )
+        XCTAssertEqual(second.events.first?.threshold, 95)
+    }
+
+    func testFailedDeliveryRetriesWithoutLosingSuccessfulIdentity()
+        throws
+    {
+        let environment = try makeEnvironment()
+        var requests: [UNNotificationRequest] = []
+        var completions: [(Error?) -> Void] = []
+        let manager = retain(NotificationManager(
+            defaults: environment.defaults,
+            notificationRequestAdder: { request, completion in
+                requests.append(request)
+                completions.append(completion)
+            }
+        ))
+        let profileID = UUID()
+        let now = Date(timeIntervalSinceReferenceDate: 47_000)
+        let high = try report(
+            providerID: .codex,
+            fetchedAt: now,
+            windows: [
+                ("group", "primary", 96, 57_000),
+                ("group", "secondary", 96, 67_000)
+            ]
+        )
+
+        manager.checkAndNotify(
+            report: high,
+            profileID: profileID,
+            profileName: "Codex",
+            settings: NotificationSettings(),
+            now: now
+        )
+        XCTAssertEqual(requests.count, 2)
+        let failedIdentifier = requests[0].identifier
+        let successfulIdentifier = requests[1].identifier
+        completions[0](TestError.expected)
+        completions[1](nil)
+
+        manager.checkAndNotify(
+            report: high,
+            profileID: profileID,
+            profileName: "Codex",
+            settings: NotificationSettings(),
+            now: now.addingTimeInterval(1)
+        )
+        XCTAssertEqual(requests.count, 3)
+        XCTAssertEqual(requests.last?.identifier, failedIdentifier)
+        XCTAssertNotEqual(requests.last?.identifier, successfulIdentifier)
     }
 
     func testNotificationsRetainMissingWindowStateAndSeparateProfiles()
@@ -688,6 +891,24 @@ final class ProviderHistoryNotificationTests: HostedAppTestCase {
             )
         XCTAssertTrue(unavailableResult.events.isEmpty)
         XCTAssertEqual(unavailableResult.states, existing)
+
+        let recovered = try report(
+            providerID: .codex,
+            fetchedAt: now.addingTimeInterval(1),
+            windows: [("group", "window", 99, 90_000)]
+        )
+        let recoveredResult = UsageNotificationPolicy.evaluate(
+            report: recovered,
+            profileID: profileID,
+            settings: NotificationSettings(),
+            now: now.addingTimeInterval(1),
+            previousStates: unavailableResult.states,
+            sentIdentities: []
+        )
+        XCTAssertEqual(
+            recoveredResult.events.compactMap(\.threshold),
+            [95]
+        )
     }
 
     func testAutomationCapabilityMatrixIsExplicit() {
@@ -704,18 +925,42 @@ final class ProviderHistoryNotificationTests: HostedAppTestCase {
             XCTAssertNotEqual(claude[capability], .unknown)
             XCTAssertNotEqual(codex[capability], .unknown)
         }
-        XCTAssertTrue(claude.supports(.automaticSessionStart))
-        XCTAssertFalse(codex.supports(.automaticSessionStart))
-        XCTAssertTrue(claude.supports(.statusLineIntegration))
-        XCTAssertFalse(codex.supports(.statusLineIntegration))
-        XCTAssertTrue(claude.supports(.cliAccountSync))
-        XCTAssertFalse(codex.supports(.cliAccountSync))
-        XCTAssertTrue(claude.supports(.apiBilling))
-        XCTAssertFalse(codex.supports(.apiBilling))
-        XCTAssertTrue(claude.supports(.usageHistory))
-        XCTAssertTrue(codex.supports(.usageHistory))
-        XCTAssertTrue(claude.supports(.usageNotifications))
-        XCTAssertTrue(codex.supports(.usageNotifications))
+        let claudePolicy = ProviderFeatureSurfacePolicy(
+            capabilities: claude
+        )
+        let codexPolicy = ProviderFeatureSurfacePolicy(
+            capabilities: codex
+        )
+        let expectations: [
+            ProviderFeatureSurface: (claude: Bool, codex: Bool)
+        ] = [
+            .history: (true, true),
+            .notifications: (true, true),
+            .automaticSessionStart: (true, false),
+            .statusLine: (true, false),
+            .cliAccountSync: (true, false),
+            .apiBilling: (true, false),
+            .genericRefresh: (true, true),
+            .shortcuts: (true, true),
+            .launchAtLogin: (true, true)
+        ]
+        XCTAssertEqual(
+            Set(expectations.keys),
+            Set(ProviderFeatureSurface.allCases)
+        )
+        for surface in ProviderFeatureSurface.allCases {
+            let expected = expectations[surface]
+            XCTAssertEqual(
+                claudePolicy.supports(surface),
+                expected?.claude,
+                "Claude surface policy missing \(surface)"
+            )
+            XCTAssertEqual(
+                codexPolicy.supports(surface),
+                expected?.codex,
+                "Codex surface policy missing \(surface)"
+            )
+        }
         XCTAssertEqual(
             Set(ShortcutAction.allCases),
             [.togglePopover, .refresh, .openSettings, .nextProfile]
@@ -825,6 +1070,26 @@ final class ProviderHistoryNotificationTests: HostedAppTestCase {
         XCTAssertTrue(calls.isEmpty)
 
         calls.removeAll()
+        let claudeReport = try self.report(
+            providerID: .claude,
+            fetchedAt: now,
+            windows: [("subscription", "session", 50, 110_000)]
+        )
+        let claude = acceptedEvent(
+            profileID: profileID,
+            providerRevision: 2,
+            context: context,
+            report: claudeReport,
+            capabilities: ClaudeUsageProviderAdapter.capabilities,
+            committedAt: now
+        )
+        router.committed(claude)
+        XCTAssertFalse(
+            calls.contains("history"),
+            "Claude must not dual-write normalized and legacy history"
+        )
+
+        calls.removeAll()
         let unavailable = acceptedEvent(
             profileID: profileID,
             providerRevision: 2,
@@ -929,6 +1194,62 @@ final class ProviderHistoryNotificationTests: HostedAppTestCase {
                 staleAt
                 ?? fetchedAt.addingTimeInterval(300)
         )
+    }
+
+    private enum TestError: Error {
+        case expected
+        case unterminatedCSVQuote
+    }
+
+    private func parseCSV(_ csv: String) throws -> [[String]] {
+        let characters = Array(csv)
+        var rows: [[String]] = []
+        var row: [String] = []
+        var field = ""
+        var inQuotes = false
+        var index = 0
+
+        while index < characters.count {
+            let character = characters[index]
+            if character == "\"" {
+                if inQuotes,
+                   index + 1 < characters.count,
+                   characters[index + 1] == "\"" {
+                    field.append("\"")
+                    index += 2
+                    continue
+                }
+                inQuotes.toggle()
+            } else if character == ",", !inQuotes {
+                row.append(field)
+                field = ""
+            } else if (character == "\n" || character == "\r"),
+                      !inQuotes {
+                row.append(field)
+                field = ""
+                if !row.allSatisfy(\.isEmpty) {
+                    rows.append(row)
+                }
+                row = []
+                if character == "\r",
+                   index + 1 < characters.count,
+                   characters[index + 1] == "\n" {
+                    index += 1
+                }
+            } else {
+                field.append(character)
+            }
+            index += 1
+        }
+
+        guard !inQuotes else {
+            throw TestError.unterminatedCSVQuote
+        }
+        if !field.isEmpty || !row.isEmpty {
+            row.append(field)
+            rows.append(row)
+        }
+        return rows
     }
 
     private func makeEnvironment() throws -> (

@@ -29,6 +29,17 @@ struct NormalizedUsageChart: View {
         }
     }
 
+    private var canGoBack: Bool {
+        guard let oldest = snapshots.map(\.timestamp).min() else {
+            return false
+        }
+        return oldest < visibleRange.lowerBound
+    }
+
+    private var canGoForward: Bool {
+        timeOffset < 0
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
@@ -42,6 +53,7 @@ struct NormalizedUsageChart: View {
                     Image(systemName: "chevron.left")
                 }
                 .buttonStyle(.plain)
+                .disabled(!canGoBack)
                 Button {
                     timeOffset = min(
                         0,
@@ -51,7 +63,7 @@ struct NormalizedUsageChart: View {
                     Image(systemName: "chevron.right")
                 }
                 .buttonStyle(.plain)
-                .disabled(timeOffset == 0)
+                .disabled(!canGoForward)
             }
 
             Chart(visibleSnapshots) { snapshot in

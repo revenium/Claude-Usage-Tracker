@@ -912,10 +912,7 @@ final class MenuReliabilityTests: HostedAppTestCase {
 
         XCTAssertEqual(
             recorder.snapshot(),
-            [
-                "history:Initiating name",
-                "api-history:Initiating name"
-            ]
+            ["api-history:Initiating name"]
         )
 
         router.presented(
@@ -927,7 +924,6 @@ final class MenuReliabilityTests: HostedAppTestCase {
         XCTAssertEqual(
             recorder.snapshot(),
             [
-                "history:Initiating name",
                 "api-history:Initiating name",
                 "statusline:Initiating name",
                 "notify:Initiating name:false:Captured sound",
@@ -963,7 +959,7 @@ final class MenuReliabilityTests: HostedAppTestCase {
 
         XCTAssertEqual(
             recorder.snapshot(),
-            ["history:Captured", "api-history:Captured"]
+            ["api-history:Captured"]
         )
     }
 

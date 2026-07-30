@@ -551,7 +551,9 @@ struct SettingsView: View {
                         dependencies: dependencies
                     )
                 case .history:
-                    UsageHistoryView()
+                    UsageHistoryView(
+                        dependencies: dependencies
+                    )
 
                 // Shared Settings
                 case .appSettings:
@@ -619,7 +621,20 @@ struct ProfileSectionContainer: View {
     }
 
     var profileSections: [SettingsSection] {
-        SettingsSection.allCases.filter { $0.isProfileSetting && !$0.isCredential }
+        let policy = profileManager.activeProfile.map {
+            ProviderFeatureSurfacePolicy(
+                capabilities: dependencies.capabilities(
+                    for: $0.providerID
+                )
+            )
+        }
+        return SettingsSection.allCases.filter {
+            guard $0.isProfileSetting && !$0.isCredential else {
+                return false
+            }
+            return $0 != .history
+                || policy?.supports(.history) != false
+        }
     }
 
     var body: some View {
@@ -743,9 +758,11 @@ struct AppSettingsSection: View {
             }
             if $0 == .claudeCode,
                let providerID {
-                return dependencies.capabilities(
-                    for: providerID
-                ).supports(.statusLineIntegration)
+                return ProviderFeatureSurfacePolicy(
+                    capabilities: dependencies.capabilities(
+                        for: providerID
+                    )
+                ).supports(.statusLine)
             }
             return true
         }
@@ -1072,6 +1089,11 @@ struct ProfileCredentialCardsRow: View {
                 }
                 .buttonStyle(.plain)
             } else {
+                let surfacePolicy = ProviderFeatureSurfacePolicy(
+                    capabilities: dependencies.capabilities(
+                        for: .claude
+                    )
+                )
                 // Claude.ai Card
                 Button {
                     selectedSection = .claudeAI
@@ -1086,33 +1108,39 @@ struct ProfileCredentialCardsRow: View {
                 }
                 .buttonStyle(.plain)
 
-                // API Console Card
-                Button {
-                    selectedSection = .apiConsole
-                } label: {
-                    CredentialMiniCard(
-                        icon: "dollarsign.circle.fill",
-                        title: "API Console",
-                        isConnected:
-                            credentials?.apiSessionKey != nil,
-                        isSelected: selectedSection == .apiConsole
-                    )
+                if surfacePolicy.supports(.apiBilling) {
+                    // API Console Card
+                    Button {
+                        selectedSection = .apiConsole
+                    } label: {
+                        CredentialMiniCard(
+                            icon: "dollarsign.circle.fill",
+                            title: "API Console",
+                            isConnected:
+                                credentials?.apiSessionKey != nil,
+                            isSelected:
+                                selectedSection == .apiConsole
+                        )
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
 
-                // CLI Account Card
-                Button {
-                    selectedSection = .cliAccount
-                } label: {
-                    CredentialMiniCard(
-                        icon: "terminal.fill",
-                        title: "CLI Account",
-                        isConnected: profileManager.activeProfile?
-                            .hasCliAccount ?? false,
-                        isSelected: selectedSection == .cliAccount
-                    )
+                if surfacePolicy.supports(.cliAccountSync) {
+                    // CLI Account Card
+                    Button {
+                        selectedSection = .cliAccount
+                    } label: {
+                        CredentialMiniCard(
+                            icon: "terminal.fill",
+                            title: "CLI Account",
+                            isConnected: profileManager.activeProfile?
+                                .hasCliAccount ?? false,
+                            isSelected:
+                                selectedSection == .cliAccount
+                        )
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             }
         }
         .onAppear {

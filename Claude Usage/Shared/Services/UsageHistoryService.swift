@@ -675,6 +675,8 @@ class UsageHistoryService: ProfileHistoryDeleting {
         case csv
     }
 
+    /// Stable analysis-oriented projection for spreadsheets. Versioned JSON
+    /// remains the lossless export containing every normalized field.
     private static func csv(
         document: UsageHistoryExportDocument,
         resetType: ResetType?
@@ -711,7 +713,7 @@ class UsageHistoryService: ProfileHistoryDeleting {
                     String(document.schemaVersion),
                     profile.profileID.uuidString,
                     escapedCSV(profile.profileName),
-                    profile.providerID.rawValue,
+                    escapedCSV(profile.providerID.rawValue),
                     formatter.string(from: snapshot.timestamp),
                     escapedCSV(snapshot.groupID.rawValue),
                     escapedCSV(snapshot.windowID.rawValue),
@@ -719,8 +721,13 @@ class UsageHistoryService: ProfileHistoryDeleting {
                     percentage,
                     used,
                     limit,
-                    snapshot.quantity?.unit.rawValue ?? "",
-                    snapshot.quantity?.currencyCode?.rawValue ?? "",
+                    escapedCSV(
+                        snapshot.quantity?.unit.rawValue ?? ""
+                    ),
+                    escapedCSV(
+                        snapshot.quantity?.currencyCode?.rawValue
+                            ?? ""
+                    ),
                     startedAt,
                     resetsAt,
                     "",
@@ -783,16 +790,16 @@ class UsageHistoryService: ProfileHistoryDeleting {
                     String(document.schemaVersion),
                     profile.profileID.uuidString,
                     escapedCSV(profile.profileName),
-                    profile.providerID.rawValue,
+                    escapedCSV(profile.providerID.rawValue),
                     formatter.string(from: snapshot.timestamp),
-                    "legacy",
-                    snapshot.resetType.rawValue,
+                    escapedCSV("legacy"),
+                    escapedCSV(snapshot.resetType.rawValue),
                     escapedCSV(cycleID),
                     percentage,
                     "",
                     "",
                     "",
-                    snapshot.apiCurrency ?? "",
+                    escapedCSV(snapshot.apiCurrency ?? ""),
                     "",
                     formatter.string(
                         from: snapshot.triggeringResetTime
@@ -812,12 +819,25 @@ class UsageHistoryService: ProfileHistoryDeleting {
     }
 
     private static func escapedCSV(_ value: String) -> String {
-        guard value.contains(",")
-                || value.contains("\"")
-                || value.contains("\n") else {
-            return value
+        let formulaPrefixes: Set<Character> = [
+            "=", "+", "-", "@", "\t", "\r"
+        ]
+        let safeValue: String
+        if let first = value.first,
+           formulaPrefixes.contains(first) {
+            // Keep user-controlled labels from becoming formulas when the
+            // export is opened in a spreadsheet application.
+            safeValue = "'" + value
+        } else {
+            safeValue = value
         }
-        return "\"\(value.replacingOccurrences(of: "\"", with: "\"\""))\""
+        guard safeValue.contains(",")
+                || safeValue.contains("\"")
+                || safeValue.contains("\n")
+                || safeValue.contains("\r") else {
+            return safeValue
+        }
+        return "\"\(safeValue.replacingOccurrences(of: "\"", with: "\"\""))\""
     }
 
     // MARK: - Cleanup

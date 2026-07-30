@@ -34,10 +34,9 @@ struct UsageHistoryView: View {
     @State private var selectedTimeScale: ChartTimeScale = .hours24
     @State private var selectedWindowKey = "all"
 
-    init(dependencies: ProviderUIDependencies? = nil) {
-        let dependencies =
-            dependencies
-            ?? ProviderUICompositionRoot.shared.dependencies
+    /// Require the caller's composition root so settings navigation, history,
+    /// capabilities, and export observe the same profile manager.
+    init(dependencies: ProviderUIDependencies) {
         self.dependencies = dependencies
         _profileManager = ObservedObject(
             wrappedValue: dependencies.profileManager
@@ -80,14 +79,18 @@ struct UsageHistoryView: View {
                                 historyData.weeklySnapshots,
                             timeScale: $selectedTimeScale
                         )
+                    } else if normalizedSeries.isEmpty {
+                        emptyChartView
                     } else {
                         normalizedHistorySection
                     }
 
                     // Billing Section
-                    if dependencies.capabilities(
-                        for: profile.providerID
-                       ).supports(.apiBilling) {
+                    if ProviderFeatureSurfacePolicy(
+                        capabilities: dependencies.capabilities(
+                            for: profile.providerID
+                        )
+                    ).supports(.apiBilling) {
                         billingSection
                     }
 
@@ -106,6 +109,7 @@ struct UsageHistoryView: View {
             loadHistory()
         }
         .onChange(of: profileManager.activeProfile?.id) {
+            selectedWindowKey = "all"
             loadHistory()
         }
         .onChange(of: profileManager.activeProfile?.providerID) {
@@ -811,6 +815,8 @@ struct CombinedUsageChart: View {
 // MARK: - Previews
 
 #Preview("History View") {
-    UsageHistoryView()
+    UsageHistoryView(
+        dependencies: ProviderUICompositionRoot.shared.dependencies
+    )
         .frame(width: 520, height: 700)
 }

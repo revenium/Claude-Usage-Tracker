@@ -96,6 +96,7 @@ class MenuBarManager: NSObject, ObservableObject {
         func committed(_ event: AcceptedUsageRefreshEvent) {
             if event.acceptedComponents.contains(.providerUsage),
                event.capabilities.supports(.usageHistory),
+               event.identity.providerID != .claude,
                let report = event.currentUsage.report,
                report.providerID == event.identity.providerID {
                 hooks.recordNormalized(event, report)

@@ -36,6 +36,11 @@ struct GeneralSettingsView: View {
                 )
 
                 if let profile = profileManager.activeProfile {
+                    let surfacePolicy = ProviderFeatureSurfacePolicy(
+                        capabilities: dependencies.capabilities(
+                            for: profile.providerID
+                        )
+                    )
                     // Refresh Interval
                     SettingsSectionCard(
                         title: "general.refresh_title".localized,
@@ -79,9 +84,9 @@ struct GeneralSettingsView: View {
                         }
                     }
 
-                    if dependencies.capabilities(
-                        for: profile.providerID
-                    ).supports(.automaticSessionStart) {
+                    if surfacePolicy.supports(
+                        .automaticSessionStart
+                    ) {
                         // Auto-Start Session
                         SettingsSectionCard(
                             title: "general.autostart_title".localized,
@@ -132,119 +137,137 @@ struct GeneralSettingsView: View {
                         )
                     }
 
-                    // Notifications
-                    SettingsSectionCard(
-                        title: "general.notifications_title".localized,
-                        subtitle: "general.notifications_subtitle".localized
-                    ) {
-                        VStack(alignment: .leading, spacing: DesignTokens.Spacing.cardPadding) {
-                            SettingToggle(
-                                title: "notifications.enable".localized,
-                                description: "notifications.enable.description".localized,
-                                isOn: Binding(
-                                    get: { profile.notificationSettings.enabled },
-                                    set: { newValue in
-                                        var updated = profile
-                                        updated.notificationSettings.enabled = newValue
-                                        profileManager.updateProfile(updated)
+                    if surfacePolicy.supports(.notifications) {
+                        // Notifications
+                        SettingsSectionCard(
+                            title: "general.notifications_title".localized,
+                            subtitle: "general.notifications_subtitle".localized
+                        ) {
+                            VStack(alignment: .leading, spacing: DesignTokens.Spacing.cardPadding) {
+                                SettingToggle(
+                                    title: "notifications.enable".localized,
+                                    description: "notifications.enable.description".localized,
+                                    isOn: Binding(
+                                        get: { profile.notificationSettings.enabled },
+                                        set: { newValue in
+                                            var updated = profile
+                                            updated.notificationSettings.enabled = newValue
+                                            profileManager.updateProfile(updated)
 
-                                        if newValue {
-                                            requestNotificationPermission()
+                                            if newValue {
+                                                requestNotificationPermission()
+                                            }
+                                        }
+                                    )
+                                )
+
+                                if profile.notificationSettings.enabled {
+                                    Divider()
+
+                                    // Built-in thresholds (toggleable)
+                                    VStack(alignment: .leading, spacing: DesignTokens.Spacing.medium) {
+                                        Text("notifications.alert_thresholds".localized)
+                                            .font(DesignTokens.Typography.body)
+                                            .fontWeight(.medium)
+                                            .foregroundColor(.secondary)
+
+                                        VStack(spacing: DesignTokens.Spacing.small) {
+                                            ThresholdToggleRow(
+                                                level: "75%",
+                                                color: SettingsColors.usageMedium,
+                                                label: "notifications.threshold.warning".localized,
+                                                isOn: Binding(
+                                                    get: { profile.notificationSettings.threshold75Enabled },
+                                                    set: { newValue in
+                                                        var updated = profile
+                                                        updated.notificationSettings.threshold75Enabled = newValue
+                                                        profileManager.updateProfile(updated)
+                                                    }
+                                                )
+                                            )
+                                            ThresholdToggleRow(
+                                                level: "90%",
+                                                color: SettingsColors.usageHigh,
+                                                label: "notifications.threshold.high".localized,
+                                                isOn: Binding(
+                                                    get: { profile.notificationSettings.threshold90Enabled },
+                                                    set: { newValue in
+                                                        var updated = profile
+                                                        updated.notificationSettings.threshold90Enabled = newValue
+                                                        profileManager.updateProfile(updated)
+                                                    }
+                                                )
+                                            )
+                                            ThresholdToggleRow(
+                                                level: "95%",
+                                                color: SettingsColors.usageCritical,
+                                                label: "notifications.threshold.critical".localized,
+                                                isOn: Binding(
+                                                    get: { profile.notificationSettings.threshold95Enabled },
+                                                    set: { newValue in
+                                                        var updated = profile
+                                                        updated.notificationSettings.threshold95Enabled = newValue
+                                                        profileManager.updateProfile(updated)
+                                                    }
+                                                )
+                                            )
+                                            ThresholdIndicator(level: "0%", color: SettingsColors.usageLow, label: "notifications.threshold.session_reset".localized)
                                         }
                                     }
-                                )
-                            )
 
-                            if profile.notificationSettings.enabled {
-                                Divider()
+                                    // Custom thresholds
+                                    Divider()
 
-                                // Built-in thresholds (toggleable)
-                                VStack(alignment: .leading, spacing: DesignTokens.Spacing.medium) {
-                                    Text("notifications.alert_thresholds".localized)
-                                        .font(DesignTokens.Typography.body)
-                                        .fontWeight(.medium)
-                                        .foregroundColor(.secondary)
+                                    VStack(alignment: .leading, spacing: DesignTokens.Spacing.medium) {
+                                        Text("notifications.custom_thresholds".localized)
+                                            .font(DesignTokens.Typography.body)
+                                            .fontWeight(.medium)
+                                            .foregroundColor(.secondary)
 
-                                    VStack(spacing: DesignTokens.Spacing.small) {
-                                        ThresholdToggleRow(
-                                            level: "75%",
-                                            color: SettingsColors.usageMedium,
-                                            label: "notifications.threshold.warning".localized,
-                                            isOn: Binding(
-                                                get: { profile.notificationSettings.threshold75Enabled },
+                                        CustomThresholdsEditor(
+                                            thresholds: Binding(
+                                                get: { profile.notificationSettings.customThresholds },
                                                 set: { newValue in
                                                     var updated = profile
-                                                    updated.notificationSettings.threshold75Enabled = newValue
+                                                    updated.notificationSettings.customThresholds = newValue
                                                     profileManager.updateProfile(updated)
                                                 }
                                             )
                                         )
-                                        ThresholdToggleRow(
-                                            level: "90%",
-                                            color: SettingsColors.usageHigh,
-                                            label: "notifications.threshold.high".localized,
-                                            isOn: Binding(
-                                                get: { profile.notificationSettings.threshold90Enabled },
-                                                set: { newValue in
-                                                    var updated = profile
-                                                    updated.notificationSettings.threshold90Enabled = newValue
-                                                    profileManager.updateProfile(updated)
-                                                }
-                                            )
-                                        )
-                                        ThresholdToggleRow(
-                                            level: "95%",
-                                            color: SettingsColors.usageCritical,
-                                            label: "notifications.threshold.critical".localized,
-                                            isOn: Binding(
-                                                get: { profile.notificationSettings.threshold95Enabled },
-                                                set: { newValue in
-                                                    var updated = profile
-                                                    updated.notificationSettings.threshold95Enabled = newValue
-                                                    profileManager.updateProfile(updated)
-                                                }
-                                            )
-                                        )
-                                        ThresholdIndicator(level: "0%", color: SettingsColors.usageLow, label: "notifications.threshold.session_reset".localized)
                                     }
-                                }
 
-                                // Custom thresholds
-                                Divider()
+                                    // Sound picker
+                                    Divider()
 
-                                VStack(alignment: .leading, spacing: DesignTokens.Spacing.medium) {
-                                    Text("notifications.custom_thresholds".localized)
-                                        .font(DesignTokens.Typography.body)
-                                        .fontWeight(.medium)
-                                        .foregroundColor(.secondary)
-
-                                    CustomThresholdsEditor(
-                                        thresholds: Binding(
-                                            get: { profile.notificationSettings.customThresholds },
+                                    NotificationSoundPicker(
+                                        soundName: Binding(
+                                            get: { profile.notificationSettings.soundName },
                                             set: { newValue in
                                                 var updated = profile
-                                                updated.notificationSettings.customThresholds = newValue
+                                                updated.notificationSettings.soundName = newValue
                                                 profileManager.updateProfile(updated)
                                             }
                                         )
                                     )
                                 }
-
-                                // Sound picker
-                                Divider()
-
-                                NotificationSoundPicker(
-                                    soundName: Binding(
-                                        get: { profile.notificationSettings.soundName },
-                                        set: { newValue in
-                                            var updated = profile
-                                            updated.notificationSettings.soundName = newValue
-                                            profileManager.updateProfile(updated)
-                                        }
-                                    )
-                                )
                             }
                         }
+                    } else {
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: "info.circle.fill")
+                            Text(
+                                ProviderUILocalization.text(
+                                    "provider.capability.notifications_unavailable",
+                                    fallback:
+                                        "Usage notifications are not available for this provider."
+                                )
+                            )
+                        }
+                        .font(DesignTokens.Typography.caption)
+                        .foregroundColor(.secondary)
+                        .accessibilityIdentifier(
+                            ProviderUIAccessibility.capabilityDisabled
+                        )
                     }
 
                 }

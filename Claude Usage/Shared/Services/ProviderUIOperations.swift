@@ -97,6 +97,58 @@ struct ProviderProfilePresentation: Equatable {
     }
 }
 
+/// Every provider-sensitive settings/automation surface has one explicit
+/// policy entry. Generic app controls deliberately remain provider-neutral.
+nonisolated enum ProviderFeatureSurface:
+    CaseIterable,
+    Equatable,
+    Hashable,
+    Sendable
+{
+    case history
+    case notifications
+    case automaticSessionStart
+    case statusLine
+    case cliAccountSync
+    case apiBilling
+    case genericRefresh
+    case shortcuts
+    case launchAtLogin
+
+    var capability: ProviderCapability? {
+        switch self {
+        case .history:
+            return .usageHistory
+        case .notifications:
+            return .usageNotifications
+        case .automaticSessionStart:
+            return .automaticSessionStart
+        case .statusLine:
+            return .statusLineIntegration
+        case .cliAccountSync:
+            return .cliAccountSync
+        case .apiBilling:
+            return .apiBilling
+        case .genericRefresh, .shortcuts, .launchAtLogin:
+            return nil
+        }
+    }
+}
+
+nonisolated struct ProviderFeatureSurfacePolicy:
+    Equatable,
+    Sendable
+{
+    let capabilities: ProviderCapabilities
+
+    func supports(_ surface: ProviderFeatureSurface) -> Bool {
+        guard let capability = surface.capability else {
+            return true
+        }
+        return capabilities.supports(capability)
+    }
+}
+
 nonisolated enum ProviderUILoginFlow: Equatable, Sendable {
     case browser
     case deviceCode
