@@ -16,14 +16,14 @@ class ErrorLogger {
     private let maxLogSize = 100
     private let logQueue = DispatchQueue(label: "com.claude-usage.errorlogger", qos: .utility)
 
-    private init() {}
+    init() {}
 
     // MARK: - Logging
 
     /// Log an error
     func log(_ error: AppError, severity: ErrorSeverity = .error) {
         logQueue.async { [weak self] in
-            guard let self = self else { return }
+            guard let self else { return }
 
             let logged = LoggedError(
                 error: error,
@@ -74,6 +74,19 @@ class ErrorLogger {
         }
     }
 
+    /// Safe enumerated categories only; diagnostics never receive raw errors.
+    func getRecentProviderCategories(
+        count: Int = 10
+    ) -> [ProviderErrorCategory] {
+        logQueue.sync {
+            Array(
+                errorLog
+                    .compactMap(\.error.providerCategory)
+                    .suffix(count)
+            )
+        }
+    }
+
     /// Clear all logs
     func clearLog() {
         logQueue.async { [weak self] in
@@ -97,7 +110,7 @@ class ErrorLogger {
                 export += String(repeating: "-", count: 60) + "\n"
             }
 
-            return export
+            return SensitiveDataRedactor.redact(export)
         }
     }
 
@@ -138,10 +151,21 @@ class ErrorLogger {
         let icon = logged.severity.icon
         let timestamp = logged.timestamp.formatted(date: .omitted, time: .standard)
 
-        print("\(icon) [\(timestamp)] [\(logged.severity.rawValue.uppercased())] \(logged.error.description)")
+        print(
+            SensitiveDataRedactor.redact(
+                "\(icon) [\(timestamp)] "
+                    + "[\(logged.severity.rawValue.uppercased())] "
+                    + logged.error.description
+            )
+        )
 
         if let context = logged.error.context {
-            print("   📍 \(context.fileName):\(context.line) in \(context.function)")
+            print(
+                SensitiveDataRedactor.redact(
+                    "   📍 \(context.fileName):"
+                        + "\(context.line) in \(context.function)"
+                )
+            )
         }
 
         if logged.error.isRecoverable {
@@ -151,7 +175,10 @@ class ErrorLogger {
         }
 
         if let suggestion = logged.error.recoverySuggestion {
-            print("   💡 \(suggestion)")
+            print(
+                "   💡 "
+                    + SensitiveDataRedactor.redact(suggestion)
+            )
         }
     }
 }

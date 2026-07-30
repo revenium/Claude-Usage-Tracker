@@ -55,6 +55,31 @@ class ErrorRecovery {
             // Service unavailable - retry with backoff
             return .retryAfter(delay: exponentialBackoff(attempt: attemptNumber, base: 3.0), strategy: .exponential)
 
+        // Provider failures: only bounded transient failures are automatic.
+        case .providerTimedOut, .providerTransientFailure:
+            return .retryAfter(
+                delay: exponentialBackoff(
+                    attempt: attemptNumber,
+                    base: 2.0
+                ),
+                strategy: .exponential
+            )
+
+        case .providerExecutableMissing,
+             .providerLaunchFailed,
+             .providerCancelled,
+             .providerIncompatible,
+             .providerMalformedResponse,
+             .providerInvalidHome,
+             .providerDuplicateHome,
+             .providerLoggedOut,
+             .providerUnsupportedAccount,
+             .providerPartialUsage:
+            return .doNotRetry(
+                reason:
+                    "Provider recovery requires an explicit user action"
+            )
+
         // Session key errors - no retry, user action needed
         case .sessionKeyNotFound, .sessionKeyInvalid, .sessionKeyExpired:
             return .doNotRetry(reason: "Session key configuration required")

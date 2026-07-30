@@ -18,8 +18,17 @@ final class NetworkLoggerService: ObservableObject {
     private let maxFileSizeBytes = 10 * 1024 * 1024  // 10MB
     private let requestBodyMaxLength = 2000
     private let responsePreviewMaxLength = 1000
+    private let storageURLOverride: URL?
+    private let loggingService: LoggingService
 
     private var storageURL: URL {
+        if let storageURLOverride {
+            return storageURLOverride
+        }
+        return Self.defaultStorageURL()
+    }
+
+    private static func defaultStorageURL() -> URL {
         let appSupport = FileManager.default.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
@@ -35,13 +44,26 @@ final class NetworkLoggerService: ObservableObject {
         return appDirectory.appendingPathComponent("network_logs.json")
     }
 
-    private init() {
-        self.session = Self.loadSession() ?? NetworkLoggingSession()
+    init(
+        session: NetworkLoggingSession? = nil,
+        storageURL: URL? = nil,
+        loggingService: LoggingService = .shared
+    ) {
+        storageURLOverride = storageURL
+        self.loggingService = loggingService
+        self.session =
+            session
+            ?? Self.loadSession(
+                from: storageURL ?? Self.defaultStorageURL()
+            )
+            ?? NetworkLoggingSession()
 
         // Resume timer if session was active
-        if session.isActive, let endTime = session.endTime, endTime > Date() {
+        if self.session.isActive,
+           let endTime = self.session.endTime,
+           endTime > Date() {
             scheduleAutoStop(until: endTime)
-        } else if session.isActive {
+        } else if self.session.isActive {
             // Session expired while app was closed
             stopLogging()
         }
@@ -59,7 +81,9 @@ final class NetworkLoggerService: ObservableObject {
         scheduleAutoStop(until: session.endTime!)
         saveSession()
 
-        LoggingService.shared.logDebug("Network logging started for \(duration)s")
+        loggingService.logDebug(
+            "Network logging started for \(duration)s"
+        )
     }
 
     func stopLogging() {
@@ -68,14 +92,14 @@ final class NetworkLoggerService: ObservableObject {
         timer = nil
         saveSession()
 
-        LoggingService.shared.logDebug("Network logging stopped")
+        loggingService.logDebug("Network logging stopped")
     }
 
     func clearLogs() {
         session.logs.removeAll()
         saveSession()
 
-        LoggingService.shared.logDebug("Network logs cleared")
+        loggingService.logDebug("Network logs cleared")
     }
 
     func logRequest(url: String, method: String, requestBody: Data?,
@@ -89,17 +113,19 @@ final class NetworkLoggerService: ObservableObject {
             return
         }
 
-        let requestBodyString = requestBody.flatMap { data in
-            String(data: data, encoding: .utf8)?
+        let requestBodyString =
+            SensitiveDataRedactor.redact(data: requestBody).map {
+                $0
                 .prefix(requestBodyMaxLength)
                 .description
-        }
+            }
 
-        let responsePreview = responseData.flatMap { data in
-            String(data: data, encoding: .utf8)?
+        let responsePreview =
+            SensitiveDataRedactor.redact(data: responseData).map {
+                $0
                 .prefix(responsePreviewMaxLength)
                 .description
-        }
+            }
 
         let log = NetworkRequestLog(
             timestamp: Date(),
@@ -110,7 +136,9 @@ final class NetworkLoggerService: ObservableObject {
             requestBody: requestBodyString,
             responsePreview: responsePreview,
             fullResponseSize: responseData?.count,
-            errorMessage: error?.localizedDescription
+            errorMessage: error.map {
+                SensitiveDataRedactor.redact(error: $0)
+            }
         )
 
         session.logs.append(log)
@@ -147,7 +175,9 @@ final class NetworkLoggerService: ObservableObject {
 
             // Check file size limit
             if data.count > maxFileSizeBytes {
-                LoggingService.shared.logWarning("Network logs exceed max size, truncating...")
+                loggingService.logWarning(
+                    "Network logs exceed max size, truncating..."
+                )
                 // Remove oldest logs until under limit
                 while session.logs.count > 0 {
                     session.logs.removeFirst()
@@ -161,18 +191,16 @@ final class NetworkLoggerService: ObservableObject {
                 try data.write(to: storageURL)
             }
         } catch {
-            LoggingService.shared.logStorageError("saveNetworkLogs", error: error)
+            loggingService.logStorageError(
+                "saveNetworkLogs",
+                error: error
+            )
         }
     }
 
-    private static func loadSession() -> NetworkLoggingSession? {
-        let appSupport = FileManager.default.urls(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask
-        ).first!
-        let appDirectory = appSupport.appendingPathComponent("Claude Usage")
-        let url = appDirectory.appendingPathComponent("network_logs.json")
-
+    private static func loadSession(
+        from url: URL
+    ) -> NetworkLoggingSession? {
         guard FileManager.default.fileExists(atPath: url.path),
               let data = try? Data(contentsOf: url),
               let session = try? JSONDecoder().decode(NetworkLoggingSession.self, from: data) else {

@@ -8,101 +8,183 @@
 import Foundation
 import os.log
 
-/// Centralized logging service using os.log
-/// Provides consistent logging across the application
+/// Centralized logging service using os.log.
+///
+/// Every public entry point crosses the same fail-closed redaction boundary
+/// before a value reaches either Unified Logging or a test observer.
 final class LoggingService {
+    typealias Observer = (String) -> Void
+
     static let shared = LoggingService()
 
-    private let subsystem = Bundle.main.bundleIdentifier ?? "com.claudeusage"
+    private let subsystem =
+        Bundle.main.bundleIdentifier ?? "com.claudeusage"
+    private let observer: Observer?
 
-    // Category-specific loggers
-    private lazy var apiLogger = OSLog(subsystem: subsystem, category: "API")
-    private lazy var storageLogger = OSLog(subsystem: subsystem, category: "Storage")
-    private lazy var notificationLogger = OSLog(subsystem: subsystem, category: "Notifications")
-    private lazy var uiLogger = OSLog(subsystem: subsystem, category: "UI")
-    private lazy var generalLogger = OSLog(subsystem: subsystem, category: "General")
+    private lazy var apiLogger =
+        OSLog(subsystem: subsystem, category: "API")
+    private lazy var storageLogger =
+        OSLog(subsystem: subsystem, category: "Storage")
+    private lazy var notificationLogger =
+        OSLog(subsystem: subsystem, category: "Notifications")
+    private lazy var uiLogger =
+        OSLog(subsystem: subsystem, category: "UI")
+    private lazy var generalLogger =
+        OSLog(subsystem: subsystem, category: "General")
 
-    private init() {}
+    init(observer: Observer? = nil) {
+        self.observer = observer
+    }
 
     // MARK: - API Logging
 
     func logAPIRequest(_ endpoint: String) {
-        os_log("📤 API Request: %{public}@", log: apiLogger, type: .info, endpoint)
+        emit(
+            "📤 API Request: \(endpoint)",
+            log: apiLogger,
+            type: .info
+        )
     }
 
     func logAPIResponse(_ endpoint: String, statusCode: Int) {
-        os_log("📥 API Response: %{public}@ [%d]", log: apiLogger, type: .info, endpoint, statusCode)
+        emit(
+            "📥 API Response: \(endpoint) [\(statusCode)]",
+            log: apiLogger,
+            type: .info
+        )
     }
 
     func logAPIError(_ endpoint: String, error: Error) {
-        os_log("❌ API Error: %{public}@ - %{public}@", log: apiLogger, type: .error, endpoint, error.localizedDescription)
+        emit(
+            "❌ API Error: \(endpoint) - "
+                + SensitiveDataRedactor.redact(error: error),
+            log: apiLogger,
+            type: .error
+        )
     }
 
     // MARK: - Storage Logging
 
     func logStorageSave(_ key: String) {
-        os_log("💾 Storage Save: %{public}@", log: storageLogger, type: .debug, key)
+        emit(
+            "💾 Storage Save: \(key)",
+            log: storageLogger,
+            type: .debug
+        )
     }
 
     func logStorageLoad(_ key: String, success: Bool) {
-        if success {
-            os_log("📂 Storage Load: %{public}@ ✓", log: storageLogger, type: .debug, key)
-        } else {
-            os_log("📂 Storage Load: %{public}@ ✗ (not found)", log: storageLogger, type: .debug, key)
-        }
+        emit(
+            "📂 Storage Load: \(key) "
+                + (success ? "✓" : "✗ (not found)"),
+            log: storageLogger,
+            type: .debug
+        )
     }
 
     func logStorageError(_ operation: String, error: Error) {
-        os_log("❌ Storage Error [%{public}@]: %{public}@", log: storageLogger, type: .error, operation, error.localizedDescription)
+        emit(
+            "❌ Storage Error [\(operation)]: "
+                + SensitiveDataRedactor.redact(error: error),
+            log: storageLogger,
+            type: .error
+        )
     }
 
     // MARK: - Notification Logging
 
     func logNotificationSent(_ type: String) {
-        os_log("🔔 Notification Sent: %{public}@", log: notificationLogger, type: .info, type)
+        emit(
+            "🔔 Notification Sent: \(type)",
+            log: notificationLogger,
+            type: .info
+        )
     }
 
     func logNotificationError(_ error: Error) {
-        os_log("❌ Notification Error: %{public}@", log: notificationLogger, type: .error, error.localizedDescription)
+        emit(
+            "❌ Notification Error: "
+                + SensitiveDataRedactor.redact(error: error),
+            log: notificationLogger,
+            type: .error
+        )
     }
 
     func logNotificationPermission(_ granted: Bool) {
-        os_log("🔐 Notification Permission: %{public}@", log: notificationLogger, type: .info, granted ? "Granted" : "Denied")
+        emit(
+            "🔐 Notification Permission: "
+                + (granted ? "Granted" : "Denied"),
+            log: notificationLogger,
+            type: .info
+        )
     }
 
     // MARK: - UI Logging
 
     func logUIEvent(_ event: String) {
-        os_log("🖱️ UI Event: %{public}@", log: uiLogger, type: .debug, event)
+        emit(
+            "🖱️ UI Event: \(event)",
+            log: uiLogger,
+            type: .debug
+        )
     }
 
     func logWindowEvent(_ event: String) {
-        os_log("🪟 Window Event: %{public}@", log: uiLogger, type: .debug, event)
+        emit(
+            "🪟 Window Event: \(event)",
+            log: uiLogger,
+            type: .debug
+        )
     }
 
     // MARK: - General Logging
 
     func log(_ message: String, type: OSLogType = .default) {
-        os_log("%{public}@", log: generalLogger, type: type, message)
+        emit(message, log: generalLogger, type: type)
     }
 
     func logError(_ message: String, error: Error? = nil) {
-        if let error = error {
-            os_log("❌ %{public}@: %{public}@", log: generalLogger, type: .error, message, error.localizedDescription)
-        } else {
-            os_log("❌ %{public}@", log: generalLogger, type: .error, message)
-        }
+        let detail = error.map {
+            ": " + SensitiveDataRedactor.redact(error: $0)
+        } ?? ""
+        emit(
+            "❌ \(message)\(detail)",
+            log: generalLogger,
+            type: .error
+        )
     }
 
     func logWarning(_ message: String) {
-        os_log("⚠️ %{public}@", log: generalLogger, type: .fault, message)
+        emit(
+            "⚠️ \(message)",
+            log: generalLogger,
+            type: .fault
+        )
     }
 
     func logInfo(_ message: String) {
-        os_log("ℹ️ %{public}@", log: generalLogger, type: .info, message)
+        emit(
+            "ℹ️ \(message)",
+            log: generalLogger,
+            type: .info
+        )
     }
 
     func logDebug(_ message: String) {
-        os_log("🐛 %{public}@", log: generalLogger, type: .debug, message)
+        emit(
+            "🐛 \(message)",
+            log: generalLogger,
+            type: .debug
+        )
+    }
+
+    private func emit(
+        _ message: String,
+        log: OSLog,
+        type: OSLogType
+    ) {
+        let safeMessage = SensitiveDataRedactor.redact(message)
+        observer?(safeMessage)
+        os_log("%{public}@", log: log, type: type, safeMessage)
     }
 }

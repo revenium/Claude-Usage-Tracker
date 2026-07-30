@@ -25,14 +25,74 @@ struct NetworkRequestLog: Codable, Identifiable {
          fullResponseSize: Int? = nil, errorMessage: String? = nil) {
         self.id = id
         self.timestamp = timestamp
-        self.url = url
-        self.method = method
+        self.url = SensitiveDataRedactor.redact(url: url)
+        self.method = SensitiveDataRedactor.redact(method)
         self.statusCode = statusCode
         self.duration = duration
-        self.requestBody = requestBody
-        self.responsePreview = responsePreview
+        self.requestBody =
+            requestBody.map { SensitiveDataRedactor.redact($0) }
+        self.responsePreview =
+            responsePreview.map {
+                SensitiveDataRedactor.redact($0)
+            }
         self.fullResponseSize = fullResponseSize
-        self.errorMessage = errorMessage
+        self.errorMessage =
+            errorMessage.map { SensitiveDataRedactor.redact($0) }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case timestamp
+        case url
+        case method
+        case statusCode
+        case duration
+        case requestBody
+        case responsePreview
+        case fullResponseSize
+        case errorMessage
+    }
+
+    /// Legacy persisted logs are untrusted input. Decode through the same
+    /// initializer as new records so old query values and bodies cannot reach
+    /// the debug UI or a later export.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(
+            keyedBy: CodingKeys.self
+        )
+        self.init(
+            id: try container.decode(UUID.self, forKey: .id),
+            timestamp: try container.decode(
+                Date.self,
+                forKey: .timestamp
+            ),
+            url: try container.decode(String.self, forKey: .url),
+            method: try container.decode(String.self, forKey: .method),
+            statusCode: try container.decodeIfPresent(
+                Int.self,
+                forKey: .statusCode
+            ),
+            duration: try container.decodeIfPresent(
+                TimeInterval.self,
+                forKey: .duration
+            ),
+            requestBody: try container.decodeIfPresent(
+                String.self,
+                forKey: .requestBody
+            ),
+            responsePreview: try container.decodeIfPresent(
+                String.self,
+                forKey: .responsePreview
+            ),
+            fullResponseSize: try container.decodeIfPresent(
+                Int.self,
+                forKey: .fullResponseSize
+            ),
+            errorMessage: try container.decodeIfPresent(
+                String.self,
+                forKey: .errorMessage
+            )
+        )
     }
 }
 

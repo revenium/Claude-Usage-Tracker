@@ -750,7 +750,10 @@ class MenuBarManager: NSObject, ObservableObject {
         ) else {
             return
         }
-        let appError = Self.appError(for: event.failure)
+        let appError = Self.appError(
+            for: event.failure,
+            providerID: event.identity.providerID
+        )
         refreshSideEffectRouter.failed(
             event,
             error: appError,
@@ -889,8 +892,14 @@ class MenuBarManager: NSObject, ObservableObject {
     }
 
     static func appError(
-        for failure: ProviderRefreshFailure
+        for failure: ProviderRefreshFailure,
+        providerID: ProviderID? = nil
     ) -> AppError {
+        if providerID == .codex,
+           let presentation =
+            ProviderErrorMapper.presentation(for: failure) {
+            return .provider(presentation)
+        }
         let code: ErrorCode
         if let legacyErrorCode = failure.legacyErrorCode {
             code = legacyErrorCode

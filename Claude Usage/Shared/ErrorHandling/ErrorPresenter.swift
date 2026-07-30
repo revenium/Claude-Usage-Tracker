@@ -15,6 +15,12 @@ class ErrorPresenter {
 
     private init() {}
 
+    private enum AlertAction {
+        case dismiss
+        case recovery(ProviderRecoveryAction)
+        case copyErrorCode
+    }
+
     // MARK: - Alert Presentation
 
     /// Show an error alert to the user
@@ -25,23 +31,41 @@ class ErrorPresenter {
             alert.informativeText = self.buildInformativeText(for: error)
             alert.alertStyle = error.isRecoverable ? .warning : .critical
 
-            // Add buttons
+            var actions: [AlertAction] = [.dismiss]
             alert.addButton(withTitle: "OK")
 
-            if error.code.category == .sessionKey || error.code.category == .api {
-                alert.addButton(withTitle: "Open Settings")
+            let recoveryActions =
+                error.recoveryActions.isEmpty
+                && (
+                    error.code.category == .sessionKey
+                        || error.code.category == .api
+                )
+                ? [.openSettings]
+                : error.recoveryActions
+            for recoveryAction in recoveryActions {
+                alert.addButton(withTitle: recoveryAction.title)
+                actions.append(.recovery(recoveryAction))
             }
 
             alert.addButton(withTitle: "Copy Error Code")
+            actions.append(.copyErrorCode)
 
             // Show alert
             if let window = window {
                 alert.beginSheetModal(for: window) { response in
-                    self.handleAlertResponse(response, error: error)
+                    self.handleAlertResponse(
+                        response,
+                        error: error,
+                        actions: actions
+                    )
                 }
             } else {
                 let response = alert.runModal()
-                self.handleAlertResponse(response, error: error)
+                self.handleAlertResponse(
+                    response,
+                    error: error,
+                    actions: actions
+                )
             }
         }
     }
@@ -59,27 +83,85 @@ class ErrorPresenter {
             text += "\n\nDetails: \(details)"
         }
 
-        return text
+        return SensitiveDataRedactor.redact(text)
     }
 
-    private func handleAlertResponse(_ response: NSApplication.ModalResponse, error: AppError) {
-        switch response {
-        case .alertSecondButtonReturn:
-            // Open Settings
-            NotificationCenter.default.post(name: .openSettings, object: nil)
-
-        case .alertThirdButtonReturn:
-            // Copy Error Code
+    private func handleAlertResponse(
+        _ response: NSApplication.ModalResponse,
+        error: AppError,
+        actions: [AlertAction]
+    ) {
+        let index =
+            response.rawValue
+            - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
+        guard actions.indices.contains(index) else { return }
+        switch actions[index] {
+        case .dismiss:
+            break
+        case .copyErrorCode:
             let pasteboard = NSPasteboard.general
             pasteboard.clearContents()
             pasteboard.setString(error.copyableErrorCode, forType: .string)
-
-            // Show tooltip (optional)
             self.showTooltip("Error code copied to clipboard")
-
-        default:
-            break
+        case .recovery(let action):
+            perform(action)
         }
+    }
+
+    private func perform(_ action: ProviderRecoveryAction) {
+        switch action {
+        case .retry:
+            NotificationCenter.default.post(
+                name: .retryProviderOperation,
+                object: nil
+            )
+            ShortcutManager.shared.onRefresh?()
+        case .chooseHome:
+            NotificationCenter.default.post(
+                name: .chooseCodexHome,
+                object: nil
+            )
+            openSettings()
+        case .signIn:
+            NotificationCenter.default.post(
+                name: .startCodexLogin,
+                object: nil
+            )
+            openSettings()
+        case .installOrUpdateCodex:
+            showCodexInstallationGuidance()
+        case .openSettings:
+            openSettings()
+        case .unlink:
+            NotificationCenter.default.post(
+                name: .reviewCodexHomeLink,
+                object: nil
+            )
+            openSettings()
+        }
+    }
+
+    private func openSettings() {
+        NotificationCenter.default.post(
+            name: .openSettings,
+            object: nil
+        )
+        ShortcutManager.shared.onOpenSettings?()
+    }
+
+    private func showCodexInstallationGuidance() {
+        let alert = NSAlert()
+        alert.messageText = ProviderUILocalization.text(
+            "provider.recovery.codex_help.title",
+            fallback: "Install or Update Codex"
+        )
+        alert.informativeText = ProviderUILocalization.text(
+            "provider.recovery.codex_help.explanation",
+            fallback:
+                "Install or update Codex using the same trusted package manager or installer you normally use, then confirm that “codex --version” succeeds."
+        )
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
     }
 
     // MARK: - Toast Notifications
@@ -94,7 +176,9 @@ class ErrorPresenter {
         // This is a simplified version
         DispatchQueue.main.async {
             // Could implement custom toast window here
-            print("📱 Toast: \(message)")
+            LoggingService.shared.logUIEvent(
+                "Toast: \(message)"
+            )
         }
     }
 
@@ -214,6 +298,14 @@ struct ErrorDetailsView: View {
 
 extension Notification.Name {
     static let openSettings = Notification.Name("openSettings")
+    static let retryProviderOperation =
+        Notification.Name("retryProviderOperation")
+    static let chooseCodexHome =
+        Notification.Name("chooseCodexHome")
+    static let startCodexLogin =
+        Notification.Name("startCodexLogin")
+    static let reviewCodexHomeLink =
+        Notification.Name("reviewCodexHomeLink")
 }
 
 // MARK: - Preview

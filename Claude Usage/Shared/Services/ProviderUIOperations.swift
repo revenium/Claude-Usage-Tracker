@@ -719,9 +719,9 @@ nonisolated enum ProviderUIOperationError:
     case activationFailed
 }
 
-enum ProviderUILocalization {
+nonisolated enum ProviderUILocalization {
     static func text(_ key: String, fallback: String) -> String {
-        let localized = key.localized
+        let localized = NSLocalizedString(key, comment: "")
         return localized == key ? fallback : localized
     }
 }

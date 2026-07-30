@@ -5,15 +5,20 @@
 //  Created by Claude on 2026-01-29.
 //
 
-import SwiftUI
+import AppKit
 import Combine
+import SwiftUI
+import UsageCore
 
 struct DebugNetworkLogView: View {
     @StateObject private var loggerService = NetworkLoggerService.shared
+    @StateObject private var profileManager = ProfileManager.shared
     @State private var selectedDuration: LoggingDuration = .fifteenMinutes
     @State private var selectedLog: NetworkRequestLog?
     @State private var showClearConfirmation = false
     @State private var currentTime = Date()
+    @State private var diagnosticSnapshot: ProviderDiagnosticSnapshot?
+    @State private var isRefreshingDiagnostics = false
 
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
@@ -24,6 +29,17 @@ struct DebugNetworkLogView: View {
                 SettingsPageHeader(
                     title: "debug.title".localized,
                     subtitle: "debug.subtitle".localized
+                )
+
+                ProviderDiagnosticsCard(
+                    snapshot: diagnosticSnapshot,
+                    isRefreshing: isRefreshingDiagnostics,
+                    onRefresh: {
+                        Task {
+                            await refreshDiagnostics()
+                        }
+                    },
+                    onCopy: copyDiagnostics
                 )
 
                 // Controls Card
@@ -153,6 +169,9 @@ struct DebugNetworkLogView: View {
         .onReceive(timer) { _ in
             currentTime = Date()
         }
+        .task(id: profileManager.activeProfile?.id) {
+            await refreshDiagnostics()
+        }
     }
 
     private func formatTimeRemaining(_ seconds: TimeInterval) -> String {
@@ -164,6 +183,193 @@ struct DebugNetworkLogView: View {
         } else {
             return "\(secs)s"
         }
+    }
+
+    private func refreshDiagnostics() async {
+        isRefreshingDiagnostics = true
+        diagnosticSnapshot =
+            await ProviderDiagnosticsService.shared.snapshot(
+                for: profileManager.activeProfile
+            )
+        isRefreshingDiagnostics = false
+    }
+
+    private func copyDiagnostics() {
+        guard let diagnosticSnapshot else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(
+            diagnosticSnapshot.supportText,
+            forType: .string
+        )
+    }
+}
+
+// MARK: - Safe Provider Diagnostics
+
+private struct ProviderDiagnosticsCard: View {
+    let snapshot: ProviderDiagnosticSnapshot?
+    let isRefreshing: Bool
+    let onRefresh: () -> Void
+    let onCopy: () -> Void
+
+    var body: some View {
+        SettingsSectionCard(
+            title: text(
+                "diagnostics.provider.title",
+                "Provider Diagnostics"
+            ),
+            subtitle: text(
+                "diagnostics.provider.subtitle",
+                "Copy a redacted status summary for troubleshooting."
+            )
+        ) {
+            VStack(
+                alignment: .leading,
+                spacing: DesignTokens.Spacing.medium
+            ) {
+                if let snapshot {
+                    diagnosticRows(snapshot)
+                } else {
+                    HStack {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text(
+                            text(
+                                "diagnostics.provider.loading",
+                                "Checking provider status…"
+                            )
+                        )
+                        .foregroundColor(.secondary)
+                    }
+                }
+
+                Divider()
+
+                HStack(spacing: DesignTokens.Spacing.medium) {
+                    SettingsButton(
+                        title: text(
+                            "diagnostics.provider.refresh",
+                            "Refresh Diagnostics"
+                        ),
+                        icon: "arrow.clockwise"
+                    ) {
+                        onRefresh()
+                    }
+                    .disabled(isRefreshing)
+
+                    SettingsButton(
+                        title: text(
+                            "diagnostics.provider.copy",
+                            "Copy Redacted Diagnostics"
+                        ),
+                        icon: "doc.on.doc"
+                    ) {
+                        onCopy()
+                    }
+                    .disabled(snapshot == nil)
+
+                    if isRefreshing {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func diagnosticRows(
+        _ snapshot: ProviderDiagnosticSnapshot
+    ) -> some View {
+        VStack(spacing: 8) {
+            diagnosticRow(
+                label: text(
+                    "diagnostics.provider.app",
+                    "App"
+                ),
+                value: "\(snapshot.appVersion) "
+                    + "(\(snapshot.appBuild ?? "unknown"))"
+            )
+            diagnosticRow(
+                label: text(
+                    "diagnostics.provider.os",
+                    "macOS"
+                ),
+                value: snapshot.osVersion
+            )
+            diagnosticRow(
+                label: text(
+                    "diagnostics.provider.provider",
+                    "Provider"
+                ),
+                value: snapshot.providerID
+            )
+            if snapshot.providerID == "codex" {
+                diagnosticRow(
+                    label: text(
+                        "diagnostics.provider.codex",
+                        "Codex"
+                    ),
+                    value:
+                        snapshot.codexVersion
+                        ?? snapshot.codexExecutableStatus.rawValue
+                )
+                diagnosticRow(
+                    label: text(
+                        "diagnostics.provider.app_server",
+                        "App Server"
+                    ),
+                    value: snapshot.appServerCapability.rawValue
+                )
+                diagnosticRow(
+                    label: text(
+                        "diagnostics.provider.home",
+                        "Codex Home"
+                    ),
+                    value: snapshot.homeFingerprint ?? "not linked"
+                )
+            }
+            diagnosticRow(
+                label: text(
+                    "diagnostics.provider.health",
+                    "Health"
+                ),
+                value: snapshot.health?.status.rawValue
+                    ?? "not checked"
+            )
+            if let duration =
+                snapshot.requestDurationMilliseconds {
+                diagnosticRow(
+                    label: text(
+                        "diagnostics.provider.duration",
+                        "Check Duration"
+                    ),
+                    value: "\(duration) ms"
+                )
+            }
+        }
+    }
+
+    private func diagnosticRow(
+        label: String,
+        value: String
+    ) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text(label)
+                .font(DesignTokens.Typography.caption)
+                .foregroundColor(.secondary)
+                .frame(width: 110, alignment: .leading)
+
+            Text(SensitiveDataRedactor.redact(value))
+                .font(.system(size: 11, design: .monospaced))
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func text(_ key: String, _ fallback: String) -> String {
+        ProviderUILocalization.text(key, fallback: fallback)
     }
 }
 

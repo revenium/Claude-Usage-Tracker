@@ -33,6 +33,12 @@ struct AppError: Error, LocalizedError, CustomStringConvertible {
     /// Suggested recovery action for the user
     let recoverySuggestion: String?
 
+    /// Safe provider category, when the error originated from a provider.
+    let providerCategory: ProviderErrorCategory?
+
+    /// Recovery actions that the app can safely offer for this error.
+    let recoveryActions: [ProviderRecoveryAction]
+
     /// Context information (file, line, function)
     let context: ErrorContext?
 
@@ -45,18 +51,35 @@ struct AppError: Error, LocalizedError, CustomStringConvertible {
         underlyingError: Error? = nil,
         isRecoverable: Bool = true,
         recoverySuggestion: String? = nil,
+        providerCategory: ProviderErrorCategory? = nil,
+        recoveryActions: [ProviderRecoveryAction] = [],
         file: String = #file,
         line: Int = #line,
         function: String = #function
     ) {
         self.code = code
-        self.message = message
-        self.technicalDetails = technicalDetails
-        self.underlyingError = underlyingError
+        self.message = SensitiveDataRedactor.redact(message)
+        self.technicalDetails =
+            technicalDetails.map { SensitiveDataRedactor.redact($0) }
+        self.underlyingError = underlyingError.map {
+            RedactedUnderlyingError(
+                safeDescription:
+                    SensitiveDataRedactor.redact(error: $0)
+            )
+        }
         self.timestamp = Date()
         self.isRecoverable = isRecoverable
-        self.recoverySuggestion = recoverySuggestion
-        self.context = ErrorContext(file: file, line: line, function: function)
+        self.recoverySuggestion =
+            recoverySuggestion.map {
+                SensitiveDataRedactor.redact($0)
+            }
+        self.providerCategory = providerCategory
+        self.recoveryActions = recoveryActions
+        self.context = ErrorContext(
+            file: (file as NSString).lastPathComponent,
+            line: line,
+            function: SensitiveDataRedactor.redact(function)
+        )
     }
 
     // MARK: - LocalizedError
@@ -81,7 +104,10 @@ struct AppError: Error, LocalizedError, CustomStringConvertible {
             desc += "\nDetails: \(details)"
         }
         if let underlying = underlyingError {
-            desc += "\nUnderlying: \(underlying.localizedDescription)"
+            desc += "\nUnderlying: "
+                + SensitiveDataRedactor.redact(
+                    underlying.localizedDescription
+                )
         }
         return desc
     }
@@ -106,10 +132,11 @@ struct AppError: Error, LocalizedError, CustomStringConvertible {
         }
 
         if let context = context {
-            report += "\nLocation: \(context.file):\(context.line) in \(context.function)"
+            report += "\nLocation: \(context.fileName):"
+                + "\(context.line) in \(context.function)"
         }
 
-        return report
+        return SensitiveDataRedactor.redact(report)
     }
 
     /// Copy-friendly error code for users to report
@@ -193,6 +220,21 @@ enum ErrorCode: String, CaseIterable {
     case githubServerError = "E6002"
     case githubGenericError = "E6099"
 
+    // MARK: - Provider Errors (7000-7099)
+
+    case providerExecutableMissing = "E7000"
+    case providerLaunchFailed = "E7001"
+    case providerTimedOut = "E7002"
+    case providerCancelled = "E7003"
+    case providerIncompatible = "E7004"
+    case providerMalformedResponse = "E7005"
+    case providerInvalidHome = "E7006"
+    case providerDuplicateHome = "E7007"
+    case providerLoggedOut = "E7008"
+    case providerUnsupportedAccount = "E7009"
+    case providerPartialUsage = "E7010"
+    case providerTransientFailure = "E7011"
+
     // MARK: - Unknown Errors (9000-9999)
 
     case unknown = "E9999"
@@ -208,6 +250,7 @@ enum ErrorCode: String, CaseIterable {
         case "E4": return .urlConstruction
         case "E5": return .dataStorage
         case "E6": return .github
+        case "E7": return .provider
         default: return .unknown
         }
     }
@@ -222,7 +265,14 @@ enum ErrorCategory: String {
     case urlConstruction = "URL Construction"
     case dataStorage = "Data Storage"
     case github = "GitHub"
+    case provider = "Provider"
     case unknown = "Unknown"
+}
+
+private struct RedactedUnderlyingError: LocalizedError {
+    let safeDescription: String
+
+    var errorDescription: String? { safeDescription }
 }
 
 // MARK: - Convenience Constructors
@@ -356,6 +406,17 @@ extension AppError {
             return appError
         }
 
+        if let presentation = ProviderErrorMapper.presentation(
+            for: error
+        ) {
+            return provider(
+                presentation,
+                file: file,
+                line: line,
+                function: function
+            )
+        }
+
         // If it's a SessionKeyValidationError, convert it
         if let validationError = error as? SessionKeyValidationError {
             return fromSessionKeyValidationError(validationError, file: file, line: line, function: function)
@@ -373,6 +434,26 @@ extension AppError {
             technicalDetails: "\(type(of: error)): \(error)",
             underlyingError: error,
             isRecoverable: true,
+            file: file,
+            line: line,
+            function: function
+        )
+    }
+
+    static func provider(
+        _ presentation: ProviderErrorPresentation,
+        file: String = #file,
+        line: Int = #line,
+        function: String = #function
+    ) -> AppError {
+        AppError(
+            code: presentation.category.errorCode,
+            message: presentation.title,
+            technicalDetails: presentation.explanation,
+            isRecoverable: presentation.isRecoverable,
+            recoverySuggestion: presentation.explanation,
+            providerCategory: presentation.category,
+            recoveryActions: presentation.actions,
             file: file,
             line: line,
             function: function
@@ -412,6 +493,37 @@ extension AppError {
             return AppError(code: .urlInvalidQuery, message: "Invalid query parameter", technicalDetails: "\(key)=\(value)", file: file, line: line, function: function)
         case .malformedURL(let details):
             return AppError(code: .urlMalformed, message: "Malformed URL", technicalDetails: details, file: file, line: line, function: function)
+        }
+    }
+}
+
+private extension ProviderErrorCategory {
+    var errorCode: ErrorCode {
+        switch self {
+        case .missingExecutable:
+            return .providerExecutableMissing
+        case .launchFailure:
+            return .providerLaunchFailed
+        case .timeout:
+            return .providerTimedOut
+        case .cancellation:
+            return .providerCancelled
+        case .incompatibleAppServer:
+            return .providerIncompatible
+        case .malformedResponse:
+            return .providerMalformedResponse
+        case .invalidHome:
+            return .providerInvalidHome
+        case .duplicateHome:
+            return .providerDuplicateHome
+        case .loggedOut:
+            return .providerLoggedOut
+        case .unsupportedAccount:
+            return .providerUnsupportedAccount
+        case .partialUsage:
+            return .providerPartialUsage
+        case .transientFailure:
+            return .providerTransientFailure
         }
     }
 }
