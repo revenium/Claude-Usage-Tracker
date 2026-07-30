@@ -1,0 +1,277 @@
+//
+//  ProfileUsageFileStore.swift
+//  Claude Usage
+//
+//  Provider-neutral, versioned per-profile usage persistence.
+//
+
+import Foundation
+
+nonisolated enum ProfileUsageRecordKind: String, Codable {
+    case currentUsage = "current-usage"
+    case history
+}
+
+nonisolated struct ProfileUsageFileEnvelope<Payload: Codable>: Codable {
+    static var currentSchemaVersion: Int { 1 }
+
+    let schemaVersion: Int
+    let profileID: UUID
+    let providerID: String
+    let recordKind: ProfileUsageRecordKind
+    let writtenAt: Date
+    let updatedAt: Date
+    let payload: Payload
+
+    init(
+        schemaVersion: Int = Self.currentSchemaVersion,
+        profileID: UUID,
+        providerID: String,
+        recordKind: ProfileUsageRecordKind,
+        writtenAt: Date,
+        updatedAt: Date,
+        payload: Payload
+    ) {
+        self.schemaVersion = schemaVersion
+        self.profileID = profileID
+        self.providerID = providerID
+        self.recordKind = recordKind
+        self.writtenAt = writtenAt
+        self.updatedAt = updatedAt
+        self.payload = payload
+    }
+}
+
+nonisolated enum ProfileUsageFileStoreError: Error, LocalizedError {
+    case invalidProviderID
+    case unsupportedSchemaVersion(found: Int, supported: Int)
+    case profileMismatch(expected: UUID, found: UUID)
+    case providerMismatch(expected: String, found: String)
+    case recordKindMismatch(expected: ProfileUsageRecordKind, found: ProfileUsageRecordKind)
+    case invalidTimestampChronology(writtenAt: Date, updatedAt: Date)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidProviderID:
+            return "A provider identifier is required for profile usage storage."
+        case .unsupportedSchemaVersion(let found, let supported):
+            return "Usage storage schema \(found) is unsupported; expected \(supported)."
+        case .profileMismatch(let expected, let found):
+            return "Usage storage belongs to profile \(found), not \(expected)."
+        case .providerMismatch(let expected, let found):
+            return "Usage storage belongs to provider \(found), not \(expected)."
+        case .recordKindMismatch(let expected, let found):
+            return "Usage storage contains \(found.rawValue), not \(expected.rawValue)."
+        case .invalidTimestampChronology(let writtenAt, let updatedAt):
+            return "Usage storage was updated at \(updatedAt) before it was written at \(writtenAt)."
+        }
+    }
+}
+
+/// Typed facade over AtomicJSONFileStore for per-profile provider data.
+///
+/// `update` serializes read-modify-write operations so independent refresh paths
+/// cannot silently discard one another's history additions.
+nonisolated final class ProfileUsageFileStore: @unchecked Sendable {
+    private let atomicStore: AtomicJSONFileStore
+    private let now: () -> Date
+    private let updateLock = NSRecursiveLock()
+
+    convenience init(
+        baseURL: URL? = nil,
+        fileManager: FileManager = .default,
+        now: @escaping () -> Date = Date.init
+    ) {
+        let rootURL: URL
+        if let baseURL {
+            rootURL = baseURL
+        } else {
+            let applicationSupport = fileManager.urls(
+                for: .applicationSupportDirectory,
+                in: .userDomainMask
+            ).first ?? fileManager.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Application Support", isDirectory: true)
+            rootURL = applicationSupport
+                .appendingPathComponent("Claude Usage", isDirectory: true)
+                .appendingPathComponent("profile-data", isDirectory: true)
+        }
+
+        self.init(
+            atomicStore: AtomicJSONFileStore(
+                baseURL: rootURL,
+                fileManager: fileManager,
+                now: now
+            ),
+            now: now
+        )
+    }
+
+    init(atomicStore: AtomicJSONFileStore, now: @escaping () -> Date = Date.init) {
+        self.atomicStore = atomicStore
+        self.now = now
+    }
+
+    func save<Payload: Codable>(
+        _ payload: Payload,
+        for profileID: UUID,
+        providerID: String,
+        kind: ProfileUsageRecordKind
+    ) throws {
+        updateLock.lock()
+        defer { updateLock.unlock() }
+
+        let providerID = try validatedProviderID(providerID)
+        let relativePath = relativePath(for: profileID, kind: kind)
+        let envelopeType = ProfileUsageFileEnvelope<Payload>.self
+        let timestamp = now()
+        let existingEnvelope = try atomicStore.read(envelopeType, from: relativePath)
+        if let existingEnvelope {
+            try validate(
+                existingEnvelope,
+                profileID: profileID,
+                providerID: providerID,
+                kind: kind
+            )
+        }
+        let writtenAt = existingEnvelope?.writtenAt ?? timestamp
+        let envelope = ProfileUsageFileEnvelope(
+            profileID: profileID,
+            providerID: providerID,
+            recordKind: kind,
+            writtenAt: writtenAt,
+            updatedAt: max(timestamp, writtenAt),
+            payload: payload
+        )
+        try atomicStore.write(envelope, to: relativePath)
+    }
+
+    func load<Payload: Codable>(
+        _ type: Payload.Type,
+        for profileID: UUID,
+        providerID: String,
+        kind: ProfileUsageRecordKind
+    ) throws -> Payload? {
+        updateLock.lock()
+        defer { updateLock.unlock() }
+
+        let providerID = try validatedProviderID(providerID)
+        let envelopeType = ProfileUsageFileEnvelope<Payload>.self
+        guard let envelope = try atomicStore.read(
+            envelopeType,
+            from: relativePath(for: profileID, kind: kind)
+        ) else {
+            return nil
+        }
+
+        try validate(
+            envelope,
+            profileID: profileID,
+            providerID: providerID,
+            kind: kind
+        )
+        return envelope.payload
+    }
+
+    private func validate<Payload: Codable>(
+        _ envelope: ProfileUsageFileEnvelope<Payload>,
+        profileID: UUID,
+        providerID: String,
+        kind: ProfileUsageRecordKind
+    ) throws {
+        guard envelope.schemaVersion == ProfileUsageFileEnvelope<Payload>.currentSchemaVersion else {
+            throw ProfileUsageFileStoreError.unsupportedSchemaVersion(
+                found: envelope.schemaVersion,
+                supported: ProfileUsageFileEnvelope<Payload>.currentSchemaVersion
+            )
+        }
+        guard envelope.profileID == profileID else {
+            throw ProfileUsageFileStoreError.profileMismatch(
+                expected: profileID,
+                found: envelope.profileID
+            )
+        }
+        guard envelope.providerID == providerID else {
+            throw ProfileUsageFileStoreError.providerMismatch(
+                expected: providerID,
+                found: envelope.providerID
+            )
+        }
+        guard envelope.recordKind == kind else {
+            throw ProfileUsageFileStoreError.recordKindMismatch(
+                expected: kind,
+                found: envelope.recordKind
+            )
+        }
+        guard envelope.updatedAt >= envelope.writtenAt else {
+            throw ProfileUsageFileStoreError.invalidTimestampChronology(
+                writtenAt: envelope.writtenAt,
+                updatedAt: envelope.updatedAt
+            )
+        }
+    }
+
+    @discardableResult
+    func update<Payload: Codable>(
+        _ type: Payload.Type,
+        for profileID: UUID,
+        providerID: String,
+        kind: ProfileUsageRecordKind,
+        initialValue: @autoclosure () -> Payload,
+        transform: (inout Payload) throws -> Void
+    ) throws -> Payload {
+        updateLock.lock()
+        defer { updateLock.unlock() }
+
+        var payload = try load(
+            type,
+            for: profileID,
+            providerID: providerID,
+            kind: kind
+        ) ?? initialValue()
+        try transform(&payload)
+        try save(payload, for: profileID, providerID: providerID, kind: kind)
+        return payload
+    }
+
+    func delete(for profileID: UUID, kind: ProfileUsageRecordKind) throws {
+        updateLock.lock()
+        defer { updateLock.unlock() }
+        try atomicStore.delete(at: relativePath(for: profileID, kind: kind))
+    }
+
+    /// Removes every durable record and recovery artifact owned by a profile.
+    /// The throwing contract lets profile deletion avoid reporting success or
+    /// clearing legacy sources after a partial filesystem failure.
+    func deleteAllData(for profileID: UUID) throws {
+        updateLock.lock()
+        defer { updateLock.unlock() }
+        try atomicStore.deleteDirectory(at: profileDirectoryPath(for: profileID))
+    }
+
+    func fileURL(for profileID: UUID, kind: ProfileUsageRecordKind) throws -> URL {
+        try atomicStore.fileURL(for: relativePath(for: profileID, kind: kind))
+    }
+
+    private func validatedProviderID(_ providerID: String) throws -> String {
+        let trimmed = providerID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw ProfileUsageFileStoreError.invalidProviderID
+        }
+        return trimmed
+    }
+
+    private func relativePath(for profileID: UUID, kind: ProfileUsageRecordKind) -> String {
+        let filename: String
+        switch kind {
+        case .currentUsage:
+            filename = "current-v1.json"
+        case .history:
+            filename = "history-v1.json"
+        }
+        return "\(profileDirectoryPath(for: profileID))/\(filename)"
+    }
+
+    private func profileDirectoryPath(for profileID: UUID) -> String {
+        profileID.uuidString.lowercased()
+    }
+}
