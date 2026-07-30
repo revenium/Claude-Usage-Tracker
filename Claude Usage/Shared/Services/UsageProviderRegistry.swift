@@ -1,8 +1,5 @@
 import Foundation
 import UsageCore
-#if canImport(CodexUsageProvider)
-import CodexUsageProvider
-#endif
 
 /// Immutable provider identity captured before refresh work is scheduled.
 ///
@@ -110,36 +107,9 @@ nonisolated struct CapturedClaudeProviderRequest: @unchecked Sendable {
     }
 }
 
-/// Process inputs from which the injected factory must create one fresh Codex
-/// provider/client pair. No authentication-file data is present here.
-nonisolated struct CapturedCodexProviderConfiguration: Equatable, Sendable {
-    let executableURL: URL
-    let codexHomeURL: URL
-    let codexHomeIdentity: CodexHomeFilesystemIdentity
-}
-
 typealias ClaudeProviderRequestCapture =
     @MainActor @Sendable (Profile) throws
         -> CapturedClaudeProviderRequest
-typealias CodexExecutableResolver =
-    @Sendable () throws -> URL
-typealias CodexProviderFetchFactory =
-    @Sendable (CapturedCodexProviderConfiguration) throws
-        -> @Sendable () async throws -> UsageReport
-
-/// Product-level availability. Codex remains unavailable in the production
-/// value until final parity and release-readiness gates pass.
-nonisolated struct UsageProviderFeatureAvailability: Equatable, Sendable {
-    let codexRefreshEnabled: Bool
-
-    static let production = UsageProviderFeatureAvailability(
-        codexRefreshEnabled: false
-    )
-
-    static func testing(codexRefreshEnabled: Bool = true) -> Self {
-        Self(codexRefreshEnabled: codexRefreshEnabled)
-    }
-}
 
 /// Safe, typed failures from synchronous provider-job capture.
 ///
@@ -169,34 +139,46 @@ nonisolated enum UsageProviderFetchError: Error, Equatable, Sendable {
 /// and has no dependency on application singletons.
 nonisolated struct UsageProviderRegistry: Sendable {
     typealias CodexHomeValidator =
-        @Sendable (URL, CodexHomeFilesystemIdentity) -> Bool
-    typealias ExecutableValidator = @Sendable (URL) -> Bool
+        CodexProviderFactory.HomeValidator
+    typealias ExecutableValidator =
+        CodexProviderFactory.ExecutableValidator
 
-    private let featureAvailability: UsageProviderFeatureAvailability
     private let claudeRequestCapture: ClaudeProviderRequestCapture
-    private let codexHomeValidator: CodexHomeValidator
-    private let codexExecutableResolver: CodexExecutableResolver
-    private let codexExecutableValidator: ExecutableValidator
-    private let codexFetchFactory: CodexProviderFetchFactory
+    private let codexProviderFactory: CodexProviderFactory
     private let now: @Sendable () -> Date
 
+    init(
+        claudeRequestCapture: @escaping ClaudeProviderRequestCapture,
+        codexProviderFactory: CodexProviderFactory =
+            CodexProviderFactory(),
+        now: @escaping @Sendable () -> Date = { Date() }
+    ) {
+        self.claudeRequestCapture = claudeRequestCapture
+        self.codexProviderFactory = codexProviderFactory
+        self.now = now
+    }
+
+    /// Compatibility initializer for focused registry/engine tests. New
+    /// product flows should inject a complete `CodexProviderFactory`.
     init(
         featureAvailability: UsageProviderFeatureAvailability = .production,
         claudeRequestCapture: @escaping ClaudeProviderRequestCapture,
         codexHomeValidator: @escaping CodexHomeValidator =
-            UsageProviderRegistry.defaultCodexHomeValidator,
+            CodexProviderFactory.defaultHomeValidator,
         codexExecutableResolver: @escaping CodexExecutableResolver,
         codexExecutableValidator: @escaping ExecutableValidator =
-            UsageProviderRegistry.defaultExecutableValidator,
+            CodexProviderFactory.defaultExecutableValidator,
         codexFetchFactory: @escaping CodexProviderFetchFactory,
         now: @escaping @Sendable () -> Date = { Date() }
     ) {
-        self.featureAvailability = featureAvailability
         self.claudeRequestCapture = claudeRequestCapture
-        self.codexHomeValidator = codexHomeValidator
-        self.codexExecutableResolver = codexExecutableResolver
-        self.codexExecutableValidator = codexExecutableValidator
-        self.codexFetchFactory = codexFetchFactory
+        codexProviderFactory = CodexProviderFactory(
+            availability: featureAvailability,
+            homeValidator: codexHomeValidator,
+            executableResolver: codexExecutableResolver,
+            executableValidator: codexExecutableValidator,
+            fetchFactory: codexFetchFactory
+        )
         self.now = now
     }
 
@@ -205,7 +187,7 @@ nonisolated struct UsageProviderRegistry: Sendable {
         case .claude:
             return true
         case .codex:
-            return featureAvailability.codexRefreshEnabled
+            return codexProviderFactory.isEnabled
         default:
             return false
         }
@@ -218,7 +200,7 @@ nonisolated struct UsageProviderRegistry: Sendable {
         case .claude:
             return ClaudeUsageProviderAdapter.capabilities
         case .codex:
-            return Self.codexCapabilities
+            return codexProviderFactory.capabilities
         default:
             return ProviderCapabilities()
         }
@@ -323,42 +305,34 @@ nonisolated struct UsageProviderRegistry: Sendable {
         configuration: CodexProfileConfiguration,
         context: UsageRefreshRequestContext
     ) throws -> CapturedProviderRefreshJob {
-        guard featureAvailability.codexRefreshEnabled else {
-            throw UsageProviderCaptureError.featureDisabled(.codex)
-        }
-        guard let linkedHome = configuration.linkedHome else {
-            throw UsageProviderCaptureError.codexHomeUnlinked
-        }
-
-        let homeURL = URL(
-            fileURLWithPath: linkedHome.path,
-            isDirectory: true
-        )
-        guard let homeIdentity = linkedHome.filesystemIdentity,
-              codexHomeValidator(homeURL, homeIdentity) else {
-            throw UsageProviderCaptureError.codexHomeUnavailable
-        }
-
-        let executableURL: URL
+        let capturedConfiguration: CapturedCodexProviderConfiguration
         do {
-            executableURL = try codexExecutableResolver()
+            capturedConfiguration = try codexProviderFactory.capture(
+                linkedHome: configuration.linkedHome
+            )
+        } catch let error as CodexProviderFactoryError {
+            switch error {
+            case .featureDisabled:
+                throw UsageProviderCaptureError.featureDisabled(.codex)
+            case .homeUnlinked:
+                throw UsageProviderCaptureError.codexHomeUnlinked
+            case .homeUnavailable:
+                throw UsageProviderCaptureError.codexHomeUnavailable
+            case .executableMissing:
+                throw UsageProviderCaptureError.codexExecutableMissing
+            case .providerConstructionFailed:
+                throw UsageProviderCaptureError
+                    .providerConstructionFailed(.codex)
+            }
         } catch {
-            throw UsageProviderCaptureError.codexExecutableMissing
-        }
-        guard codexExecutableValidator(executableURL) else {
-            throw UsageProviderCaptureError.codexExecutableMissing
+            throw UsageProviderCaptureError
+                .providerConstructionFailed(.codex)
         }
 
         let fetch: @Sendable () async throws -> UsageReport
         do {
-            // The factory is invoked for every capture. Production wiring must
-            // construct a fresh CodexUsageProvider and client in this call.
-            fetch = try codexFetchFactory(
-                CapturedCodexProviderConfiguration(
-                    executableURL: executableURL,
-                    codexHomeURL: homeURL,
-                    codexHomeIdentity: homeIdentity
-                )
+            fetch = try codexProviderFactory.makeFreshFetch(
+                capturedConfiguration
             )
         } catch {
             throw UsageProviderCaptureError.providerConstructionFailed(.codex)
@@ -381,11 +355,10 @@ nonisolated struct UsageProviderRegistry: Sendable {
             notificationSettings: profile.notificationSettings,
             refreshInterval: refreshInterval,
             requestContext: context,
-            capabilities: Self.codexCapabilities,
+            capabilities: codexProviderFactory.capabilities,
             coreFetch: {
-                guard codexHomeValidator(
-                    homeURL,
-                    homeIdentity
+                guard codexProviderFactory.isHomeAvailable(
+                    capturedConfiguration
                 ) else {
                     throw UsageProviderFetchError
                         .codexHomeUnavailable
@@ -406,18 +379,6 @@ nonisolated struct UsageProviderRegistry: Sendable {
         )
     }
 
-    private static let codexCapabilities = ProviderCapabilities([
-        .account: .available,
-        .health: .available,
-        .usageLimits: .available,
-        .usageSummary: .unknown,
-        .credits: .available,
-        .resetCredits: .available,
-        .interactiveLogin: .available,
-        .automaticSessionStart: .unavailable,
-        .statusLineIntegration: .unavailable
-    ])
-
     private static func sanitizedRefreshInterval(
         _ interval: TimeInterval
     ) -> TimeInterval {
@@ -433,69 +394,4 @@ nonisolated struct UsageProviderRegistry: Sendable {
         }
         return max(300, refreshInterval * 2)
     }
-
-    nonisolated private static func defaultCodexHomeValidator(
-        _ url: URL,
-        expectedIdentity: CodexHomeFilesystemIdentity
-    ) -> Bool {
-        guard url.isFileURL, url.path.hasPrefix("/"), url.path != "/" else {
-            return false
-        }
-        let lexicalURL = url.standardizedFileURL
-        let physicalURL = lexicalURL
-            .resolvingSymlinksInPath()
-            .standardizedFileURL
-        // Linked homes are persisted as physical paths. If that path is later
-        // replaced by a symlink, fail closed instead of silently launching a
-        // request against a different profile's authentication boundary.
-        guard lexicalURL.path == url.path,
-              physicalURL.path == lexicalURL.path else {
-            return false
-        }
-        var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(
-            atPath: physicalURL.path,
-            isDirectory: &isDirectory
-        ), isDirectory.boolValue else {
-            return false
-        }
-        return CodexHomeFilesystemIdentity.read(from: physicalURL)
-            == expectedIdentity
-    }
-
-    nonisolated private static func defaultExecutableValidator(
-        _ url: URL
-    ) -> Bool {
-        url.isFileURL
-            && url.path.hasPrefix("/")
-            && FileManager.default.isExecutableFile(atPath: url.path)
-    }
 }
-
-#if canImport(CodexUsageProvider)
-extension UsageProviderRegistry {
-    /// Concrete production factory used once the app target links the P08
-    /// package product. Each call creates both a new provider and its new
-    /// client; the returned closure owns that request-scoped instance only.
-    nonisolated static func makeFreshCodexFetch(
-        configuration: CapturedCodexProviderConfiguration
-    ) throws -> @Sendable () async throws -> UsageReport {
-        let processConfiguration = try CodexProcessConfiguration(
-            executableURL: configuration.executableURL,
-            codexHomeURL: configuration.codexHomeURL,
-            expectedCodexHomeIdentity: CodexHomeIdentity(
-                deviceID:
-                    configuration.codexHomeIdentity.deviceID,
-                fileID:
-                    configuration.codexHomeIdentity.fileID
-            )
-        )
-        let provider = CodexUsageProvider(
-            processConfiguration: processConfiguration
-        )
-        return {
-            try await provider.fetchUsage()
-        }
-    }
-}
-#endif

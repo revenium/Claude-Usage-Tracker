@@ -224,6 +224,8 @@ class MenuBarManager: NSObject, ObservableObject {
     private var statusItem: NSStatusItem?  // Legacy - kept for backwards compatibility
     private var statusBarUIManager: StatusBarUIManager?
     private var refreshTimer: Timer?
+    @Published private(set) var profileUsagePresentations:
+        [UUID: PresentationSnapshot] = [:]
     @Published private(set) var usage: ClaudeUsage = .empty
     @Published private(set) var status: ClaudeStatus = .unknown
     @Published private(set) var apiUsage: APIUsage?
@@ -402,20 +404,24 @@ class MenuBarManager: NSObject, ObservableObject {
         refreshRuntime.presentationStore.$snapshots
             .sink { [weak self] snapshots in
                 guard let self else { return }
-                let profileID =
-                    self.profileManager.displayMode == .multi
-                        ? self.clickedProfileId
-                            ?? self.profileManager.activeProfile?.id
-                        : self.profileManager.activeProfile?.id
-                guard let profileID,
-                      let snapshot = snapshots[profileID] else {
+                self.profileUsagePresentations = snapshots
+                guard let snapshot =
+                        Self.selectDisplayedUsagePresentation(
+                            displayMode:
+                                self.profileManager.displayMode,
+                            clickedProfileID:
+                                self.clickedProfileId,
+                            activeProfileID:
+                                self.profileManager.activeProfile?.id,
+                            presentations: snapshots
+                        ) else {
                     self.resetVisibleRefreshProjection()
                     return
                 }
                 if Self.usageProjectionTarget(
                     displayMode: self.profileManager.displayMode,
                     clickedProfileID: self.clickedProfileId,
-                    snapshotProfileID: profileID
+                    snapshotProfileID: snapshot.profileID
                 ) == .clickedProfile {
                     self.clickedProfileUsage =
                         snapshot.claudeUsage
@@ -546,6 +552,40 @@ class MenuBarManager: NSObject, ObservableObject {
             && clickedProfileID == snapshotProfileID
             ? .clickedProfile
             : .primary
+    }
+
+    func usagePresentation(
+        for profileID: UUID
+    ) -> PresentationSnapshot? {
+        profileUsagePresentations[profileID]
+    }
+
+    var displayedUsagePresentation: PresentationSnapshot? {
+        Self.selectDisplayedUsagePresentation(
+            displayMode: profileManager.displayMode,
+            clickedProfileID: clickedProfileId,
+            activeProfileID: profileManager.activeProfile?.id,
+            presentations: profileUsagePresentations
+        )
+    }
+
+    nonisolated static func selectDisplayedUsagePresentation(
+        displayMode: ProfileDisplayMode,
+        clickedProfileID: UUID?,
+        activeProfileID: UUID?,
+        presentations: [UUID: PresentationSnapshot]
+    ) -> PresentationSnapshot? {
+        switch displayMode {
+        case .single:
+            guard let activeProfileID else { return nil }
+            return presentations[activeProfileID]
+        case .multi:
+            if let clickedProfileID {
+                return presentations[clickedProfileID]
+            }
+            guard let activeProfileID else { return nil }
+            return presentations[activeProfileID]
+        }
     }
 
     static func popoverUsage(
@@ -1062,6 +1102,7 @@ class MenuBarManager: NSObject, ObservableObject {
         refreshTimer = nil
         networkMonitor.stopMonitoring()
         autoStartService.stop()
+        profileUsagePresentations.removeAll()
         cancellables.removeAll()  // Clean up Combine subscriptions
         refreshIntervalObserver?.invalidate()
         refreshIntervalObserver = nil

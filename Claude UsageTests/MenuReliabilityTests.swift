@@ -249,6 +249,346 @@ final class MenuReliabilityTests: HostedAppTestCase {
         )
     }
 
+    func testProfileUsagePresentationsRetainClaudeAndCodexSnapshots()
+        throws
+    {
+        let claudeID = UUID()
+        let codexID = UUID()
+        var claudeUsage = ClaudeUsage.empty
+        claudeUsage.sessionTokensUsed = 17
+        let codexReport = try makeUsageReport(
+            providerID: .codex,
+            fetchedAt: Date(timeIntervalSinceReferenceDate: 2_500)
+        )
+        let presentations = [
+            claudeID: makePresentationSnapshot(
+                profileID: claudeID,
+                providerID: .claude,
+                claudeUsage: claudeUsage
+            ),
+            codexID: makePresentationSnapshot(
+                profileID: codexID,
+                providerID: .codex,
+                report: codexReport
+            )
+        ]
+
+        let claude = MenuBarManager.selectDisplayedUsagePresentation(
+            displayMode: .single,
+            clickedProfileID: codexID,
+            activeProfileID: claudeID,
+            presentations: presentations
+        )
+        let codex = MenuBarManager.selectDisplayedUsagePresentation(
+            displayMode: .multi,
+            clickedProfileID: codexID,
+            activeProfileID: claudeID,
+            presentations: presentations
+        )
+
+        XCTAssertEqual(presentations.count, 2)
+        XCTAssertEqual(claude?.providerID, .claude)
+        XCTAssertEqual(claude?.claudeUsage?.sessionTokensUsed, 17)
+        XCTAssertEqual(codex?.providerID, .codex)
+        XCTAssertEqual(codex?.report, codexReport)
+    }
+
+    func testMenuBarManagerPublishesAtomicProfilePresentationDictionary()
+        throws
+    {
+        let claudeProfile = Profile(name: "Claude")
+        let codexProfile = Profile(
+            name: "Codex",
+            providerConfiguration: .codex(.init())
+        )
+        let profileManager = retain(ProfileManager())
+        profileManager.profiles = [claudeProfile, codexProfile]
+        profileManager.activeProfile = claudeProfile
+        profileManager.displayMode = .multi
+        let apiService = retain(ClaudeAPIService(
+            profileManager: profileManager,
+            systemCredentialsReader: { nil }
+        ))
+        let statusService = retain(ClaudeStatusService())
+        let runtime = retain(UsageRefreshRuntime.live(
+            profileManager: profileManager,
+            apiService: apiService,
+            statusService: statusService,
+            featureAvailability: .testing()
+        ))
+        let manager = retain(MenuBarManager(
+            apiService: apiService,
+            statusService: statusService,
+            profileManager: profileManager,
+            refreshRuntime: runtime
+        ))
+        let context = UsagePresentationContext(
+            epoch: 6,
+            focusedProfileID: claudeProfile.id,
+            visibleProfileIDs: [
+                claudeProfile.id,
+                codexProfile.id
+            ],
+            mode: .multi
+        )
+        let claudeSnapshot = makePresentationSnapshot(
+            profileID: claudeProfile.id,
+            profileName: claudeProfile.name,
+            providerID: .claude,
+            presentationEpoch: context.epoch
+        )
+        let codexSnapshot = makePresentationSnapshot(
+            profileID: codexProfile.id,
+            profileName: codexProfile.name,
+            providerID: .codex,
+            presentationEpoch: context.epoch,
+            report: try makeUsageReport(
+                providerID: .codex,
+                fetchedAt: Date(
+                    timeIntervalSinceReferenceDate: 2_750
+                )
+            )
+        )
+
+        runtime.presentationStore.activate(context)
+        XCTAssertTrue(
+            runtime.presentationStore.publish(
+                claudeSnapshot,
+                expected: context
+            )
+        )
+        XCTAssertTrue(
+            runtime.presentationStore.publish(
+                codexSnapshot,
+                expected: context
+            )
+        )
+
+        XCTAssertEqual(manager.profileUsagePresentations.count, 2)
+        XCTAssertEqual(
+            manager.usagePresentation(
+                for: claudeProfile.id
+            )?.providerID,
+            .claude
+        )
+        XCTAssertEqual(
+            manager.usagePresentation(
+                for: codexProfile.id
+            )?.report,
+            codexSnapshot.report
+        )
+        XCTAssertEqual(
+            manager.displayedUsagePresentation?.profileID,
+            claudeProfile.id
+        )
+
+        profileManager.activeProfile = codexProfile
+        XCTAssertEqual(
+            manager.displayedUsagePresentation?.profileID,
+            codexProfile.id
+        )
+
+        runtime.presentationStore.purge(
+            profileID: codexProfile.id
+        )
+        XCTAssertNil(
+            manager.usagePresentation(for: codexProfile.id)
+        )
+        XCTAssertNil(manager.displayedUsagePresentation)
+        XCTAssertEqual(manager.profileUsagePresentations.count, 1)
+
+        manager.cleanup()
+
+        XCTAssertTrue(manager.profileUsagePresentations.isEmpty)
+    }
+
+    func testSingleProfilePresentationIgnoresStaleClickedProfile() {
+        let activeID = UUID()
+        let clickedID = UUID()
+        let presentations = [
+            activeID: makePresentationSnapshot(
+                profileID: activeID,
+                providerID: .claude
+            ),
+            clickedID: makePresentationSnapshot(
+                profileID: clickedID,
+                providerID: .codex
+            )
+        ]
+
+        let selected = MenuBarManager.selectDisplayedUsagePresentation(
+            displayMode: .single,
+            clickedProfileID: clickedID,
+            activeProfileID: activeID,
+            presentations: presentations
+        )
+
+        XCTAssertEqual(selected?.profileID, activeID)
+    }
+
+    func testMultiProfilePresentationSelectsClickedThenActive() {
+        let activeID = UUID()
+        let clickedID = UUID()
+        let presentations = [
+            activeID: makePresentationSnapshot(
+                profileID: activeID,
+                providerID: .claude
+            ),
+            clickedID: makePresentationSnapshot(
+                profileID: clickedID,
+                providerID: .codex
+            )
+        ]
+
+        let clicked = MenuBarManager.selectDisplayedUsagePresentation(
+            displayMode: .multi,
+            clickedProfileID: clickedID,
+            activeProfileID: activeID,
+            presentations: presentations
+        )
+        let active = MenuBarManager.selectDisplayedUsagePresentation(
+            displayMode: .multi,
+            clickedProfileID: nil,
+            activeProfileID: activeID,
+            presentations: presentations
+        )
+
+        XCTAssertEqual(clicked?.profileID, clickedID)
+        XCTAssertEqual(active?.profileID, activeID)
+    }
+
+    func testMissingClickedPresentationNeverLeaksActiveProfile() {
+        let activeID = UUID()
+        let missingClickedID = UUID()
+        let presentations = [
+            activeID: makePresentationSnapshot(
+                profileID: activeID,
+                providerID: .claude
+            )
+        ]
+
+        let selected = MenuBarManager.selectDisplayedUsagePresentation(
+            displayMode: .multi,
+            clickedProfileID: missingClickedID,
+            activeProfileID: activeID,
+            presentations: presentations
+        )
+
+        XCTAssertNil(selected)
+    }
+
+    func testPresentationSelectionPreservesSnapshotAndReflectsRemoval()
+        throws
+    {
+        let profileID = UUID()
+        let fetchedAt = Date(timeIntervalSinceReferenceDate: 3_000)
+        let report = try makeUsageReport(
+            providerID: .codex,
+            fetchedAt: fetchedAt
+        )
+        let capabilities = ProviderCapabilities([
+            .account: .available,
+            .usageLimits: .available
+        ])
+        let failure = ProviderRefreshFailure(
+            kind: .transport,
+            occurredAt: fetchedAt.addingTimeInterval(10),
+            isRecoverable: true,
+            consecutiveCount: 2
+        )
+        let snapshot = makePresentationSnapshot(
+            profileID: profileID,
+            profileName: "Codex Team",
+            providerID: .codex,
+            providerRevision: 4,
+            presentationEpoch: 9,
+            capabilities: capabilities,
+            report: report,
+            activity: .refreshing(
+                requestID: UUID(),
+                trigger: .manual,
+                startedAt: fetchedAt
+            ),
+            lastSuccessfulAt: fetchedAt,
+            currentFailure: failure
+        )
+        var presentations = [profileID: snapshot]
+
+        let selected = MenuBarManager.selectDisplayedUsagePresentation(
+            displayMode: .single,
+            clickedProfileID: nil,
+            activeProfileID: profileID,
+            presentations: presentations
+        )
+
+        XCTAssertEqual(selected?.profileID, profileID)
+        XCTAssertEqual(selected?.profileName, "Codex Team")
+        XCTAssertEqual(selected?.providerRevision, 4)
+        XCTAssertEqual(selected?.presentationEpoch, 9)
+        XCTAssertEqual(selected?.capabilities, capabilities)
+        XCTAssertEqual(selected?.configurationState, .ready)
+        XCTAssertEqual(selected?.report, report)
+        XCTAssertEqual(selected?.activity, snapshot.activity)
+        XCTAssertEqual(selected?.lastSuccessfulAt, fetchedAt)
+        XCTAssertEqual(selected?.currentFailure, failure)
+
+        presentations.removeValue(forKey: profileID)
+        XCTAssertNil(
+            MenuBarManager.selectDisplayedUsagePresentation(
+                displayMode: .single,
+                clickedProfileID: nil,
+                activeProfileID: profileID,
+                presentations: presentations
+            )
+        )
+    }
+
+    func testClaudePresentationRemainsCompatibleWithLegacyPopoverProjection() {
+        let profileID = UUID()
+        var claudeUsage = ClaudeUsage.empty
+        claudeUsage.sessionTokensUsed = 23
+        let apiUsage = APIUsage(
+            currentSpendCents: 31,
+            resetsAt: Date(timeIntervalSinceReferenceDate: 4_000),
+            prepaidCreditsCents: 69,
+            currency: "USD",
+            apiTokenCostCents: nil,
+            apiCostByModel: nil,
+            costBySource: nil,
+            dailyCostCents: nil
+        )
+        let snapshot = makePresentationSnapshot(
+            profileID: profileID,
+            providerID: .claude,
+            claudeUsage: claudeUsage,
+            claudeAPIUsage: apiUsage
+        )
+
+        let selected = MenuBarManager.selectDisplayedUsagePresentation(
+            displayMode: .single,
+            clickedProfileID: UUID(),
+            activeProfileID: profileID,
+            presentations: [profileID: snapshot]
+        )
+
+        XCTAssertEqual(
+            MenuBarManager.popoverUsage(
+                clickedProfileID: nil,
+                clickedProfileUsage: nil,
+                activeProfileUsage: selected?.claudeUsage ?? .empty
+            ).sessionTokensUsed,
+            23
+        )
+        XCTAssertEqual(
+            MenuBarManager.popoverAPIUsage(
+                clickedProfileID: nil,
+                clickedProfileAPIUsage: nil,
+                activeProfileAPIUsage: selected?.claudeAPIUsage
+            ),
+            apiUsage
+        )
+    }
+
     func testClickedProfileNeverFallsBackToActiveUsage() {
         let clickedID = UUID()
         var activeUsage = ClaudeUsage.empty
@@ -1057,6 +1397,53 @@ final class MenuReliabilityTests: HostedAppTestCase {
                 timeIntervalSinceReferenceDate: 2_000
             ),
             currentFailure: nil
+        )
+    }
+
+    private func makePresentationSnapshot(
+        profileID: UUID,
+        profileName: String = "Profile",
+        providerID: ProviderID,
+        providerRevision: UInt64 = 0,
+        presentationEpoch: UInt64 = 1,
+        capabilities: ProviderCapabilities = ProviderCapabilities(),
+        report: UsageReport? = nil,
+        claudeUsage: ClaudeUsage? = nil,
+        claudeAPIUsage: APIUsage? = nil,
+        activity: UsageRefreshActivity = .idle,
+        lastSuccessfulAt: Date? = nil,
+        currentFailure: ProviderRefreshFailure? = nil
+    ) -> PresentationSnapshot {
+        PresentationSnapshot(
+            profileID: profileID,
+            profileName: profileName,
+            providerID: providerID,
+            providerRevision: providerRevision,
+            presentationEpoch: presentationEpoch,
+            capabilities: capabilities,
+            configurationState: .ready,
+            report: report,
+            claudeUsage: claudeUsage,
+            claudeAPIUsage: claudeAPIUsage,
+            activity: activity,
+            lastSuccessfulAt: lastSuccessfulAt,
+            currentFailure: currentFailure
+        )
+    }
+
+    private func makeUsageReport(
+        providerID: ProviderID,
+        fetchedAt: Date
+    ) throws -> UsageReport {
+        try UsageReport(
+            providerID: providerID,
+            health: ProviderHealth(
+                status: .healthy,
+                checkedAt: fetchedAt
+            ),
+            limitGroups: [],
+            fetchedAt: fetchedAt,
+            staleAt: fetchedAt.addingTimeInterval(60)
         )
     }
 

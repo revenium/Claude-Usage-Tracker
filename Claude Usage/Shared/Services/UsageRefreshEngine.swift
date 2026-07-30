@@ -1070,6 +1070,7 @@ final class UsageRefreshRuntime {
         statusService: ClaudeStatusService,
         featureAvailability: UsageProviderFeatureAvailability =
             .production,
+        codexProviderFactory: CodexProviderFactory? = nil,
         now: @escaping @Sendable () -> Date = Date.init,
         batchObserver: UsageRefreshEngine.BatchObserver? = nil
     ) -> UsageRefreshRuntime {
@@ -1083,7 +1084,6 @@ final class UsageRefreshRuntime {
             now: now
         )
         let registry = UsageProviderRegistry(
-            featureAvailability: featureAvailability,
             claudeRequestCapture: { profile in
                 let coreRequest = Result {
                     try apiService.captureUsageRequest(for: profile)
@@ -1113,11 +1113,11 @@ final class UsageRefreshRuntime {
                     apiFetch: apiFetch
                 )
             },
-            codexExecutableResolver: {
-                try UsageRefreshRuntime.resolveCodexExecutable()
-            },
-            codexFetchFactory:
-                UsageProviderRegistry.makeFreshCodexFetch,
+            codexProviderFactory:
+                codexProviderFactory
+                    ?? CodexProviderFactory(
+                        availability: featureAvailability
+                    ),
             now: now
         )
         return UsageRefreshRuntime(
@@ -1575,28 +1575,6 @@ final class UsageRefreshRuntime {
         }
     }
 
-    nonisolated private static func resolveCodexExecutable() throws -> URL {
-        let environmentPaths =
-            ProcessInfo.processInfo.environment["PATH"]?
-                .split(separator: ":")
-                .map(String.init) ?? []
-        let candidates = environmentPaths + [
-            "/opt/homebrew/bin",
-            "/usr/local/bin",
-            FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent(".local/bin").path
-        ]
-        for directory in candidates {
-            let candidate = URL(fileURLWithPath: directory)
-                .appendingPathComponent("codex")
-            if FileManager.default.isExecutableFile(
-                atPath: candidate.path
-            ) {
-                return candidate
-            }
-        }
-        throw UsageProviderCaptureError.codexExecutableMissing
-    }
 }
 
 nonisolated struct UsageRefreshBatchResult: Sendable {

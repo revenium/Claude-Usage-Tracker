@@ -426,7 +426,7 @@ final class UsageProviderRegistryTests: HostedAppTestCase {
     }
 
 #if canImport(CodexUsageProvider)
-    func testProductionCodexFactoryRejectsReplacementAndAcceptsRestoredHome()
+    func testCodexFactoryRejectsReplacementAndAcceptsRestoredHome()
         throws
     {
         let fileManager = FileManager.default
@@ -456,6 +456,9 @@ final class UsageProviderRegistryTests: HostedAppTestCase {
             codexHomeURL: configuredHome,
             codexHomeIdentity: identity
         )
+        let factory = CodexProviderFactory(
+            availability: .testing()
+        )
 
         try fileManager.moveItem(
             at: configuredHome,
@@ -467,13 +470,11 @@ final class UsageProviderRegistryTests: HostedAppTestCase {
         )
 
         XCTAssertThrowsError(
-            try UsageProviderRegistry.makeFreshCodexFetch(
-                configuration: captured
-            )
+            try factory.makeFreshFetch(captured)
         ) { error in
             XCTAssertEqual(
-                error as? CodexTransportError,
-                .invalidConfiguration(.codexHome)
+                error as? CodexProviderFactoryError,
+                .homeUnavailable
             )
         }
 
@@ -483,9 +484,7 @@ final class UsageProviderRegistryTests: HostedAppTestCase {
             to: configuredHome
         )
         XCTAssertNoThrow(
-            try UsageProviderRegistry.makeFreshCodexFetch(
-                configuration: captured
-            )
+            try factory.makeFreshFetch(captured)
         )
     }
 #endif

@@ -501,8 +501,14 @@ case "$scenario" in
                 ;;
         esac
         ;;
-    provider_login_cancel)
-        printf '{"id":%s,"result":{"type":"chatgpt","loginId":"cancel-login-id","authUrl":"https://chatgpt.com/login"}}\n' "$request_id"
+    provider_login_cancel|provider_login_completion_before_not_found|\
+    provider_login_not_found_before_completion|provider_login_not_found)
+        if [ "$scenario" = "provider_login_cancel" ]; then
+            login_id="cancel-login-id"
+        else
+            login_id="racing-login-id"
+        fi
+        printf '{"id":%s,"result":{"type":"chatgpt","loginId":"%s","authUrl":"https://chatgpt.com/login"}}\n' "$request_id" "$login_id"
         read_line || exit 38
         cancel_line="$received_line"
         cancel_id="$(extract_id "$cancel_line")"
@@ -511,8 +517,25 @@ case "$scenario" in
         fi
         case "$cancel_line" in
             *'"method":"account/login/cancel"'*|*'"method":"account\/login\/cancel"'*)
-                printf '{"id":%s,"result":{"status":"canceled"}}\n' "$cancel_id"
-                printf '{"method":"account/login/completed","params":{"loginId":"cancel-login-id","success":false,"error":"canceled by user"}}\n'
+                case "$scenario" in
+                    provider_login_cancel)
+                        printf '{"id":%s,"result":{"status":"canceled"}}\n' "$cancel_id"
+                        printf '{"method":"account/login/completed","params":{"loginId":"cancel-login-id","success":false,"error":"canceled by user"}}\n'
+                        ;;
+                    provider_login_completion_before_not_found)
+                        printf '{"method":"account/login/completed","params":{"loginId":"racing-login-id","success":true,"error":null}}\n'
+                        sleep 0.05
+                        printf '{"id":%s,"result":{"status":"notFound"}}\n' "$cancel_id"
+                        ;;
+                    provider_login_not_found_before_completion)
+                        printf '{"id":%s,"result":{"status":"notFound"}}\n' "$cancel_id"
+                        sleep 0.05
+                        printf '{"method":"account/login/completed","params":{"loginId":"racing-login-id","success":true,"error":null}}\n'
+                        ;;
+                    provider_login_not_found)
+                        printf '{"id":%s,"result":{"status":"notFound"}}\n' "$cancel_id"
+                        ;;
+                esac
                 ;;
             *) exit 39 ;;
         esac

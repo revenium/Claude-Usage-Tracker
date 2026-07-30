@@ -4,7 +4,7 @@ import UsageCore
 public struct CodexUsageProvider: UsageProvider, Sendable {
     public let id = ProviderID.codex
 
-    public let capabilities = ProviderCapabilities([
+    public static let supportedCapabilities = ProviderCapabilities([
         .account: .available,
         .health: .available,
         .usageLimits: .available,
@@ -15,6 +15,8 @@ public struct CodexUsageProvider: UsageProvider, Sendable {
         .automaticSessionStart: .unavailable,
         .statusLineIntegration: .unavailable
     ])
+
+    public let capabilities = Self.supportedCapabilities
 
     private let client: CodexAppServerClient
     private let now: @Sendable () -> Date
@@ -578,18 +580,20 @@ private enum OptionalUsageMapping {
 }
 
 public actor CodexLoginAttempt {
-    private enum TerminalOperation {
-        case idle
-        case waitingForCompletion
-        case cancelling
-        case disconnecting
-        case closed
-    }
-
     public nonisolated let challenge: CodexLoginChallenge
 
     private let session: CodexAppServerSession
-    private var terminalOperation = TerminalOperation.idle
+    private var completionTask: Task<CodexLoginOutcome, Error>?
+    private var cancellationTask:
+        Task<CodexLoginCancellationOutcome, Error>?
+    private var closeTask: Task<Void, Error>?
+    private var completionResult:
+        Result<CodexLoginOutcome, UsageProviderError>?
+    private var cancellationResult:
+        Result<CodexLoginCancellationOutcome, UsageProviderError>?
+    private var cancelWasAccepted = false
+    private var completionWasRequested = false
+    private var terminalInterruption: UsageProviderError?
 
     init(
         challenge: CodexLoginChallenge,
@@ -600,79 +604,76 @@ public actor CodexLoginAttempt {
     }
 
     public func waitForCompletion() async throws -> CodexLoginOutcome {
-        try begin(.waitingForCompletion)
+        completionWasRequested = true
+        if let completionResult {
+            return try await completedValue(completionResult)
+        }
+        try ensureActive()
+        let task = notificationTask()
         do {
-            let notification = try await session.nextNotification(
-                matching: .accountLoginCompleted
-            )
-            let completion = try decodeCompletion(notification)
-            try await close()
-            return completion.success ? .succeeded : .failed
-        } catch let operationError {
-            do {
-                try await close()
-            } catch {
-                throw CodexUsageProvider.map(error)
-            }
-            if let providerError = operationError as? UsageProviderError {
-                throw providerError
-            }
-            throw CodexUsageProvider.map(operationError)
+            let outcome = try await awaitCoordinated(task)
+            return try await resolveCompletion(outcome)
+        } catch {
+            return try await resolveCompletionFailure(error)
         }
     }
 
     public func cancel() async throws -> CodexLoginCancellationOutcome {
-        try begin(.cancelling)
+        if let cancellationResult {
+            return try await cancellationValue(cancellationResult)
+        }
+        if let completionResult {
+            _ = try await completedValue(completionResult)
+            let outcome = CodexLoginCancellationOutcome.notFound
+            cancellationResult = .success(outcome)
+            return outcome
+        }
+        try ensureActive()
+
+        let notificationTask = notificationTask()
+        let cancellationTask = cancellationRequestTask()
         do {
-            let rawResponse = try await session.request(
-                .accountLoginCancel,
-                params: .object([
-                    "loginId": .string(challenge.loginID)
-                ])
-            )
-            let response = try CodexDomainDecoder.decode(
-                CodexCancelLoginResponse.self,
-                from: rawResponse
-            )
-            switch response.status {
-            case "canceled":
-                let notification = try await session.nextNotification(
-                    matching: .accountLoginCompleted
-                )
-                let completion = try decodeCompletion(notification)
-                guard !completion.success else {
-                    throw UsageProviderError.malformedResponse
-                }
-                try await close()
-                return .canceled
-            case "notFound":
-                try await close()
-                return .notFound
-            default:
-                throw UsageProviderError.malformedResponse
+            let response = try await awaitCoordinated(cancellationTask)
+            switch response {
+            case .canceled:
+                cancelWasAccepted = true
+                let completion = try await awaitCoordinated(notificationTask)
+                let outcome = try await resolveCompletion(completion)
+                let cancellationOutcome: CodexLoginCancellationOutcome =
+                    outcome == .failed ? .canceled : .notFound
+                cancellationResult = .success(cancellationOutcome)
+                return cancellationOutcome
+            case .notFound:
+                return try await resolveNotFound(notificationTask)
             }
-        } catch let operationError {
-            do {
+        } catch {
+            if case .success? = completionResult {
                 try await close()
-            } catch {
-                throw CodexUsageProvider.map(error)
+                let outcome = CodexLoginCancellationOutcome.notFound
+                cancellationResult = .success(outcome)
+                return outcome
             }
-            if let providerError = operationError as? UsageProviderError {
-                throw providerError
-            }
-            throw CodexUsageProvider.map(operationError)
+            return try await resolveCancellationFailure(error)
         }
     }
 
     /// Closes the login-scoped app-server without logging the Codex account out.
     public func disconnect() async throws {
-        try begin(.disconnecting)
+        if completionResult != nil {
+            try await close()
+            return
+        }
+        completionResult = .failure(.cancelled)
+        if cancellationResult == nil {
+            cancellationResult = .failure(.cancelled)
+        }
+        terminalInterruption = terminalInterruption ?? .cancelled
         try await close()
     }
 
-    private func decodeCompletion(
+    private nonisolated static func decodeCompletion(
         _ notification: CodexNotificationFrame
-    ) throws -> CodexLoginCompletedNotification {
+    ) throws -> (loginID: String, outcome: CodexLoginOutcome) {
         guard let params = notification.params else {
             throw UsageProviderError.malformedResponse
         }
@@ -680,22 +681,243 @@ public actor CodexLoginAttempt {
             CodexLoginCompletedNotification.self,
             from: params
         )
-        guard completion.loginID == challenge.loginID else {
+        guard let loginID = completion.loginID else {
             throw UsageProviderError.malformedResponse
         }
-        return completion
+        return (
+            loginID: loginID,
+            outcome: completion.success ? .succeeded : .failed
+        )
     }
 
-    private func begin(_ operation: TerminalOperation) throws {
-        guard terminalOperation == .idle else {
-            throw UsageProviderError.invalidConfiguration
+    private nonisolated static func decodeCancellation(
+        _ rawResponse: CodexJSONValue
+    ) throws -> CodexLoginCancellationOutcome {
+        let response = try CodexDomainDecoder.decode(
+            CodexCancelLoginResponse.self,
+            from: rawResponse
+        )
+        switch response.status {
+        case "canceled":
+            return .canceled
+        case "notFound":
+            return .notFound
+        default:
+            throw UsageProviderError.malformedResponse
         }
-        terminalOperation = operation
+    }
+
+    private func notificationTask() -> Task<CodexLoginOutcome, Error> {
+        if let completionTask {
+            return completionTask
+        }
+        let session = session
+        let expectedLoginID = challenge.loginID
+        let task = Task {
+            let notification = try await session.nextNotification(
+                matching: .accountLoginCompleted
+            )
+            let completion = try Self.decodeCompletion(notification)
+            guard completion.loginID == expectedLoginID else {
+                throw UsageProviderError.malformedResponse
+            }
+            return completion.outcome
+        }
+        completionTask = task
+        return task
+    }
+
+    private func cancellationRequestTask()
+        -> Task<CodexLoginCancellationOutcome, Error>
+    {
+        if let cancellationTask {
+            return cancellationTask
+        }
+        let session = session
+        let loginID = challenge.loginID
+        let task = Task {
+            let rawResponse = try await session.request(
+                .accountLoginCancel,
+                params: .object([
+                    "loginId": .string(loginID)
+                ])
+            )
+            return try Self.decodeCancellation(rawResponse)
+        }
+        cancellationTask = task
+        return task
+    }
+
+    private func awaitCoordinated<Value: Sendable>(
+        _ task: Task<Value, Error>
+    ) async throws -> Value {
+        try await withTaskCancellationHandler {
+            if Task.isCancelled {
+                throw UsageProviderError.cancelled
+            }
+            let value = try await task.value
+            if Task.isCancelled {
+                throw UsageProviderError.cancelled
+            }
+            return value
+        } onCancel: {
+            Task {
+                await self.interruptForCallerCancellation()
+            }
+        }
+    }
+
+    private func interruptForCallerCancellation() {
+        guard completionResult == nil else { return }
+        completionResult = .failure(.cancelled)
+        cancellationResult = .failure(.cancelled)
+        terminalInterruption = .cancelled
+        _ = closeTaskForSession()
+    }
+
+    private func ensureActive() throws {
+        if let terminalInterruption {
+            throw terminalInterruption
+        }
+    }
+
+    func completionWaitIsRegisteredForTesting() -> Bool {
+        completionWasRequested
+            && completionResult == nil
+            && terminalInterruption == nil
+    }
+
+    private func resolveCompletion(
+        _ outcome: CodexLoginOutcome
+    ) async throws -> CodexLoginOutcome {
+        if let completionResult {
+            return try await completedValue(completionResult)
+        }
+        if let terminalInterruption {
+            throw terminalInterruption
+        }
+        completionResult = .success(outcome)
+        if cancelWasAccepted {
+            cancellationResult = .success(
+                outcome == .failed ? .canceled : .notFound
+            )
+        }
+        try await close()
+        return outcome
+    }
+
+    private func resolveCompletionFailure(
+        _ error: Error
+    ) async throws -> CodexLoginOutcome {
+        if let completionResult {
+            return try await completedValue(completionResult)
+        }
+        let providerError = CodexUsageProvider.map(error)
+        completionResult = .failure(providerError)
+        if cancellationTask != nil, cancellationResult == nil {
+            cancellationResult = .failure(providerError)
+        }
+        terminalInterruption = providerError
+        try await close()
+        throw providerError
+    }
+
+    private func resolveNotFound(
+        _ notificationTask: Task<CodexLoginOutcome, Error>
+    ) async throws -> CodexLoginCancellationOutcome {
+        let outcome = CodexLoginCancellationOutcome.notFound
+        cancellationResult = .success(outcome)
+
+        if completionWasRequested {
+            do {
+                let completion = try await awaitCoordinated(
+                    notificationTask
+                )
+                _ = try await resolveCompletion(completion)
+            } catch {
+                if Task.isCancelled
+                    || terminalInterruption == .cancelled
+                {
+                    cancellationResult = .failure(.cancelled)
+                    throw UsageProviderError.cancelled
+                }
+                if completionResult == nil {
+                    _ = try? await resolveCompletionFailure(error)
+                }
+                // `notFound` is still the authoritative cancellation RPC
+                // result. The completion waiter independently retains its
+                // bounded typed failure.
+                cancellationResult = .success(outcome)
+            }
+        }
+
+        if completionResult == nil {
+            completionResult = .failure(.cancelled)
+            terminalInterruption = .cancelled
+        }
+        try await close()
+        return outcome
+    }
+
+    private func resolveCancellationFailure(
+        _ error: Error
+    ) async throws -> CodexLoginCancellationOutcome {
+        if let cancellationResult {
+            return try await cancellationValue(cancellationResult)
+        }
+        let providerError = CodexUsageProvider.map(error)
+        cancellationResult = .failure(providerError)
+        if completionResult == nil {
+            completionResult = .failure(providerError)
+        }
+        terminalInterruption = providerError
+        try await close()
+        throw providerError
+    }
+
+    private func completedValue(
+        _ result: Result<CodexLoginOutcome, UsageProviderError>
+    ) async throws -> CodexLoginOutcome {
+        try await close()
+        return try result.get()
+    }
+
+    private func cancellationValue(
+        _ result: Result<
+            CodexLoginCancellationOutcome,
+            UsageProviderError
+        >
+    ) async throws -> CodexLoginCancellationOutcome {
+        try await close()
+        return try result.get()
+    }
+
+    private func closeTaskForSession() -> Task<Void, Error> {
+        if let closeTask {
+            return closeTask
+        }
+        let session = session
+        let task = Task {
+            try await session.close()
+        }
+        closeTask = task
+        return task
     }
 
     private func close() async throws {
-        guard terminalOperation != .closed else { return }
-        terminalOperation = .closed
-        try await session.close()
+        do {
+            let task = closeTaskForSession()
+            try await withTaskCancellationHandler {
+                try await task.value
+                if Task.isCancelled {
+                    throw UsageProviderError.cancelled
+                }
+            } onCancel: {}
+        } catch {
+            if Task.isCancelled {
+                throw UsageProviderError.cancelled
+            }
+            throw CodexUsageProvider.map(error)
+        }
     }
 }

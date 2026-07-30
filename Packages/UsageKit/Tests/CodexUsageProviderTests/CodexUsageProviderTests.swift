@@ -79,6 +79,10 @@ final class CodexUsageProviderTests: XCTestCase {
         XCTAssertEqual(provider.capabilities[.usageSummary], .unknown)
         XCTAssertEqual(provider.capabilities[.resetCredits], .available)
         XCTAssertEqual(
+            provider.capabilities,
+            CodexUsageProvider.supportedCapabilities
+        )
+        XCTAssertEqual(
             provider.capabilities[.statusLineIntegration],
             .unavailable
         )
@@ -490,6 +494,12 @@ final class CodexUsageProviderTests: XCTestCase {
         )
         let browserOutcome = try await browserAttempt.waitForCompletion()
         XCTAssertEqual(browserOutcome, .succeeded)
+        try await browserAttempt.disconnect()
+        let repeatedBrowserOutcome =
+            try await browserAttempt.waitForCompletion()
+        let lateBrowserCancellation = try await browserAttempt.cancel()
+        XCTAssertEqual(repeatedBrowserOutcome, .succeeded)
+        XCTAssertEqual(lateBrowserCancellation, .notFound)
         let browserRequests = try browserFake.recordedRequests()
         XCTAssertEqual(browserRequests.map(\.method), [.accountLoginStart])
         XCTAssertEqual(
@@ -576,8 +586,34 @@ final class CodexUsageProviderTests: XCTestCase {
             client: fake.client
         ).startLogin(.browser())
 
-        let cancellationOutcome = try await attempt.cancel()
-        XCTAssertEqual(cancellationOutcome, .canceled)
+        let firstWaitTask = Task {
+            try await attempt.waitForCompletion()
+        }
+        let secondWaitTask = Task {
+            try await attempt.waitForCompletion()
+        }
+        guard await waitUntilCompletionIsRegistered(attempt) else {
+            return XCTFail("Completion wait did not register")
+        }
+        let firstCancelTask = Task {
+            try await attempt.cancel()
+        }
+        let secondCancelTask = Task {
+            try await attempt.cancel()
+        }
+        let firstCancellationOutcome = try await firstCancelTask.value
+        let secondCancellationOutcome = try await secondCancelTask.value
+        let firstCompletionOutcome = try await firstWaitTask.value
+        let secondCompletionOutcome = try await secondWaitTask.value
+        let repeatedCancellationOutcome = try await attempt.cancel()
+        let repeatedCompletionOutcome =
+            try await attempt.waitForCompletion()
+        XCTAssertEqual(firstCancellationOutcome, .canceled)
+        XCTAssertEqual(secondCancellationOutcome, .canceled)
+        XCTAssertEqual(firstCompletionOutcome, .failed)
+        XCTAssertEqual(secondCompletionOutcome, .failed)
+        XCTAssertEqual(repeatedCancellationOutcome, .canceled)
+        XCTAssertEqual(repeatedCompletionOutcome, .failed)
         let requests = try fake.recordedRequests()
         XCTAssertEqual(
             requests.map(\.method),
@@ -588,6 +624,96 @@ final class CodexUsageProviderTests: XCTestCase {
             .object(["loginId": .string("cancel-login-id")])
         )
         XCTAssertFalse(requests.map(\.method).contains(.accountLogout))
+        XCTAssertEqual(try fake.launchedProcessIdentifiers().count, 1)
+        try await fake.assertAllProcessesExited()
+    }
+
+    func testCompletionWinsWhenItPrecedesNotFoundResponse() async throws {
+        let fake = try FakeCodexAppServer(
+            scenario: "provider_login_completion_before_not_found"
+        )
+        let attempt = try await CodexUsageProvider(
+            client: fake.client
+        ).startLogin(.browser())
+
+        let waitTask = Task {
+            try await attempt.waitForCompletion()
+        }
+        guard await waitUntilCompletionIsRegistered(attempt) else {
+            return XCTFail("Completion wait did not register")
+        }
+        let cancellationOutcome = try await attempt.cancel()
+        let completionOutcome = try await waitTask.value
+
+        XCTAssertEqual(completionOutcome, .succeeded)
+        XCTAssertEqual(cancellationOutcome, .notFound)
+        XCTAssertEqual(
+            try fake.recordedRequests().map(\.method),
+            [.accountLoginStart, .accountLoginCancel]
+        )
+        XCTAssertEqual(try fake.launchedProcessIdentifiers().count, 1)
+        try await fake.assertAllProcessesExited()
+    }
+
+    func testNotFoundPreservesCompletionForAnActiveWaiter() async throws {
+        let fake = try FakeCodexAppServer(
+            scenario: "provider_login_not_found_before_completion"
+        )
+        let attempt = try await CodexUsageProvider(
+            client: fake.client
+        ).startLogin(.browser())
+
+        let waitTask = Task {
+            try await attempt.waitForCompletion()
+        }
+        guard await waitUntilCompletionIsRegistered(attempt) else {
+            return XCTFail("Completion wait did not register")
+        }
+        let cancellationOutcome = try await attempt.cancel()
+        let completionOutcome = try await waitTask.value
+        let repeatedCancellationOutcome = try await attempt.cancel()
+        let repeatedCompletionOutcome =
+            try await attempt.waitForCompletion()
+
+        XCTAssertEqual(cancellationOutcome, .notFound)
+        XCTAssertEqual(completionOutcome, .succeeded)
+        XCTAssertEqual(repeatedCancellationOutcome, .notFound)
+        XCTAssertEqual(repeatedCompletionOutcome, .succeeded)
+        XCTAssertEqual(
+            try fake.recordedRequests().map(\.method),
+            [.accountLoginStart, .accountLoginCancel]
+        )
+        XCTAssertEqual(try fake.launchedProcessIdentifiers().count, 1)
+        try await fake.assertAllProcessesExited()
+    }
+
+    func testStandaloneNotFoundClosesWithoutWaitingForCompletion()
+        async throws
+    {
+        let fake = try FakeCodexAppServer(
+            scenario: "provider_login_not_found",
+            limits: try fastLimits()
+        )
+        let attempt = try await CodexUsageProvider(
+            client: fake.client
+        ).startLogin(.browser())
+
+        let startedAt = Date()
+        let cancellationOutcome = try await attempt.cancel()
+
+        XCTAssertEqual(cancellationOutcome, .notFound)
+        XCTAssertLessThan(Date().timeIntervalSince(startedAt), 1)
+        await XCTAssertThrowsProviderError(
+            try await attempt.waitForCompletion()
+        ) {
+            XCTAssertEqual($0, .cancelled)
+        }
+        XCTAssertEqual(
+            try fake.recordedRequests().map(\.method),
+            [.accountLoginStart, .accountLoginCancel]
+        )
+        XCTAssertEqual(try fake.launchedProcessIdentifiers().count, 1)
+        try await fake.assertAllProcessesExited()
     }
 
     func testLoginCompletionTimeoutIsBoundedAndRedacted() async throws {
@@ -607,9 +733,16 @@ final class CodexUsageProviderTests: XCTestCase {
             XCTAssertFalse(String(describing: $0).contains("pending-login-id"))
         }
         XCTAssertLessThan(Date().timeIntervalSince(startedAt), 2)
+        await XCTAssertThrowsProviderError(
+            try await attempt.waitForCompletion()
+        ) {
+            XCTAssertEqual($0, .timedOut)
+        }
+        XCTAssertEqual(try fake.launchedProcessIdentifiers().count, 1)
+        try await fake.assertAllProcessesExited()
     }
 
-    func testConcurrentWaitAndCancelNeverCompeteForProtocolFrames()
+    func testCancellingWaitTaskClosesAndReapsTheScopedSession()
         async throws
     {
         let fake = try FakeCodexAppServer(
@@ -619,39 +752,29 @@ final class CodexUsageProviderTests: XCTestCase {
         let attempt = try await CodexUsageProvider(
             client: fake.client
         ).startLogin(.browser())
-        let processIdentifier = try await fake.processIdentifier()
 
         let waitTask = Task {
-            do {
-                _ = try await attempt.waitForCompletion()
-                return Optional<UsageProviderError>.none
-            } catch let error as UsageProviderError {
-                return error
-            } catch {
-                return UsageProviderError.transportFailure
-            }
+            try await attempt.waitForCompletion()
         }
-        let cancelTask = Task {
-            do {
-                _ = try await attempt.cancel()
-                return Optional<UsageProviderError>.none
-            } catch let error as UsageProviderError {
-                return error
-            } catch {
-                return UsageProviderError.transportFailure
-            }
+        guard await waitUntilCompletionIsRegistered(attempt) else {
+            return XCTFail("Completion wait did not register")
         }
+        waitTask.cancel()
 
-        let errors = await [waitTask.value, cancelTask.value].compactMap { $0 }
-        XCTAssertEqual(errors.count, 2)
+        do {
+            _ = try await waitTask.value
+            XCTFail("Expected typed cancellation")
+        } catch let error as UsageProviderError {
+            XCTAssertEqual(error, .cancelled)
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
         XCTAssertEqual(
-            errors.filter { $0 == .invalidConfiguration }.count,
-            1
+            try fake.recordedRequests().map(\.method),
+            [.accountLoginStart]
         )
-        XCTAssertEqual(errors.filter { $0 == .timedOut }.count, 1)
-        XCTAssertFalse(errors.contains(.protocolFailure))
-        XCTAssertFalse(errors.contains(.transportFailure))
-        try await fake.assertProcessExited(processIdentifier)
+        XCTAssertEqual(try fake.launchedProcessIdentifiers().count, 1)
+        try await fake.assertAllProcessesExited()
     }
 
     func testDisconnectNeverLogsOutOrMutatesCredentials() async throws {
@@ -668,11 +791,29 @@ final class CodexUsageProviderTests: XCTestCase {
         let attempt = try await CodexUsageProvider(
             client: loginFake.client
         ).startLogin(.browser())
+        let waitTask = Task {
+            try await attempt.waitForCompletion()
+        }
+        guard await waitUntilCompletionIsRegistered(attempt) else {
+            return XCTFail("Completion wait did not register")
+        }
         try await attempt.disconnect()
+        try await attempt.disconnect()
+
+        do {
+            _ = try await waitTask.value
+            XCTFail("Expected disconnect to interrupt the active wait")
+        } catch let error as UsageProviderError {
+            XCTAssertEqual(error, .cancelled)
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
 
         let requests = try loginFake.recordedRequests()
         XCTAssertEqual(requests.map(\.method), [.accountLoginStart])
         XCTAssertFalse(requests.map(\.method).contains(.accountLogout))
+        XCTAssertEqual(try loginFake.launchedProcessIdentifiers().count, 1)
+        try await loginFake.assertAllProcessesExited()
     }
 
     func testMalformedLoginResponseDoesNotExposeURLsOrSecrets() async throws {
@@ -746,6 +887,18 @@ final class CodexUsageProviderTests: XCTestCase {
             overallTimeout: 6,
             terminationGracePeriod: 0.05
         )
+    }
+
+    private func waitUntilCompletionIsRegistered(
+        _ attempt: CodexLoginAttempt
+    ) async -> Bool {
+        for _ in 0..<1_000 {
+            if await attempt.completionWaitIsRegisteredForTesting() {
+                return true
+            }
+            await Task.yield()
+        }
+        return false
     }
 }
 
