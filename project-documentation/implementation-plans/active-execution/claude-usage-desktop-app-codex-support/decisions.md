@@ -228,6 +228,20 @@ All decisions below were settled during planning and approved before implementat
 - Rationale: A bounded request is not actually bounded if its subprocess survives the owning task or session.
 - Status: RESOLVED — proceeded 2026-07-30
 
+### D033 — Persist a scrubbed deletion record before cleanup
+- Context: A retryable deletion retains profile identity, but surviving migration envelopes can recreate credentials or usage that earlier cleanup steps already removed.
+- Options: Preserve the original profile until every cleanup step succeeds / Persist a deletion-in-progress profile with all secret and usage retry data scrubbed before destructive cleanup
+- **Decision: Persist the scrubbed deletion-in-progress record first, then perform verified Keychain and file cleanup.**
+- Rationale: The profile remains discoverable and retryable without allowing a failed cleanup or relaunch to resurrect deleted data.
+- Status: RESOLVED — proceeded 2026-07-30
+
+### D034 — Roll back atomic files only after target installation
+- Context: Backup preparation can fail while the current primary is still valid and untouched.
+- Options: Run backup restoration for every write-stage failure / Separate pre-install failure from post-install rollback
+- **Decision: Backup-preparation and target-rename failures leave the primary untouched; rollback begins only after a successful target install.**
+- Rationale: A failed attempt to stage protection for a new value must never take the currently readable value offline.
+- Status: RESOLVED — proceeded 2026-07-30
+
 ---
 
 ## Open Decisions
