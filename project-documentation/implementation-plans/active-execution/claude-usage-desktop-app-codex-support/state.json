@@ -3,10 +3,10 @@
   "project": "Claude Usage Desktop App Codex Support",
   "slug": "claude-usage-desktop-app-codex-support",
   "created_at": "2026-07-30T05:19:19Z",
-  "last_updated": "2026-07-30T06:53:41Z",
+  "last_updated": "2026-07-30T07:11:34Z",
   "status": "active",
   "current_batch": "B02",
-  "current_phase": "B02-validation",
+  "current_phase": "B02-ship",
   "feature_branch": "feature/codex-subscription-support",
   "feature_branch_role": "Durable project-control branch; delivery code uses sequential batch branches targeting upstream/main.",
   "repository": {
@@ -177,7 +177,7 @@
     },
     "B02": {
       "name": "Safety foundations",
-      "status": "validating",
+      "status": "ready_to_ship",
       "branch": "feature/codex-support-foundations",
       "worktree": "/Users/jason/gitclone/hc-repo/worktrees/Claude-Usage-Tracker/phase-02-foundations",
       "target": "upstream/main",
@@ -186,7 +186,7 @@
       "primary_linear_issue": "PRODUCT-2280",
       "pr_number": null,
       "pr_url": null,
-      "head_sha": null,
+      "head_sha": "4c9890ce1cda23c6a3fe2d5e3eadf55c98d6515e",
       "started_at": "2026-07-30T05:49:00Z",
       "merged_at": null
     },

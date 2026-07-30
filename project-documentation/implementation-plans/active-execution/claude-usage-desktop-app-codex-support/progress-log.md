@@ -7,9 +7,9 @@
 - Umbrella: `PRODUCT-2276`
 - Tracking wave: W00 — complete
 - Current delivery batch: B02 — Safety foundations
-- Current phases: P02/P03/P04 implemented; B02 final semantic/security audit and ship in progress
+- Current phases: P02/P03/P04 implemented and fully validated; B02 ship in progress
 - Active implementation workers: P08 Codex provider/account/login contracts
-- Next action: Close the independent B02 final audit, then ship and auto-merge the batch
+- Next action: Run `codex-ship-pr skip-review`, close review gates, and auto-merge B02
 
 ## Repository State at Initialization
 
@@ -56,7 +56,7 @@
 | Batch | Branch | PR | CI | Review Gate | Merge | Status |
 |---|---|---|---|---|---|---|
 | B01 Baseline | `feature/codex-support-baseline` | [#7](https://github.com/revenium/Claude-Usage-Tracker/pull/7) | Success | Tessie clean + Greptile 5/5 | `29c7fe1` | Merged |
-| B02 Foundations | `feature/codex-support-foundations` | — | — | — | — | In progress |
+| B02 Foundations | `feature/codex-support-foundations` | — | Local gates passed | Local semantic/security audit clean after fixes | — | Ready to ship |
 | B03 Provider core | `feature/codex-support-provider-core` | — | — | — | — | Pending |
 | B04 UI parity | `feature/codex-support-ui-parity` | — | — | — | — | Pending |
 | B05 Release readiness | `feature/codex-support-release-readiness` | — | — | — | — | Pending |
@@ -66,8 +66,8 @@
 | Phase | Linear | Worker | Commit | Batch PR | Completed | Summary |
 |---|---|---|---|---|---|---|
 | P01 | PRODUCT-2282 | baseline_audit | `1009d4f` | #7 | 2026-07-30 | Parser correctness, null compatibility, hermetic UserDefaults tests, canonical validation docs |
-| P02 | PRODUCT-2280 | profile_security_integration | `728974d` | Pending B02 | Pending merge | Verified profile-keyed Keychain storage, backward migration, explicit credential APIs, startup guard |
-| P03 | PRODUCT-2279 | profile_security_integration | `afa9f7b` | Pending B02 | Pending merge | Atomic current/history files, verified migration, transactional credentials, lifecycle cleanup, in-memory scrubbing |
+| P02 | PRODUCT-2280 | profile_security_integration | `728974d`, `4c9890c` | Pending B02 | Pending merge | Verified profile-keyed Keychain storage, backward migration, explicit credential APIs, startup guard, fail-closed deletion marker |
+| P03 | PRODUCT-2279 | profile_security_integration | `afa9f7b`, `153fca9`, `4c9890c` | Pending B02 | Pending merge | Atomic current/history files, verified migration, transactional credentials, recoverable cleanup, fault-injected rollback safety |
 | P04 | PRODUCT-2277 | menu_reliability_audit | `5313a99` | Pending B02 | Pending merge | Context menu, stable status items, popover/window/full-screen fixes, CGImage fingerprinting, Cmd+W |
 | P05 | PRODUCT-2281 | usagekit_contracts | `00793e5` | Pending B03 | Pending merge | Foundation-only UsageCore contracts and characterized Claude adapter |
 | P06 | PRODUCT-2278 | codex_transport | `0647f4b` | Pending B03 | Pending merge | Bounded request/login-scoped app-server JSONL transport with callback-backed termination, reaping barrier, exact PID exit proof, and zero-orphan census |
@@ -89,9 +89,12 @@
 | 2026-07-30 | P02 hosted-test isolation | startup guard assertion + non-secret state audit | PASS with recorded incident | Future XCTest launches return before defaults/Keychain/file migration; one pre-guard launch is documented in D027 |
 | 2026-07-30 | B02 pre-integration suite | full unsigned Debug `xcodebuild test` after P02/P03 primitive/P04 integration | PASS | Independently rerun: 153 passed, 0 failed, 0 skipped |
 | 2026-07-30 | B02 focused integrated safety suite | security/current usage/file/history/menu selected tests | PASS | Independently rerun after P03 integration: 44 passed, 0 failed |
-| 2026-07-30 | B02 semantic/security review | read-only changed-code and call-site audit | FIXED | Closed non-transactional credential replacement and invisible deletion-error findings; no other definite/major issue |
+| 2026-07-30 | B02 semantic/security review | two read-only changed-code and call-site audits | FIXED | Closed six earlier findings plus final deletion-resurrection, unresolved-read, backup-preparation, and CLI success-reporting blockers |
 | 2026-07-30 | B02 final full unit suite | unsigned Debug `xcodebuild test` at `9808277` | PASS | 166 passed, 0 failed, 0 skipped |
 | 2026-07-30 | B02 final Debug/Release builds | unsigned `xcodebuild build` in both configurations | PASS | Both configurations exited successfully; only pre-existing warnings remain |
+| 2026-07-30 | B02 post-audit focused safety suite | profile security, current usage, and atomic storage suites | PASS | Independently rerun: 39 passed, 0 failed |
+| 2026-07-30 | B02 post-audit full unit suite | unsigned Debug `xcodebuild test` at `4c9890c` | PASS | xcresult summary: 178 passed, 0 failed, 0 skipped |
+| 2026-07-30 | B02 post-audit Debug/Release builds | unsigned `xcodebuild build` in both configurations at `4c9890c` | PASS | Both configurations exited successfully; only baseline warnings remain |
 | 2026-07-30 | P05 UsageCore package | `swift test` and `swift test -c release` | PASS | Independently rerun: 13 passed in each configuration |
 | 2026-07-30 | P05 Claude adapter | focused adapter tests + full app suite + Debug build | PASS | Worker: 10 adapter tests and 120 full-app tests passed; independent package/diff/security audit passed |
 | 2026-07-30 | P06 Codex transport package | warnings-as-errors `swift test` and Release package test | PASS | Independently rerun: 31 passed in each configuration; Foundation-only and leak/diff scans clean |
