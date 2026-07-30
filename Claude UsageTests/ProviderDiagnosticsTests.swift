@@ -1770,15 +1770,30 @@ final class ProviderDiagnosticsTests: HostedAppTestCase {
         let startedAt = Date()
         let result = await CodexVersionProbe.readVersion(
             script,
-            timeout: 0.2,
+            timeout: 1,
             terminationGrace: 0.05
         )
 
         XCTAssertNil(result)
         XCTAssertLessThan(
             Date().timeIntervalSince(startedAt),
-            1.5
+            2.5
         )
+        let pidFileDeadline = Date().addingTimeInterval(1)
+        while !FileManager.default.fileExists(
+            atPath: rootPIDFile.path
+        ),
+        Date() < pidFileDeadline {
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        guard FileManager.default.fileExists(
+            atPath: rootPIDFile.path
+        ) else {
+            XCTFail(
+                "Continuous writer never reached its PID handshake"
+            )
+            return
+        }
         await assertProcessExited(
             try readPID(from: rootPIDFile)
         )
