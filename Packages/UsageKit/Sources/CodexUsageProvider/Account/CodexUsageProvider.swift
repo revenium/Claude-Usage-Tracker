@@ -13,6 +13,7 @@ public struct CodexUsageProvider: UsageProvider, Sendable {
         .resetCredits: .available,
         .interactiveLogin: .available,
         .automaticSessionStart: .unavailable,
+        .automaticProfileSwitch: .unavailable,
         .statusLineIntegration: .unavailable,
         .usageHistory: .available,
         .usageNotifications: .available,

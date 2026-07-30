@@ -43,6 +43,7 @@ enum ClaudeUsageProviderAdapter {
         .resetCredits: .unavailable,
         .interactiveLogin: .unavailable,
         .automaticSessionStart: .available,
+        .automaticProfileSwitch: .available,
         .statusLineIntegration: .available,
         .usageHistory: .available,
         .usageNotifications: .available,

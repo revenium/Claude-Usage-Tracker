@@ -204,6 +204,12 @@ final class SettingsNavigationModel: ObservableObject {
                 self.isResolvingProfile = false
                 return
             }
+            self.normalizeSection(
+                for: targetProfile.providerID,
+                capabilities: dependencies.capabilities(
+                    for: targetProfile.providerID
+                )
+            )
             if needsActivation {
                 self.selectedProfileID = nil
                 self.isResolvingProfile = false
@@ -233,17 +239,29 @@ final class SettingsNavigationModel: ObservableObject {
                 self.isResolvingProfile = false
                 return
             }
-            self.normalizeCredentialSection(for: providerID)
+            self.normalizeSection(
+                for: providerID,
+                capabilities: dependencies.capabilities(
+                    for: providerID
+                )
+            )
             self.selectedProfileID = nil
             self.isResolvingProfile = false
         }
     }
 
-    func activeProviderDidChange(_ providerID: ProviderID?) {
+    func activeProviderDidChange(
+        _ providerID: ProviderID?,
+        capabilities: ProviderCapabilities?
+    ) {
         guard selectedProfileID == nil, let providerID else {
             return
         }
-        normalizeCredentialSection(for: providerID)
+        normalizeSection(
+            for: providerID,
+            capabilities: capabilities
+                ?? ProviderCapabilities()
+        )
     }
 
     private func apply(_ destination: SettingsNavigationDestination) {
@@ -293,6 +311,24 @@ final class SettingsNavigationModel: ObservableObject {
             if selectedSection.isCredential {
                 selectedSection = .general
             }
+        }
+    }
+
+    private func normalizeSection(
+        for providerID: ProviderID,
+        capabilities: ProviderCapabilities
+    ) {
+        normalizeCredentialSection(for: providerID)
+        let policy = ProviderFeatureSurfacePolicy(
+            capabilities: capabilities
+        )
+        if selectedSection == .history,
+           !policy.supports(.history) {
+            selectedSection = .general
+        }
+        if selectedSection == .claudeCode,
+           !policy.supports(.statusLine) {
+            selectedSection = .general
         }
     }
 }
@@ -594,7 +630,12 @@ struct SettingsView: View {
         .background(SettingsBackground())
         .onChange(of: profileManager.activeProfile?.providerID) {
             _, providerID in
-            navigation.activeProviderDidChange(providerID)
+            navigation.activeProviderDidChange(
+                providerID,
+                capabilities: providerID.map {
+                    dependencies.capabilities(for: $0)
+                }
+            )
         }
     }
 }

@@ -26,6 +26,16 @@ enum ChartTimeScale: Double, CaseIterable {
     }
 }
 
+nonisolated struct NormalizedHistorySeriesIdentity:
+    Hashable,
+    Sendable
+{
+    let profileID: UUID
+    let providerID: ProviderID
+    let groupID: UsageLimitGroupID
+    let windowID: UsageWindowID
+}
+
 /// Usage history view showing charts and historical data
 struct UsageHistoryView: View {
     private let dependencies: ProviderUIDependencies
@@ -120,6 +130,7 @@ struct UsageHistoryView: View {
 
     private struct WindowSeries: Identifiable {
         let key: String
+        let profileID: UUID
         let providerID: ProviderID
         let groupID: UsageLimitGroupID
         let groupName: String?
@@ -127,7 +138,14 @@ struct UsageHistoryView: View {
         let windowName: String?
         let snapshots: [NormalizedUsageSnapshot]
 
-        var id: String { key }
+        var id: NormalizedHistorySeriesIdentity {
+            NormalizedHistorySeriesIdentity(
+                profileID: profileID,
+                providerID: providerID,
+                groupID: groupID,
+                windowID: windowID
+            )
+        }
         var title: String {
             let group = groupName ?? groupID.rawValue
             let window = windowName ?? windowID.rawValue
@@ -153,6 +171,7 @@ struct UsageHistoryView: View {
             }
             return WindowSeries(
                 key: key,
+                profileID: latest.profileID,
                 providerID: latest.providerID,
                 groupID: latest.groupID,
                 groupName: latest.groupDisplayName,

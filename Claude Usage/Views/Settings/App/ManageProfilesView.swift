@@ -31,6 +31,28 @@ struct ManageProfilesView: View {
         )
     }
 
+    private var supportsAutomaticProfileSwitch: Bool {
+        guard let activeProviderID =
+                profileManager.activeProfile?.providerID else {
+            return false
+        }
+        let activePolicy = ProviderFeatureSurfacePolicy(
+            capabilities: dependencies.capabilities(
+                for: activeProviderID
+            )
+        )
+        guard activePolicy.supports(.automaticProfileSwitch) else {
+            return false
+        }
+        return profileManager.profiles.lazy.filter {
+            ProviderFeatureSurfacePolicy(
+                capabilities: dependencies.capabilities(
+                    for: $0.providerID
+                )
+            ).supports(.automaticProfileSwitch)
+        }.count > 1
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.section) {
@@ -272,22 +294,24 @@ struct ManageProfilesView: View {
                     }
                 }
 
-                // Auto-Switch Profile Section
-                SettingsSectionCard(
-                    title: "auto_switch.title".localized,
-                    subtitle: "auto_switch.subtitle".localized
-                ) {
-                    SettingToggle(
-                        title: "auto_switch.enable_title".localized,
-                        description: "auto_switch.enable_description".localized,
-                        badge: .new,
-                        isOn: Binding(
-                            get: { SharedDataStore.shared.loadAutoSwitchProfileEnabled() },
-                            set: { enabled in
-                                SharedDataStore.shared.saveAutoSwitchProfileEnabled(enabled)
-                            }
+                if supportsAutomaticProfileSwitch {
+                    // Auto-Switch Profile Section
+                    SettingsSectionCard(
+                        title: "auto_switch.title".localized,
+                        subtitle: "auto_switch.subtitle".localized
+                    ) {
+                        SettingToggle(
+                            title: "auto_switch.enable_title".localized,
+                            description: "auto_switch.enable_description".localized,
+                            badge: .new,
+                            isOn: Binding(
+                                get: { SharedDataStore.shared.loadAutoSwitchProfileEnabled() },
+                                set: { enabled in
+                                    SharedDataStore.shared.saveAutoSwitchProfileEnabled(enabled)
+                                }
+                            )
                         )
-                    )
+                    }
                 }
 
                 // Info Card
