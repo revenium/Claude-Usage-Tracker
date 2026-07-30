@@ -29,6 +29,20 @@ final class CodexProfileSetupTests: HostedAppTestCase {
             context.manager.profiles.map(\.providerID),
             [.claude, .codex]
         )
+        XCTAssertEqual(
+            claude.iconConfig,
+            .default(for: .claude)
+        )
+        XCTAssertEqual(
+            codex.iconConfig,
+            .default(for: .codex)
+        )
+        XCTAssertEqual(
+            context.store.loadProfiles().first {
+                $0.id == codex.id
+            }?.iconConfig,
+            .default(for: .codex)
+        )
         try dependencies.updateName(
             "Renamed Codex",
             profileID: codex.id
@@ -441,6 +455,7 @@ final class CodexProfileSetupTests: HostedAppTestCase {
         await waitUntil {
             !navigation.isResolvingProfile
         }
+        XCTAssertNil(navigation.selectedProfileID)
         XCTAssertEqual(navigation.selectedSection, .providerAccount)
         XCTAssertEqual(context.manager.activeProfile?.id, codex.id)
 
@@ -451,6 +466,7 @@ final class CodexProfileSetupTests: HostedAppTestCase {
         await waitUntil {
             !navigation.isResolvingProfile
         }
+        XCTAssertNil(navigation.selectedProfileID)
         XCTAssertEqual(navigation.selectedSection, .claudeAI)
         XCTAssertEqual(context.manager.activeProfile?.id, claude.id)
     }
@@ -1212,6 +1228,7 @@ final class CodexProfileSetupTests: HostedAppTestCase {
 
     private struct Context {
         let manager: ProfileManager
+        let store: ProfileStore
     }
 
     private struct CodexSetup {
@@ -1256,7 +1273,7 @@ final class CodexProfileSetupTests: HostedAppTestCase {
             )
         )
         manager.loadProfiles()
-        return Context(manager: manager)
+        return Context(manager: manager, store: store)
     }
 
     private func makeDependencies(

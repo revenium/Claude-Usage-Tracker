@@ -6,6 +6,74 @@ import XCTest
 final class NormalizedUsagePresentationTests: HostedAppTestCase {
     private let now = Date(timeIntervalSince1970: 2_000_000_000)
 
+    func testProviderShellPreservesClaudeAndNormalizesCodex() {
+        XCTAssertEqual(
+            PopoverShell.resolve(providerID: .claude),
+            .claudeLegacy
+        )
+        XCTAssertEqual(
+            PopoverShell.resolve(providerID: .codex),
+            .normalized
+        )
+        XCTAssertEqual(
+            SmartHeader.claudeStatusURL.absoluteString,
+            "https://status.claude.com"
+        )
+    }
+
+    func testLegacyBannerPrecedenceThresholdsAndActions() {
+        let stale = now.addingTimeInterval(-301)
+
+        XCTAssertEqual(
+            LegacyPopoverBanner.resolve(
+                hasCredentialError: true,
+                consecutiveRefreshFailures: 8,
+                lastSuccessfulRefreshTime: stale,
+                now: now
+            ),
+            .credentialError
+        )
+        XCTAssertEqual(
+            LegacyPopoverBanner.credentialError.action,
+            .preferences
+        )
+        XCTAssertNil(
+            LegacyPopoverBanner.resolve(
+                hasCredentialError: false,
+                consecutiveRefreshFailures: 2,
+                lastSuccessfulRefreshTime:
+                    now.addingTimeInterval(-300),
+                now: now
+            )
+        )
+        XCTAssertEqual(
+            LegacyPopoverBanner.resolve(
+                hasCredentialError: false,
+                consecutiveRefreshFailures: 3,
+                lastSuccessfulRefreshTime: stale,
+                now: now
+            ),
+            .refreshFailed(count: 3)
+        )
+        XCTAssertEqual(
+            LegacyPopoverBanner.refreshFailed(count: 3).action,
+            .refresh
+        )
+        XCTAssertEqual(
+            LegacyPopoverBanner.resolve(
+                hasCredentialError: false,
+                consecutiveRefreshFailures: 0,
+                lastSuccessfulRefreshTime: stale,
+                now: now
+            ),
+            .stale(minutesAgo: 5)
+        )
+        XCTAssertEqual(
+            LegacyPopoverBanner.stale(minutesAgo: 5).action,
+            .refresh
+        )
+    }
+
     func testDynamicGroupsPreserveReportOrderAndCompositeIdentity()
         throws
     {
@@ -71,6 +139,25 @@ final class NormalizedUsagePresentationTests: HostedAppTestCase {
                 presentation.groups.flatMap(\.windows).map(\.id)
             ).count,
             4
+        )
+    }
+
+    func testAccessibilityComponentsEscapeDynamicIDsInjectively() {
+        XCTAssertEqual(
+            NormalizedUsageAccessibility.safeComponent("model.a"),
+            "model%2Ea"
+        )
+        XCTAssertEqual(
+            NormalizedUsageAccessibility.safeComponent("model_a"),
+            "model_a"
+        )
+        XCTAssertNotEqual(
+            NormalizedUsageAccessibility.safeComponent("model.a"),
+            NormalizedUsageAccessibility.safeComponent("model_a")
+        )
+        XCTAssertEqual(
+            NormalizedUsageAccessibility.safeComponent("a%b"),
+            "a%25b"
         )
     }
 
@@ -530,6 +617,28 @@ final class NormalizedUsagePresentationTests: HostedAppTestCase {
         XCTAssertEqual(
             unsupported.emptyState,
             .unsupportedAccount
+        )
+        XCTAssertEqual(
+            unsupported.healthStatus,
+            .unsupported
+        )
+
+        let unauthenticated = makePresentation(
+            report: nil,
+            configurationState: .unauthenticated
+        )
+        XCTAssertEqual(
+            unauthenticated.healthStatus,
+            .unauthenticated
+        )
+
+        let dependencyMissing = makePresentation(
+            report: nil,
+            configurationState: .dependencyMissing
+        )
+        XCTAssertEqual(
+            dependencyMissing.healthStatus,
+            .unavailable
         )
 
         let unsupportedUsage = makePresentation(

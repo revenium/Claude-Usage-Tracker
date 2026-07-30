@@ -316,11 +316,20 @@ final class MenuReliabilityTests: HostedAppTestCase {
             statusService: statusService,
             featureAvailability: .testing()
         ))
+        let providerUIDependencies = retain(
+            ProviderUIDependencies(
+                profileManager: profileManager,
+                codexProviderFactory: CodexProviderFactory(
+                    availability: .testing()
+                )
+            )
+        )
         let manager = retain(MenuBarManager(
             apiService: apiService,
             statusService: statusService,
             profileManager: profileManager,
-            refreshRuntime: runtime
+            refreshRuntime: runtime,
+            providerUIDependencies: providerUIDependencies
         ))
         let context = UsagePresentationContext(
             epoch: 6,

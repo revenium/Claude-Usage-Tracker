@@ -205,6 +205,7 @@ final class SettingsNavigationModel: ObservableObject {
                 return
             }
             if needsActivation {
+                self.selectedProfileID = nil
                 self.isResolvingProfile = false
             }
         }

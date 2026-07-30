@@ -763,8 +763,9 @@ final class ProviderMenuPresentationTests: HostedAppTestCase {
             metricID: nil
         )
 
-        XCTAssertNil(
-            MenuBarManager.popoverSettingsDestination(for: claude)
+        XCTAssertEqual(
+            MenuBarManager.popoverSettingsDestination(for: claude),
+            .defaultView
         )
         XCTAssertEqual(
             MenuBarManager.popoverSettingsDestination(for: codex),

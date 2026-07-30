@@ -394,7 +394,9 @@ enum NormalizedUsagePresentationBuilder {
             accountName: report?.account?.displayName,
             planName: report?.account?.planName,
             organizationName: report?.account?.organizationName,
-            healthStatus: report?.health.status,
+            healthStatus:
+                report?.health.status
+                ?? headerHealthStatus(for: emptyState),
             groups: groups,
             summary: summary,
             credits: credits,
@@ -671,6 +673,23 @@ enum NormalizedUsagePresentationBuilder {
             }
             .joined(separator: " ")
     }
+
+    private static func headerHealthStatus(
+        for emptyState: NormalizedUsageEmptyState?
+    ) -> ProviderHealthStatus? {
+        switch emptyState {
+        case .unauthenticated:
+            return .unauthenticated
+        case .unsupportedAccount:
+            return .unsupported
+        case .disabled, .unlinked, .dependencyMissing,
+             .unsupportedUsage, .invalidConfiguration,
+             .unavailable, .deleting:
+            return .unavailable
+        case .missingSnapshot, .loading, .empty, nil:
+            return nil
+        }
+    }
 }
 
 private extension PresentationSnapshot {
@@ -682,13 +701,13 @@ private extension PresentationSnapshot {
 
 enum NormalizedUsageAccessibility {
     nonisolated static func safeComponent(_ value: String) -> String {
-        value.unicodeScalars.map { scalar in
-            if CharacterSet.alphanumerics.contains(scalar)
-                || scalar == "-"
-                || scalar == "_" {
-                return String(scalar)
+        value.utf8.map { byte in
+            switch byte {
+            case 48...57, 65...90, 97...122, 45, 95:
+                return String(UnicodeScalar(byte))
+            default:
+                return String(format: "%%%02X", byte)
             }
-            return "_"
         }.joined()
     }
 }
@@ -900,12 +919,14 @@ struct NormalizedUsageView: View {
             if let summary = presentation.summary {
                 NormalizedUsageSummaryView(
                     summary: summary,
+                    timeDisplay: timeDisplay,
                     now: now
                 )
             }
             if !presentation.credits.isEmpty {
                 NormalizedUsageCreditsView(
                     credits: presentation.credits,
+                    timeDisplay: timeDisplay,
                     now: now
                 )
             }
@@ -1062,6 +1083,7 @@ private struct NormalizedUsageEmptyStateView: View {
 
 private struct NormalizedUsageSummaryView: View {
     let summary: NormalizedUsageSummaryPresentation
+    let timeDisplay: PopoverTimeDisplay
     let now: Date
 
     var body: some View {
@@ -1147,7 +1169,8 @@ private struct NormalizedUsageSummaryView: View {
                 Text(
                     NormalizedUsageFormatter.periodEnd(
                         end,
-                        now: now
+                        now: now,
+                        display: timeDisplay
                     )
                 )
                 .font(.system(size: 9))
@@ -1180,6 +1203,7 @@ private struct NormalizedUsageSummaryView: View {
 
 private struct NormalizedUsageCreditsView: View {
     let credits: [UsageCredit]
+    let timeDisplay: PopoverTimeDisplay
     let now: Date
 
     var body: some View {
@@ -1215,7 +1239,7 @@ private struct NormalizedUsageCreditsView: View {
                             NormalizedUsageFormatter.reset(
                                 reset,
                                 now: now,
-                                display: .remainingTime
+                                display: timeDisplay
                             )
                         )
                         .font(.system(size: 9))
@@ -1387,8 +1411,12 @@ enum NormalizedUsageFormatter {
         return formatter.string(from: date)
     }
 
-    static func periodEnd(_ date: Date, now: Date) -> String {
-        reset(date, now: now, display: .resetTime)
+    static func periodEnd(
+        _ date: Date,
+        now: Date,
+        display: PopoverTimeDisplay
+    ) -> String {
+        reset(date, now: now, display: display)
     }
 
     private static func formattedValue(

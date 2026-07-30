@@ -404,13 +404,23 @@ class ProfileManager: ObservableObject {
     ) -> Profile {
         let usedNames = profiles.map { $0.name }
         let profileName = name ?? FunnyNameGenerator.getRandomName(excluding: usedNames)
+        let providerDefaultIconConfiguration:
+            MenuBarIconConfiguration
+        switch providerConfiguration.kind {
+        case .claude:
+            providerDefaultIconConfiguration = .default(for: .claude)
+        case .codex:
+            providerDefaultIconConfiguration = .default(for: .codex)
+        }
 
         return Profile(
             id: UUID(),
             name: profileName,
             providerConfiguration: providerConfiguration,
             hasCliAccount: false,
-            iconConfig: copySettingsFrom?.iconConfig ?? .default,
+            iconConfig:
+                copySettingsFrom?.iconConfig
+                ?? providerDefaultIconConfiguration,
             refreshInterval: copySettingsFrom?.refreshInterval ?? 30.0,
             autoStartSessionEnabled: copySettingsFrom?.autoStartSessionEnabled ?? false,
             checkOverageLimitEnabled: copySettingsFrom?.checkOverageLimitEnabled ?? true,

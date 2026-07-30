@@ -269,6 +269,8 @@ class MenuBarManager: NSObject, ObservableObject {
 
     // Settings window reference
     private var settingsWindow: NSWindow?
+    private var settingsController:
+        SettingsWindowNavigationController?
 
     // GitHub star prompt window reference
     private var githubPromptWindow: NSWindow?
@@ -280,14 +282,10 @@ class MenuBarManager: NSObject, ObservableObject {
     private weak var currentPopoverButton: NSStatusBarButton?
     private var contextMenuTarget: ProviderStatusItemIdentity?
 
-    /// Compile-safe P10 composition-root seam for typed settings navigation.
-    /// The existing settings window remains the fallback until installed.
-    var settingsNavigationHandler:
-        ((SettingsNavigationDestination) -> Void)?
-
     private let dataStore = DataStore.shared
     private let networkMonitor = NetworkMonitor.shared
     private let profileManager: ProfileManager
+    private let providerUIDependencies: ProviderUIDependencies
     private let autoStartService = AutoStartSessionService.shared
     private let refreshRuntime: UsageRefreshRuntime
     private var refreshEventObserver: UUID?
@@ -375,9 +373,11 @@ class MenuBarManager: NSObject, ObservableObject {
         apiService: ClaudeAPIService,
         statusService: ClaudeStatusService,
         profileManager: ProfileManager,
-        refreshRuntime: UsageRefreshRuntime? = nil
+        refreshRuntime: UsageRefreshRuntime? = nil,
+        providerUIDependencies: ProviderUIDependencies
     ) {
         self.profileManager = profileManager
+        self.providerUIDependencies = providerUIDependencies
         self.refreshRuntime = refreshRuntime
             ?? UsageRefreshRuntime.live(
                 profileManager: profileManager,
@@ -1192,6 +1192,9 @@ class MenuBarManager: NSObject, ObservableObject {
         }
         detachedWindow?.close()
         detachedWindow = nil
+        settingsController?.window.close()
+        settingsController = nil
+        settingsWindow = nil
         statusItem = nil
         statusBarUIManager?.cleanup()
         statusBarUIManager = nil
@@ -1457,6 +1460,12 @@ class MenuBarManager: NSObject, ObservableObject {
                     target: self.popoverActionTarget()
                 )
             },
+            onManageProfiles: { [weak self] in
+                guard let self else { return }
+                self.openPopoverManageProfiles(
+                    target: self.popoverActionTarget()
+                )
+            },
             onPreferences: { [weak self] in
                 guard let self else { return }
                 self.openPopoverSettings(
@@ -1507,22 +1516,26 @@ class MenuBarManager: NSObject, ObservableObject {
               currentProfile(for: target) != nil else {
             return
         }
-        if let destination = Self.popoverSettingsDestination(
-            for: target
-        ) {
-            navigateToSettings(destination)
-        } else {
-            // Preserve the characterized Claude Preferences behavior.
-            closePopoverOrWindow()
-            preferencesClicked()
+        navigateToSettings(
+            Self.popoverSettingsDestination(for: target)
+        )
+    }
+
+    private func openPopoverManageProfiles(
+        target: ProviderStatusItemIdentity?
+    ) {
+        guard let target,
+              currentProfile(for: target) != nil else {
+            return
         }
+        navigateToSettings(.manageProfiles)
     }
 
     nonisolated static func popoverSettingsDestination(
         for target: ProviderStatusItemIdentity
-    ) -> SettingsNavigationDestination? {
+    ) -> SettingsNavigationDestination {
         target.providerID == .claude
-            ? nil
+            ? .defaultView
             : .providerAccount(profileID: target.profileID)
     }
 
@@ -1875,12 +1888,7 @@ class MenuBarManager: NSObject, ObservableObject {
     private func navigateToSettings(
         _ destination: SettingsNavigationDestination
     ) {
-        closePopoverOrWindow()
-        if let settingsNavigationHandler {
-            settingsNavigationHandler(destination)
-        } else {
-            preferencesClicked()
-        }
+        showSettings(destination: destination)
     }
 
     private func closePopover() {
@@ -2874,33 +2882,39 @@ class MenuBarManager: NSObject, ObservableObject {
     }
 
     @objc private func preferencesClicked() {
-        // Close the popover or detached window first
+        showSettings(destination: .defaultView)
+    }
+
+    private func showSettings(
+        destination: SettingsNavigationDestination
+    ) {
         closePopoverOrWindow()
 
-        // If settings window already exists, just bring it to front
-        if let existingWindow = settingsWindow, existingWindow.isVisible {
+        if let settingsController {
+            settingsController.navigate(to: destination)
+            let existingWindow = settingsController.window
             existingWindow.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             return
         }
 
-        // Small delay to ensure smooth transition
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-            // Temporarily show dock icon for the settings window (like setup wizard)
-            NSApp.setActivationPolicy(.regular)
+        NSApp.setActivationPolicy(.regular)
+        let controller = SettingsWindowBuilder.makeController(
+            size: Constants.WindowSizes.settingsWindow,
+            dependencies: providerUIDependencies,
+            destination: destination
+        )
+        let window = controller.window
+        window.title = "app.window.settings".localized
+        window.center()
+        window.isReleasedWhenClosed = false
+        window.delegate = self
 
-            // Create and show the settings window
-            let window = SettingsWindowBuilder.makeWindow(size: Constants.WindowSizes.settingsWindow)
-            window.title = "Claude Usage - Settings"
-            window.center()
-            window.isReleasedWhenClosed = false
-            window.delegate = self
+        settingsController = controller
+        settingsWindow = window
 
-            self.settingsWindow = window
-
-            window.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
-        }
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     private func switchToNextProfile() {
@@ -3095,6 +3109,12 @@ extension MenuBarManager: NSPopoverDelegate {
                     target: self.popoverActionTarget()
                 )
             },
+            onManageProfiles: { [weak self] in
+                guard let self else { return }
+                self.openPopoverManageProfiles(
+                    target: self.popoverActionTarget()
+                )
+            },
             onPreferences: { [weak self] in
                 guard let self else { return }
                 self.openPopoverSettings(
@@ -3150,6 +3170,7 @@ extension MenuBarManager: NSWindowDelegate {
             if window == settingsWindow {
                 // Hide dock icon again when settings window closes
                 NSApp.setActivationPolicy(.accessory)
+                settingsController = nil
                 settingsWindow = nil
             } else if window == detachedWindow {
                 // Clear detached window reference when closed

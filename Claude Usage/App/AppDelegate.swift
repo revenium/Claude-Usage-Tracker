@@ -312,7 +312,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             apiService: apiService,
             statusService: statusService,
             profileManager: .shared,
-            refreshRuntime: runtime
+            refreshRuntime: runtime,
+            providerUIDependencies:
+                providerUICompositionRoot.dependencies
         )
     }
 
