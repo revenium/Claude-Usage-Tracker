@@ -349,7 +349,7 @@ struct ProfileRow: View {
     @StateObject private var profileManager = ProfileManager.shared
     @State private var isEditing = false
     @State private var editedName: String = ""
-    @State private var showingDeleteConfirmation = false
+    @State private var deletionAlert: ProfileDeletionAlert?
 
     var body: some View {
         HStack(spacing: 12) {
@@ -419,7 +419,7 @@ struct ProfileRow: View {
                     // Delete Button (if not the last profile)
                     if profileManager.profiles.count > 1 {
                         Button(action: {
-                            showingDeleteConfirmation = true
+                            deletionAlert = .confirmation
                         }) {
                             Image(systemName: "trash")
                                 .font(.system(size: 12))
@@ -451,13 +451,29 @@ struct ProfileRow: View {
                 }
             }
         }
-        .alert("profiles.delete_title".localized, isPresented: $showingDeleteConfirmation) {
-            Button("common.cancel".localized, role: .cancel) {}
-            Button("common.delete".localized, role: .destructive) {
-                deleteProfile()
+        .alert(item: $deletionAlert) { alert in
+            switch alert {
+            case .confirmation:
+                return Alert(
+                    title: Text("profiles.delete_title".localized),
+                    message: Text(
+                        String(format: "profiles.delete_confirm".localized, profile.name)
+                    ),
+                    primaryButton: .destructive(Text("common.delete".localized)) {
+                        deleteProfile()
+                    },
+                    secondaryButton: .cancel(Text("common.cancel".localized))
+                )
+            case .failure(let presentation):
+                return Alert(
+                    title: Text("profiles.delete_title".localized),
+                    message: Text(presentation.message),
+                    primaryButton: .default(Text("common.retry".localized)) {
+                        deleteProfile()
+                    },
+                    secondaryButton: .cancel(Text("common.cancel".localized))
+                )
             }
-        } message: {
-            Text(String(format: "profiles.delete_confirm".localized, profile.name))
         }
     }
 
@@ -488,7 +504,49 @@ struct ProfileRow: View {
         do {
             try profileManager.deleteProfile(profile.id)
         } catch {
-            // Error handled by ProfileManager
+            let presentation = ProfileDeletionErrorPresentation(error: error)
+
+            // Alert actions dismiss the current alert after invoking their
+            // closure. Enqueue the failure state so it persists after that
+            // dismissal and remains available for retry or cancellation.
+            DispatchQueue.main.async {
+                deletionAlert = .failure(presentation)
+            }
+        }
+    }
+}
+
+enum ProfileDeletionAlert: Identifiable {
+    case confirmation
+    case failure(ProfileDeletionErrorPresentation)
+
+    var id: String {
+        switch self {
+        case .confirmation:
+            return "confirmation"
+        case .failure:
+            return "failure"
+        }
+    }
+}
+
+struct ProfileDeletionErrorPresentation: Equatable {
+    static let genericMessage = "Unable to delete this profile. Please try again."
+
+    let message: String
+
+    init(error: Error) {
+        // Only use an intentionally authored LocalizedError description. Do not
+        // bridge arbitrary Error/NSError payloads through localizedDescription:
+        // those may include an underlying message or credential material.
+        if let localizedError = error as? any LocalizedError,
+           let description = localizedError.errorDescription?.trimmingCharacters(
+               in: .whitespacesAndNewlines
+           ),
+           !description.isEmpty {
+            message = description
+        } else {
+            message = Self.genericMessage
         }
     }
 }

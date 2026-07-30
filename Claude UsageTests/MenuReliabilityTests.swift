@@ -165,4 +165,37 @@ final class MenuReliabilityTests: XCTestCase {
         wait(for: [notificationPosted], timeout: 1)
         XCTAssertEqual(recorder.snapshot(), ["mutation", "notification"])
     }
+
+    func testProfileDeletionErrorUsesIntentionallyAuthoredLocalizedDescription() {
+        let presentation = ProfileDeletionErrorPresentation(
+            error: LocalizedDeletionError.expected
+        )
+
+        XCTAssertEqual(presentation.message, "Safe deletion failure")
+    }
+
+    func testProfileDeletionErrorDoesNotExposeOpaqueErrorPayload() {
+        let secret = "DELETE_ERROR_SECRET_FIXTURE"
+        let opaqueError = NSError(
+            domain: "MenuReliabilityTests",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: secret]
+        )
+
+        let presentation = ProfileDeletionErrorPresentation(error: opaqueError)
+
+        XCTAssertEqual(
+            presentation.message,
+            ProfileDeletionErrorPresentation.genericMessage
+        )
+        XCTAssertFalse(presentation.message.contains(secret))
+    }
+}
+
+private enum LocalizedDeletionError: LocalizedError {
+    case expected
+
+    var errorDescription: String? {
+        "Safe deletion failure"
+    }
 }
