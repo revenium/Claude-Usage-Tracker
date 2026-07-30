@@ -7,6 +7,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     private var setupWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Hosted unit tests load the application target in-process. They must
+        // never run startup migration against the developer's real defaults,
+        // Keychain, or legacy session-key file.
+        guard !Self.isRunningHostedUnitTests else {
+            return
+        }
+
         // Disable window restoration for menu bar app
         UserDefaults.standard.set(false, forKey: "NSQuitAlwaysKeepsWindows")
 
@@ -17,6 +24,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
 
         // Hide dock icon (menu bar app only)
         NSApp.setActivationPolicy(.accessory)
+
+        // Complete or retry the verified legacy credential/profile migration
+        // before any normal profile hydration or first-launch decisions.
+        ProfileMigrationService.shared.migrateIfNeeded()
 
         // Load profiles into ProfileManager (synchronously)
         ProfileManager.shared.loadProfiles()
@@ -88,6 +99,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
                 self.menuBarManager?.setup()
             }
         }
+    }
+
+    static var isRunningHostedUnitTests: Bool {
+        let environment = ProcessInfo.processInfo.environment
+        return environment["XCTestConfigurationFilePath"] != nil
+            || environment["XCTestBundlePath"] != nil
+            || NSClassFromString("XCTestCase") != nil
     }
 
     private func requestNotificationPermissions() {

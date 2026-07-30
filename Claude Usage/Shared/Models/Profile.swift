@@ -13,7 +13,7 @@ struct Profile: Codable, Identifiable, Equatable {
     let id: UUID
     var name: String
 
-    // MARK: - Credentials (stored directly in profile)
+    // MARK: - Credentials (runtime values hydrated from secure storage)
     var claudeSessionKey: String?
     var organizationId: String?
     var apiSessionKey: String?
@@ -48,6 +48,11 @@ struct Profile: Codable, Identifiable, Equatable {
     var createdAt: Date
     var lastUsedAt: Date
 
+    /// Plaintext retained only when a legacy credential could not yet be
+    /// committed to verified secure storage. ProfileStore retries each field
+    /// independently and removes it after successful Keychain readback.
+    var credentialMigrationRetry: ProfileCredentialMigrationRetry
+
     init(
         id: UUID = UUID(),
         name: String,
@@ -69,7 +74,8 @@ struct Profile: Codable, Identifiable, Equatable {
         notificationSettings: NotificationSettings = NotificationSettings(),
         isSelectedForDisplay: Bool = true,
         createdAt: Date = Date(),
-        lastUsedAt: Date = Date()
+        lastUsedAt: Date = Date(),
+        credentialMigrationRetry: ProfileCredentialMigrationRetry = .init()
     ) {
         self.id = id
         self.name = name
@@ -92,6 +98,123 @@ struct Profile: Codable, Identifiable, Equatable {
         self.isSelectedForDisplay = isSelectedForDisplay
         self.createdAt = createdAt
         self.lastUsedAt = lastUsedAt
+        self.credentialMigrationRetry = credentialMigrationRetry
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case claudeSessionKey
+        case organizationId
+        case apiSessionKey
+        case apiOrganizationId
+        case apiSessionKeyExpiry
+        case cliCredentialsJSON
+        case hasCliAccount
+        case cliAccountSyncedAt
+        case cliAccountName
+        case claudeUsage
+        case apiUsage
+        case iconConfig
+        case refreshInterval
+        case autoStartSessionEnabled
+        case checkOverageLimitEnabled
+        case notificationSettings
+        case isSelectedForDisplay
+        case createdAt
+        case lastUsedAt
+        case credentialMigrationRetry
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        id = try container.decode(UUID.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        organizationId = try container.decodeIfPresent(String.self, forKey: .organizationId)
+        apiOrganizationId = try container.decodeIfPresent(String.self, forKey: .apiOrganizationId)
+        apiSessionKeyExpiry = try container.decodeIfPresent(Date.self, forKey: .apiSessionKeyExpiry)
+        hasCliAccount = try container.decodeIfPresent(Bool.self, forKey: .hasCliAccount) ?? false
+        cliAccountSyncedAt = try container.decodeIfPresent(Date.self, forKey: .cliAccountSyncedAt)
+        cliAccountName = try container.decodeIfPresent(String.self, forKey: .cliAccountName)
+        claudeUsage = try container.decodeIfPresent(ClaudeUsage.self, forKey: .claudeUsage)
+        apiUsage = try container.decodeIfPresent(APIUsage.self, forKey: .apiUsage)
+        iconConfig = try container.decodeIfPresent(
+            MenuBarIconConfiguration.self,
+            forKey: .iconConfig
+        ) ?? .default
+        refreshInterval = try container.decodeIfPresent(
+            TimeInterval.self,
+            forKey: .refreshInterval
+        ) ?? 30
+        autoStartSessionEnabled = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .autoStartSessionEnabled
+        ) ?? false
+        checkOverageLimitEnabled = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .checkOverageLimitEnabled
+        ) ?? true
+        notificationSettings = try container.decodeIfPresent(
+            NotificationSettings.self,
+            forKey: .notificationSettings
+        ) ?? NotificationSettings()
+        isSelectedForDisplay = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .isSelectedForDisplay
+        ) ?? true
+        createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        lastUsedAt = try container.decodeIfPresent(Date.self, forKey: .lastUsedAt) ?? createdAt
+
+        var retry = try container.decodeIfPresent(
+            ProfileCredentialMigrationRetry.self,
+            forKey: .credentialMigrationRetry
+        ) ?? .init()
+
+        // Legacy v3 profile blobs placed secrets directly on Profile. Decode
+        // them for migration, but immediately classify them as retry material
+        // so a subsequent ordinary encode cannot silently discard them.
+        if let value = try container.decodeIfPresent(String.self, forKey: .claudeSessionKey) {
+            retry.claudeSessionKey = value
+        }
+        if let value = try container.decodeIfPresent(String.self, forKey: .apiSessionKey) {
+            retry.apiSessionKey = value
+        }
+        if let value = try container.decodeIfPresent(String.self, forKey: .cliCredentialsJSON) {
+            retry.cliCredentialsJSON = value
+        }
+
+        credentialMigrationRetry = retry
+        claudeSessionKey = retry.claudeSessionKey
+        apiSessionKey = retry.apiSessionKey
+        cliCredentialsJSON = retry.cliCredentialsJSON
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+
+        try container.encode(id, forKey: .id)
+        try container.encode(name, forKey: .name)
+        try container.encodeIfPresent(organizationId, forKey: .organizationId)
+        try container.encodeIfPresent(apiOrganizationId, forKey: .apiOrganizationId)
+        try container.encodeIfPresent(apiSessionKeyExpiry, forKey: .apiSessionKeyExpiry)
+        try container.encode(hasCliAccount, forKey: .hasCliAccount)
+        try container.encodeIfPresent(cliAccountSyncedAt, forKey: .cliAccountSyncedAt)
+        try container.encodeIfPresent(cliAccountName, forKey: .cliAccountName)
+        try container.encodeIfPresent(claudeUsage, forKey: .claudeUsage)
+        try container.encodeIfPresent(apiUsage, forKey: .apiUsage)
+        try container.encode(iconConfig, forKey: .iconConfig)
+        try container.encode(refreshInterval, forKey: .refreshInterval)
+        try container.encode(autoStartSessionEnabled, forKey: .autoStartSessionEnabled)
+        try container.encode(checkOverageLimitEnabled, forKey: .checkOverageLimitEnabled)
+        try container.encode(notificationSettings, forKey: .notificationSettings)
+        try container.encode(isSelectedForDisplay, forKey: .isSelectedForDisplay)
+        try container.encode(createdAt, forKey: .createdAt)
+        try container.encode(lastUsedAt, forKey: .lastUsedAt)
+
+        if !credentialMigrationRetry.isEmpty {
+            try container.encode(credentialMigrationRetry, forKey: .credentialMigrationRetry)
+        }
     }
 
     // MARK: - Computed Properties
@@ -117,6 +240,47 @@ struct Profile: Codable, Identifiable, Equatable {
 
     var hasAnyCredentials: Bool {
         hasClaudeAI || hasAPIConsole || cliCredentialsJSON != nil
+    }
+}
+
+/// Per-field recovery envelope for credentials that have not yet passed a
+/// verified Keychain write. This is deliberately separate from Profile's
+/// legacy secret keys so normal Codable output never recreates the old format.
+struct ProfileCredentialMigrationRetry: Codable, Equatable {
+    var claudeSessionKey: String?
+    var apiSessionKey: String?
+    var cliCredentialsJSON: String?
+
+    var isEmpty: Bool {
+        claudeSessionKey == nil && apiSessionKey == nil && cliCredentialsJSON == nil
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case claudeSessionKey = "claude-session-key"
+        case apiSessionKey = "api-session-key"
+        case cliCredentialsJSON = "cli-credentials"
+    }
+
+    func value(for field: ProfileSecretField) -> String? {
+        switch field {
+        case .claudeSessionKey:
+            return claudeSessionKey
+        case .apiSessionKey:
+            return apiSessionKey
+        case .cliCredentialsJSON:
+            return cliCredentialsJSON
+        }
+    }
+
+    mutating func setValue(_ value: String?, for field: ProfileSecretField) {
+        switch field {
+        case .claudeSessionKey:
+            claudeSessionKey = value
+        case .apiSessionKey:
+            apiSessionKey = value
+        case .cliCredentialsJSON:
+            cliCredentialsJSON = value
+        }
     }
 }
 

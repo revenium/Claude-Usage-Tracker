@@ -7,66 +7,126 @@
 
 import Foundation
 
-/// Handles migration from single-profile (v2.x) to multi-profile system (v3.0)
+protocol LegacyProfileSettingsSource {
+    func loadMenuBarIconConfiguration() -> MenuBarIconConfiguration
+    func loadRefreshInterval() -> TimeInterval
+    func loadNotificationsEnabled() -> Bool
+    func loadAutoStartSessionEnabled() -> Bool
+    func loadOrganizationId() -> String?
+    func loadAPIOrganizationId() -> String?
+}
+
+extension DataStore: LegacyProfileSettingsSource {}
+
+/// Coordinates the one-time single-profile migration before normal profile
+/// loading. Every stage is idempotent and completion is recorded only after
+/// profile metadata and profile-keyed credentials pass direct readback.
 class ProfileMigrationService {
     static let shared = ProfileMigrationService()
 
+    private let defaults: UserDefaults
+    private let profileStore: ProfileStore
+    private let credentialMigration: KeychainMigrationService
+    private let legacySettings: any LegacyProfileSettingsSource
     private let migrationKey = "didMigrateToProfilesV3"
 
-    private init() {}
+    init(
+        defaults: UserDefaults = .standard,
+        profileStore: ProfileStore = .shared,
+        credentialMigration: KeychainMigrationService = .shared,
+        legacySettings: any LegacyProfileSettingsSource = DataStore.shared
+    ) {
+        self.defaults = defaults
+        self.profileStore = profileStore
+        self.credentialMigration = credentialMigration
+        self.legacySettings = legacySettings
+    }
 
     func migrateIfNeeded() {
-        guard !UserDefaults.standard.bool(forKey: migrationKey) else {
-            LoggingService.shared.log("Profile migration already completed")
-            return
-        }
-
-        LoggingService.shared.log("Starting migration to multi-profile system...")
-
         do {
-            // 1. Create first profile from existing settings
-            let firstProfile = createFirstProfileFromLegacy()
-
-            // 2. Migrate credentials from old Keychain keys to profile-specific keys
-            try migrateCredentialsToProfile(firstProfile.id)
-
-            // 3. Save first profile
-            ProfileStore.shared.saveProfiles([firstProfile])
-            ProfileStore.shared.saveActiveProfileId(firstProfile.id)
-            ProfileStore.shared.saveDisplayMode(.single)
-
-            // 4. Mark migration complete
-            UserDefaults.standard.set(true, forKey: migrationKey)
-
-            LoggingService.shared.log("Migration complete. First profile: \(firstProfile.name)")
+            try migrateIfNeededThrowing()
         } catch {
-            LoggingService.shared.logError("Migration failed", error: error)
-            // Don't mark as complete so it can retry
+            LoggingService.shared.logError("Profile migration failed; it will retry", error: error)
         }
     }
 
+    func migrateIfNeededThrowing() throws {
+        var profiles = try profileStore.loadProfilesWithVerifiedMigration()
+
+        if defaults.bool(forKey: migrationKey), !profiles.isEmpty {
+            // Existing v3 installations can predate profile-keyed secure
+            // storage. Retry both profile-blob and global/file source migration
+            // even though the earlier multi-profile marker is already set.
+            let targetID = profileStore.loadActiveProfileId()
+                .flatMap { activeID in
+                    profiles.first(where: { $0.id == activeID })?.id
+                } ?? profiles[0].id
+            try credentialMigration.migrateIfNeeded(
+                to: targetID,
+                profileStore: profileStore
+            )
+            return
+        }
+
+        let targetProfile: Profile
+
+        if let activeID = profileStore.loadActiveProfileId(),
+           let active = profiles.first(where: { $0.id == activeID }) {
+            targetProfile = active
+        } else if let existing = profiles.first {
+            targetProfile = existing
+        } else {
+            targetProfile = createFirstProfileFromLegacy()
+            try profileStore.saveProfilesThrowing([targetProfile])
+            profiles = try profileStore.loadProfilesWithVerifiedMigration()
+            guard profiles.contains(where: { $0.id == targetProfile.id }) else {
+                throw ProfileStoreError.profileWriteVerificationFailed
+            }
+        }
+
+        // Organization identifiers are metadata, not secrets. Populate them
+        // only when the target does not already contain a newer selection.
+        if let index = profiles.firstIndex(where: { $0.id == targetProfile.id }) {
+            if profiles[index].organizationId == nil {
+                profiles[index].organizationId = legacySettings.loadOrganizationId()
+            }
+            if profiles[index].apiOrganizationId == nil {
+                profiles[index].apiOrganizationId = legacySettings.loadAPIOrganizationId()
+            }
+            try profileStore.saveProfilesThrowing(profiles)
+        }
+
+        try credentialMigration.migrateIfNeeded(
+            to: targetProfile.id,
+            profileStore: profileStore
+        )
+
+        let verifiedProfiles = try profileStore.loadProfilesWithVerifiedMigration()
+        guard verifiedProfiles.contains(where: { $0.id == targetProfile.id }) else {
+            throw ProfileStoreError.profileWriteVerificationFailed
+        }
+
+        profileStore.saveActiveProfileId(targetProfile.id)
+        profileStore.saveDisplayMode(.single)
+        defaults.set(true, forKey: migrationKey)
+        guard defaults.bool(forKey: migrationKey) else {
+            throw ProfileStoreError.profileWriteVerificationFailed
+        }
+
+        LoggingService.shared.log("Profile migration completed and verified")
+    }
+
     private func createFirstProfileFromLegacy() -> Profile {
-        let dataStore = DataStore.shared
-
-        // Generate a funny name for the first profile
-        let profileName = FunnyNameGenerator.getRandomName(excluding: [])
-
-        // Load existing settings
-        let iconConfig = dataStore.loadMenuBarIconConfiguration()
-        let refreshInterval = dataStore.loadRefreshInterval()
-        let notificationsEnabled = dataStore.loadNotificationsEnabled()
-        let autoStartSessionEnabled = dataStore.loadAutoStartSessionEnabled()
-
-        return Profile(
+        Profile(
             id: UUID(),
-            name: profileName,
+            name: FunnyNameGenerator.getRandomName(excluding: []),
             hasCliAccount: false,
             cliAccountSyncedAt: nil,
-            iconConfig: iconConfig,
-            refreshInterval: refreshInterval,
-            autoStartSessionEnabled: autoStartSessionEnabled,
+            iconConfig: legacySettings.loadMenuBarIconConfiguration(),
+            refreshInterval: legacySettings.loadRefreshInterval(),
+            autoStartSessionEnabled: legacySettings.loadAutoStartSessionEnabled(),
             notificationSettings: NotificationSettings(
-                enabled: notificationsEnabled,
+                enabled: legacySettings.loadNotificationsEnabled(),
                 threshold75Enabled: true,
                 threshold90Enabled: true,
                 threshold95Enabled: true
@@ -77,52 +137,8 @@ class ProfileMigrationService {
         )
     }
 
-    private func migrateCredentialsToProfile(_ profileId: UUID) throws {
-        let keychain = KeychainService.shared
-        let dataStore = DataStore.shared
-        let profileStore = ProfileStore.shared
-
-        LoggingService.shared.log("Migrating credentials to profile: \(profileId)")
-
-        var profiles = profileStore.loadProfiles()
-        guard let index = profiles.firstIndex(where: { $0.id == profileId }) else {
-            LoggingService.shared.log("Profile not found for migration")
-            return
-        }
-
-        // Migrate Claude.ai session key from old Keychain location
-        if let sessionKey = try? keychain.load(for: .claudeSessionKey) {
-            profiles[index].claudeSessionKey = sessionKey
-            LoggingService.shared.log("Migrated Claude session key")
-        }
-
-        // Migrate API Console session key
-        if let apiKey = try? keychain.load(for: .apiSessionKey) {
-            profiles[index].apiSessionKey = apiKey
-            LoggingService.shared.log("Migrated API session key")
-        }
-
-        // Migrate organization IDs from DataStore
-        if let orgId = dataStore.loadOrganizationId() {
-            profiles[index].organizationId = orgId
-            LoggingService.shared.log("Migrated organization ID")
-        }
-
-        if let apiOrgId = dataStore.loadAPIOrganizationId() {
-            profiles[index].apiOrganizationId = apiOrgId
-            LoggingService.shared.log("Migrated API organization ID")
-        }
-
-        profileStore.saveProfiles(profiles)
-
-        // Note: Don't delete old keys yet for safety - can be cleaned up in a future version
-
-        LoggingService.shared.log("Credential migration complete")
-    }
-
-    /// Resets migration flag for testing purposes
     func resetMigration() {
-        UserDefaults.standard.removeObject(forKey: migrationKey)
-        LoggingService.shared.log("Reset migration flag")
+        defaults.removeObject(forKey: migrationKey)
+        credentialMigration.resetMigrationForTesting()
     }
 }

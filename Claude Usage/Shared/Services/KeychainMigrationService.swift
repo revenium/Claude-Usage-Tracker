@@ -7,128 +7,205 @@
 
 import Foundation
 
-/// Service for migrating session keys from file-based and UserDefaults storage to Keychain
+struct LegacyCredentialSnapshot {
+    var globalClaudeSessionKey: String?
+    var fileClaudeSessionKey: String?
+    var globalAPISessionKey: String?
+    var defaultsAPISessionKey: String?
+
+    var isEmpty: Bool {
+        globalClaudeSessionKey == nil
+            && fileClaudeSessionKey == nil
+            && globalAPISessionKey == nil
+            && defaultsAPISessionKey == nil
+    }
+}
+
+protocol LegacyCredentialSource {
+    func readSnapshot() throws -> LegacyCredentialSnapshot
+    func removeVerifiedSources(from snapshot: LegacyCredentialSnapshot) throws
+}
+
+enum LegacyCredentialMigrationError: Error, LocalizedError {
+    case invalidClaudeSessionFile
+    case sourceChanged(String)
+    case cleanupVerificationFailed(String)
+    case targetReadbackFailed
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidClaudeSessionFile:
+            return "The legacy Claude session-key file is invalid and was preserved."
+        case .sourceChanged(let source):
+            return "The legacy \(source) changed during migration and was preserved."
+        case .cleanupVerificationFailed(let source):
+            return "Cleanup of the legacy \(source) could not be verified."
+        case .targetReadbackFailed:
+            return "The profile credential target did not match after migration."
+        }
+    }
+}
+
+final class SystemLegacyCredentialSource: LegacyCredentialSource {
+    private let defaults: UserDefaults
+    private let keychain: KeychainService
+    private let fileManager: FileManager
+    private let claudeSessionFile: URL
+
+    init(
+        defaults: UserDefaults = .standard,
+        keychain: KeychainService = .shared,
+        fileManager: FileManager = .default,
+        claudeSessionFile: URL = Constants.ClaudePaths.homeDirectory
+            .appendingPathComponent(".claude-session-key")
+    ) {
+        self.defaults = defaults
+        self.keychain = keychain
+        self.fileManager = fileManager
+        self.claudeSessionFile = claudeSessionFile
+    }
+
+    func readSnapshot() throws -> LegacyCredentialSnapshot {
+        var fileValue: String?
+        if fileManager.fileExists(atPath: claudeSessionFile.path) {
+            let raw = try String(contentsOf: claudeSessionFile, encoding: .utf8)
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard SessionKeyValidator().isValid(trimmed) else {
+                throw LegacyCredentialMigrationError.invalidClaudeSessionFile
+            }
+            fileValue = trimmed
+        }
+
+        return LegacyCredentialSnapshot(
+            globalClaudeSessionKey: try keychain.load(for: .claudeSessionKey),
+            fileClaudeSessionKey: fileValue,
+            globalAPISessionKey: try keychain.load(for: .apiSessionKey),
+            defaultsAPISessionKey: defaults.string(
+                forKey: Constants.UserDefaultsKeys.apiSessionKey
+            )
+        )
+    }
+
+    func removeVerifiedSources(from snapshot: LegacyCredentialSnapshot) throws {
+        if let expected = snapshot.globalClaudeSessionKey {
+            guard try keychain.load(for: .claudeSessionKey) == expected else {
+                throw LegacyCredentialMigrationError.sourceChanged("Claude Keychain item")
+            }
+            try keychain.delete(for: .claudeSessionKey)
+            guard try keychain.load(for: .claudeSessionKey) == nil else {
+                throw LegacyCredentialMigrationError.cleanupVerificationFailed(
+                    "Claude Keychain item"
+                )
+            }
+        }
+
+        if let expected = snapshot.globalAPISessionKey {
+            guard try keychain.load(for: .apiSessionKey) == expected else {
+                throw LegacyCredentialMigrationError.sourceChanged("API Keychain item")
+            }
+            try keychain.delete(for: .apiSessionKey)
+            guard try keychain.load(for: .apiSessionKey) == nil else {
+                throw LegacyCredentialMigrationError.cleanupVerificationFailed(
+                    "API Keychain item"
+                )
+            }
+        }
+
+        if let expected = snapshot.fileClaudeSessionKey {
+            let current = try String(contentsOf: claudeSessionFile, encoding: .utf8)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard current == expected else {
+                throw LegacyCredentialMigrationError.sourceChanged("Claude session-key file")
+            }
+            try fileManager.removeItem(at: claudeSessionFile)
+            guard !fileManager.fileExists(atPath: claudeSessionFile.path) else {
+                throw LegacyCredentialMigrationError.cleanupVerificationFailed(
+                    "Claude session-key file"
+                )
+            }
+        }
+
+        if let expected = snapshot.defaultsAPISessionKey {
+            guard defaults.string(forKey: Constants.UserDefaultsKeys.apiSessionKey) == expected else {
+                throw LegacyCredentialMigrationError.sourceChanged("API preference")
+            }
+            defaults.removeObject(forKey: Constants.UserDefaultsKeys.apiSessionKey)
+            guard defaults.string(forKey: Constants.UserDefaultsKeys.apiSessionKey) == nil else {
+                throw LegacyCredentialMigrationError.cleanupVerificationFailed("API preference")
+            }
+        }
+    }
+}
+
+/// Moves every legacy credential source directly into the profile-keyed,
+/// verified store. There is no intermediate destructive global-Keychain hop.
 class KeychainMigrationService {
     static let shared = KeychainMigrationService()
 
-    private init() {}
+    private let source: any LegacyCredentialSource
+    private let defaults: UserDefaults
+    private let migrationCompletedKey = "profileCredentialMigrationCompleted_v2"
 
-    private let migrationCompletedKey = "keychainMigrationCompleted_v1"
+    init(
+        source: any LegacyCredentialSource = SystemLegacyCredentialSource(),
+        defaults: UserDefaults = .standard
+    ) {
+        self.source = source
+        self.defaults = defaults
+    }
 
-    /// Performs one-time migration of session keys to Keychain
-    func performMigrationIfNeeded() {
-        // Check if migration has already been completed
-        if UserDefaults.standard.bool(forKey: migrationCompletedKey) {
-            LoggingService.shared.log("Keychain migration already completed, skipping")
+    func migrateIfNeeded(to profileID: UUID, profileStore: ProfileStore) throws {
+        guard !defaults.bool(forKey: migrationCompletedKey) else {
             return
         }
 
-        LoggingService.shared.log("Starting Keychain migration")
+        let snapshot = try source.readSnapshot()
+        var credentials = try profileStore.loadProfileCredentials(profileID)
 
-        var migratedCount = 0
+        // Preserve the same precedence the legacy runtime used: existing
+        // profile-keyed values, then global Keychain, then plaintext fallback.
+        if credentials.claudeSessionKey == nil {
+            credentials.claudeSessionKey =
+                snapshot.globalClaudeSessionKey ?? snapshot.fileClaudeSessionKey
+        }
+        if credentials.apiSessionKey == nil {
+            credentials.apiSessionKey =
+                snapshot.globalAPISessionKey ?? snapshot.defaultsAPISessionKey
+        }
 
-        // 1. Migrate Claude.ai session key from file
-        migratedCount += migrateClaudeSessionKeyFromFile()
+        if !snapshot.isEmpty {
+            try profileStore.saveProfileCredentials(profileID, credentials: credentials)
+        }
 
-        // 2. Migrate API session key from UserDefaults
-        migratedCount += migrateAPISessionKeyFromUserDefaults()
+        let verified = try profileStore.loadProfileCredentials(profileID)
+        guard verified.claudeSessionKey == credentials.claudeSessionKey,
+              verified.apiSessionKey == credentials.apiSessionKey,
+              verified.cliCredentialsJSON == credentials.cliCredentialsJSON else {
+            throw LegacyCredentialMigrationError.targetReadbackFailed
+        }
 
-        // Mark migration as completed
-        UserDefaults.standard.set(true, forKey: migrationCompletedKey)
-
-        if migratedCount > 0 {
-            LoggingService.shared.log("Keychain migration completed: migrated \(migratedCount) key(s)")
-        } else {
-            LoggingService.shared.log("Keychain migration completed: no keys to migrate")
+        // Sources are removed only after the destination's secure write,
+        // direct readback, and metadata rewrite have all succeeded.
+        try source.removeVerifiedSources(from: snapshot)
+        defaults.set(true, forKey: migrationCompletedKey)
+        guard defaults.bool(forKey: migrationCompletedKey) else {
+            throw ProfileStoreError.profileWriteVerificationFailed
         }
     }
 
-    /// Migrates Claude.ai session key from ~/.claude-session-key file to Keychain
-    /// - Returns: 1 if migrated, 0 if not needed
-    private func migrateClaudeSessionKeyFromFile() -> Int {
-        // Check if key already exists in Keychain
-        if KeychainService.shared.exists(for: .claudeSessionKey) {
-            LoggingService.shared.log("Claude session key already in Keychain, skipping file migration")
-            return 0
-        }
-
-        let sessionKeyPath = Constants.ClaudePaths.homeDirectory
-            .appendingPathComponent(".claude-session-key")
-
-        // Check if file exists
-        guard FileManager.default.fileExists(atPath: sessionKeyPath.path) else {
-            LoggingService.shared.log("No Claude session key file found to migrate")
-            return 0
-        }
-
+    /// Backward-compatible safe entry point for any older startup caller.
+    func performMigrationIfNeeded() {
         do {
-            // Read from file
-            let fileKey = try String(contentsOf: sessionKeyPath, encoding: .utf8)
-            let trimmedKey = fileKey.trimmingCharacters(in: .whitespacesAndNewlines)
-
-            // Validate before migrating
-            let validator = SessionKeyValidator()
-            guard validator.isValid(trimmedKey) else {
-                LoggingService.shared.log("Claude session key in file is invalid, skipping migration")
-                return 0
+            guard let profileID = ProfileStore.shared.loadProfiles().first?.id else {
+                return
             }
-
-            // Save to Keychain
-            try KeychainService.shared.save(trimmedKey, for: .claudeSessionKey)
-
-            // Delete the file (it will be recreated by StatuslineService if statusline is enabled)
-            try FileManager.default.removeItem(at: sessionKeyPath)
-
-            LoggingService.shared.log("Migrated Claude session key from file to Keychain")
-            return 1
-
+            try migrateIfNeeded(to: profileID, profileStore: .shared)
         } catch {
-            LoggingService.shared.log("Failed to migrate Claude session key from file: \(error.localizedDescription)")
-            return 0
+            LoggingService.shared.logError("Profile credential migration failed", error: error)
         }
     }
 
-    /// Migrates API session key from UserDefaults to Keychain
-    /// - Returns: 1 if migrated, 0 if not needed
-    private func migrateAPISessionKeyFromUserDefaults() -> Int {
-        // Check if key already exists in Keychain
-        if KeychainService.shared.exists(for: .apiSessionKey) {
-            LoggingService.shared.log("API session key already in Keychain, skipping UserDefaults migration")
-
-            // Clean up UserDefaults even if Keychain already has the key
-            if UserDefaults.standard.string(forKey: Constants.UserDefaultsKeys.apiSessionKey) != nil {
-                UserDefaults.standard.removeObject(forKey: Constants.UserDefaultsKeys.apiSessionKey)
-                LoggingService.shared.log("Cleaned up API session key from UserDefaults")
-            }
-
-            return 0
-        }
-
-        // Check if key exists in UserDefaults
-        guard let legacyKey = UserDefaults.standard.string(forKey: Constants.UserDefaultsKeys.apiSessionKey) else {
-            LoggingService.shared.log("No API session key found in UserDefaults to migrate")
-            return 0
-        }
-
-        do {
-            // Save to Keychain
-            try KeychainService.shared.save(legacyKey, for: .apiSessionKey)
-
-            // Remove from UserDefaults
-            UserDefaults.standard.removeObject(forKey: Constants.UserDefaultsKeys.apiSessionKey)
-
-            LoggingService.shared.log("Migrated API session key from UserDefaults to Keychain")
-            return 1
-
-        } catch {
-            LoggingService.shared.log("Failed to migrate API session key from UserDefaults: \(error.localizedDescription)")
-            return 0
-        }
-    }
-
-    /// Resets the migration flag (for testing purposes)
     func resetMigrationForTesting() {
-        UserDefaults.standard.removeObject(forKey: migrationCompletedKey)
-        LoggingService.shared.log("Reset Keychain migration flag for testing")
+        defaults.removeObject(forKey: migrationCompletedKey)
     }
 }

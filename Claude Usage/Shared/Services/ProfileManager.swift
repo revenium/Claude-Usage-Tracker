@@ -18,12 +18,18 @@ class ProfileManager: ObservableObject {
     @Published var multiProfileConfig: MultiProfileDisplayConfig = .default
     @Published var isSwitchingProfile: Bool = false
 
-    private let profileStore = ProfileStore.shared
-    private let cliSyncService = ClaudeCodeSyncService.shared
+    private let profileStore: ProfileStore
+    private let cliSyncService: ClaudeCodeSyncService
 
     private var switchingSemaphore = false
 
-    private init() {}
+    init(
+        profileStore: ProfileStore? = nil,
+        cliSyncService: ClaudeCodeSyncService? = nil
+    ) {
+        self.profileStore = profileStore ?? .shared
+        self.cliSyncService = cliSyncService ?? .shared
+    }
 
     // MARK: - Initialization
 
@@ -84,18 +90,43 @@ class ProfileManager: ObservableObject {
 
     func updateProfile(_ profile: Profile) {
         if let index = profiles.firstIndex(where: { $0.id == profile.id }) {
+            let previous = profiles[index]
+            let secretsChanged =
+                previous.claudeSessionKey != profile.claudeSessionKey
+                || previous.apiSessionKey != profile.apiSessionKey
+                || previous.cliCredentialsJSON != profile.cliCredentialsJSON
+
+            if secretsChanged {
+                do {
+                    try profileStore.saveProfileCredentials(
+                        profile.id,
+                        credentials: ProfileCredentials(
+                            claudeSessionKey: profile.claudeSessionKey,
+                            organizationId: profile.organizationId,
+                            apiSessionKey: profile.apiSessionKey,
+                            apiOrganizationId: profile.apiOrganizationId,
+                            apiSessionKeyExpiry: profile.apiSessionKeyExpiry,
+                            cliCredentialsJSON: profile.cliCredentialsJSON
+                        )
+                    )
+                } catch {
+                    // Do not publish an unverified credential change. The
+                    // existing in-memory profile retains enough identity for a
+                    // user-visible retry.
+                    LoggingService.shared.logError(
+                        "ProfileManager.updateProfile: Credential update was not verified",
+                        error: error
+                    )
+                    return
+                }
+            }
+
             profiles[index] = profile
 
             if activeProfile?.id == profile.id {
                 activeProfile = profile
 
-                // Detailed logging for credential state
                 LoggingService.shared.log("ProfileManager.updateProfile: Updated ACTIVE profile '\(profile.name)'")
-                LoggingService.shared.log("  - claudeSessionKey: \(profile.claudeSessionKey == nil ? "NIL" : "EXISTS (len: \(profile.claudeSessionKey!.count))")")
-                LoggingService.shared.log("  - organizationId: \(profile.organizationId == nil ? "NIL" : "EXISTS")")
-                LoggingService.shared.log("  - hasClaudeAI: \(profile.hasClaudeAI)")
-                LoggingService.shared.log("  - hasAnyCredentials: \(profile.hasAnyCredentials)")
-                LoggingService.shared.log("  - claudeUsage: \(profile.claudeUsage == nil ? "NIL" : "EXISTS")")
             } else {
                 LoggingService.shared.log("Updated profile: \(profile.name) (not active)")
             }
@@ -111,13 +142,15 @@ class ProfileManager: ObservableObject {
 
         let profileName = profiles.first(where: { $0.id == id })?.name ?? "unknown"
 
+        // Secure cleanup is verified before profile identity is removed. P03
+        // can insert throwing file cleanup immediately after this boundary.
+        try profileStore.deleteProfileSecrets(for: id)
+
         // Clean up usage history for this profile
         UsageHistoryService.shared.deleteHistory(for: id)
         LoggingService.shared.log("Successfully deleted usage history for profile: \(profileName)")
 
         profiles.removeAll { $0.id == id }
-
-        // Credentials are deleted automatically with the profile
 
         // Switch to first profile if deleted active
         if activeProfile?.id == id {
@@ -304,6 +337,7 @@ class ProfileManager: ObservableObject {
             profiles[index].organizationId = credentials.organizationId
             profiles[index].apiSessionKey = credentials.apiSessionKey
             profiles[index].apiOrganizationId = credentials.apiOrganizationId
+            profiles[index].apiSessionKeyExpiry = credentials.apiSessionKeyExpiry
             profiles[index].cliCredentialsJSON = credentials.cliCredentialsJSON
 
             if activeProfile?.id == profileId {
