@@ -271,6 +271,43 @@ class ProfileManager: ObservableObject {
         )
     }
 
+    /// Commits a setup draft only if the physical home still exactly matches
+    /// the path and filesystem identity verified before account inspection.
+    @discardableResult
+    func createVerifiedCodexProfile(
+        name: String? = nil,
+        linkedHomePath: String,
+        expectedPath: String,
+        expectedIdentity: CodexHomeFilesystemIdentity
+    ) throws -> Profile {
+        let home = try codexHomeCanonicalizer.canonicalize(
+            linkedHomePath,
+            existingProfiles: profiles
+        )
+        guard home.path == expectedPath,
+              home.filesystemIdentity == expectedIdentity else {
+            throw CodexHomeCanonicalizationError
+                .changedSinceVerification
+        }
+        if profiles.isEmpty {
+            return try createInitialProfile(
+                name: name,
+                providerConfiguration: .codex(
+                    .init(linkedHome: home)
+                ),
+                allowInitiallyLinkedCodex: true
+            )
+        }
+        return try createProfileThrowing(
+            name: name,
+            providerConfiguration: .codex(
+                .init(linkedHome: home)
+            ),
+            copySettingsFrom: nil,
+            allowInitiallyLinkedCodex: true
+        )
+    }
+
     private func createProfileThrowing(
         name: String?,
         providerConfiguration: ProfileProviderConfiguration,

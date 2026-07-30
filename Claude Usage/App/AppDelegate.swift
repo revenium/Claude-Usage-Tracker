@@ -6,6 +6,7 @@ import UserNotifications
 struct SetupWizardDecision {
     static func shouldShow(
         hasShownWizardOnce: Bool,
+        hasCompletedSetup: Bool = true,
         activeProfile: Profile?,
         hasValidClaudeCLI: () -> Bool
     ) -> Bool {
@@ -14,7 +15,7 @@ struct SetupWizardDecision {
             // Otherwise a first-launch Codex profile would enter the wizard
             // branch, be rejected by the presentation guard, and initialize
             // no menu-bar UI.
-            return false
+            return !hasCompletedSetup
         }
         guard hasShownWizardOnce else { return true }
         guard let activeProfile else { return true }
@@ -34,6 +35,14 @@ struct SetupWizardDecision {
     static func canPresentLegacyWizard(activeProfile: Profile?) -> Bool {
         activeProfile?.providerID != .codex
     }
+
+    /// The current wizard is provider aware and can always be opened manually,
+    /// including from a Codex profile to add a Claude profile.
+    static func canPresentProviderAwareWizard(
+        activeProfile: Profile?
+    ) -> Bool {
+        true
+    }
 }
 
 @MainActor
@@ -41,6 +50,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     private var menuBarManager: MenuBarManager?
     private var setupWindow: NSWindow?
     private var terminationTask: Task<Void, Never>?
+    private let providerUICompositionRoot:
+        ProviderUICompositionRoot
+
+    override convenience init() {
+        self.init(providerUICompositionRoot: .shared)
+    }
+
+    init(providerUICompositionRoot: ProviderUICompositionRoot) {
+        self.providerUICompositionRoot = providerUICompositionRoot
+        super.init()
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Hosted unit tests load the application target in-process. They must
@@ -163,6 +183,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         }
         return SetupWizardDecision.shouldShow(
             hasShownWizardOnce: hasShownWizardOnce,
+            hasCompletedSetup:
+                SharedDataStore.shared.hasCompletedSetup(),
             activeProfile: ProfileManager.shared.activeProfile
         ) {
             let valid = hasValidSystemCLICredentials()
@@ -214,20 +236,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     /// Shows the setup wizard window (can be called manually for testing)
     func showSetupWizardManually() {
         LoggingService.shared.log("AppDelegate: showSetupWizardManually called")
-        guard SetupWizardDecision.canPresentLegacyWizard(
-            activeProfile: ProfileManager.shared.activeProfile
-        ) else {
-            LoggingService.shared.log(
-                "AppDelegate: Ignoring legacy Claude setup for Codex profile"
-            )
-            return
-        }
-
         // Temporarily show dock icon for the setup window
         NSApp.setActivationPolicy(.regular)
         LoggingService.shared.log("AppDelegate: Set activation policy to regular")
 
-        let setupView = SetupWizardView()
+        let setupView = SetupWizardView(
+            dependencies: providerUICompositionRoot.dependencies
+        )
         let hostingController = NSHostingController(rootView: setupView)
         LoggingService.shared.log("AppDelegate: Created hosting controller")
 
@@ -289,7 +304,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         let runtime = UsageRefreshRuntime.live(
             profileManager: .shared,
             apiService: apiService,
-            statusService: statusService
+            statusService: statusService,
+            codexProviderFactory:
+                providerUICompositionRoot.codexProviderFactory
         )
         return MenuBarManager(
             apiService: apiService,

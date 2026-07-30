@@ -6,11 +6,25 @@
 //
 
 import SwiftUI
+import UsageCore
 import UserNotifications
 
 /// General profile settings: Refresh interval, Auto-start, Notifications
 struct GeneralSettingsView: View {
-    @StateObject private var profileManager = ProfileManager.shared
+    private let dependencies: ProviderUIDependencies
+    @ObservedObject private var profileManager: ProfileManager
+
+    init(
+        dependencies: ProviderUIDependencies? = nil
+    ) {
+        let dependencies =
+            dependencies
+            ?? ProviderUICompositionRoot.shared.dependencies
+        self.dependencies = dependencies
+        _profileManager = ObservedObject(
+            wrappedValue: dependencies.profileManager
+        )
+    }
 
     var body: some View {
         ScrollView {
@@ -65,37 +79,57 @@ struct GeneralSettingsView: View {
                         }
                     }
 
-                    // Auto-Start Session
-                    SettingsSectionCard(
-                        title: "general.autostart_title".localized,
-                        subtitle: "general.autostart_subtitle".localized
-                    ) {
-                        VStack(alignment: .leading, spacing: DesignTokens.Spacing.medium) {
-                            SettingToggle(
-                                title: "general.autostart_toggle".localized,
-                                description: "general.autostart_description".localized,
-                                isOn: Binding(
-                                    get: { profile.autoStartSessionEnabled },
-                                    set: { newValue in
-                                        var updated = profile
-                                        updated.autoStartSessionEnabled = newValue
-                                        profileManager.updateProfile(updated)
-                                    }
+                    if dependencies.capabilities(
+                        for: profile.providerID
+                    ).supports(.automaticSessionStart) {
+                        // Auto-Start Session
+                        SettingsSectionCard(
+                            title: "general.autostart_title".localized,
+                            subtitle: "general.autostart_subtitle".localized
+                        ) {
+                            VStack(alignment: .leading, spacing: DesignTokens.Spacing.medium) {
+                                SettingToggle(
+                                    title: "general.autostart_toggle".localized,
+                                    description: "general.autostart_description".localized,
+                                    isOn: Binding(
+                                        get: { profile.autoStartSessionEnabled },
+                                        set: { newValue in
+                                            var updated = profile
+                                            updated.autoStartSessionEnabled = newValue
+                                            profileManager.updateProfile(updated)
+                                        }
+                                    )
                                 )
-                            )
 
-                            // Requirement
-                            VStack(alignment: .leading, spacing: DesignTokens.Spacing.small) {
-                                Text("Requirements:")
-                                    .font(DesignTokens.Typography.caption)
-                                    .fontWeight(.medium)
-                                    .foregroundColor(.secondary)
+                                // Requirement
+                                VStack(alignment: .leading, spacing: DesignTokens.Spacing.small) {
+                                    Text("Requirements:")
+                                        .font(DesignTokens.Typography.caption)
+                                        .fontWeight(.medium)
+                                        .foregroundColor(.secondary)
 
-                                Text("general.autostart_requirement".localized)
-                                    .font(DesignTokens.Typography.caption)
-                                    .foregroundColor(.secondary)
+                                    Text("general.autostart_requirement".localized)
+                                        .font(DesignTokens.Typography.caption)
+                                        .foregroundColor(.secondary)
+                                }
                             }
                         }
+                    } else {
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: "info.circle.fill")
+                            Text(
+                                ProviderUILocalization.text(
+                                    "provider.capability.autostart_unavailable",
+                                    fallback:
+                                        "Automatic session start is not available for this provider."
+                                )
+                            )
+                        }
+                        .font(DesignTokens.Typography.caption)
+                        .foregroundColor(.secondary)
+                        .accessibilityIdentifier(
+                            ProviderUIAccessibility.capabilityDisabled
+                        )
                     }
 
                     // Notifications

@@ -1,12 +1,15 @@
 import SwiftUI
 import AppKit
+import UsageCore
 
 // MARK: - Setup Mode (Auto-detect vs Manual)
 
 enum SetupMode {
+    case providerSelection
     case loading
     case cliDetected(credentials: String)
     case manualSetup
+    case codexSetup
 }
 
 // MARK: - Wizard State Machine
@@ -37,13 +40,35 @@ struct SetupWizardView: View {
     @Environment(\.dismiss) var dismiss
     @State private var wizardState = SetupWizardState()
     @State private var hasClaudeCodeCredentials = false
+    @State private var detectedCLICredentials: String?
     @State private var isMigrating = false
     @State private var migrationMessage: String?
-    @State private var setupMode: SetupMode = .loading
+    @State private var setupMode: SetupMode = .providerSelection
     private let apiService = ClaudeAPIService()
+    private let dependencies: ProviderUIDependencies
+
+    init(
+        dependencies: ProviderUIDependencies? = nil
+    ) {
+        self.dependencies =
+            dependencies
+            ?? ProviderUICompositionRoot.shared.dependencies
+    }
 
     var body: some View {
         switch setupMode {
+        case .providerSelection:
+            SetupProviderChoiceView(
+                codexAvailable:
+                    dependencies.availability.codexSupportEnabled,
+                onSelectClaude: {
+                    setupMode = .loading
+                    detectCLICredentials()
+                },
+                onSelectCodex: {
+                    setupMode = .codexSetup
+                }
+            )
         case .loading:
             VStack(spacing: 16) {
                 ProgressView()
@@ -52,7 +77,6 @@ struct SetupWizardView: View {
                     .foregroundColor(.secondary)
             }
             .frame(width: 580, height: 680)
-            .onAppear { detectCLICredentials() }
 
         case .cliDetected(let credentials):
             CLIDetectedSetupView(
@@ -63,6 +87,16 @@ struct SetupWizardView: View {
 
         case .manualSetup:
             manualSetupBody
+        case .codexSetup:
+            CodexSetupWizardView(
+                dependencies: dependencies,
+                onBack: {
+                    setupMode = .providerSelection
+                },
+                onComplete: {
+                    dismiss()
+                }
+            )
         }
     }
 
@@ -75,6 +109,7 @@ struct SetupWizardView: View {
                    !ClaudeCodeSyncService.shared.isTokenExpired(credentials) {
                     await MainActor.run {
                         hasClaudeCodeCredentials = true
+                        detectedCLICredentials = credentials
                         setupMode = .cliDetected(credentials: credentials)
                     }
                     return
@@ -89,21 +124,19 @@ struct SetupWizardView: View {
 
     /// Saves CLI credentials to the active profile and dismisses the wizard
     private func startTrackingWithCLI(credentials: String) {
-        do {
-            var profile: Profile
-            if let active = ProfileManager.shared.activeProfile {
-                profile = active
-            } else {
-                profile = try ProfileManager.shared.createInitialProfile(
-                    providerConfiguration: .claude
+        Task {
+            do {
+                _ = try await dependencies
+                    .completeClaudeCLISetup(
+                        credentials: credentials
+                    )
+                dismiss()
+            } catch {
+                LoggingService.shared.logError(
+                    "Failed to sync CLI credentials: \(error)"
                 )
+                setupMode = .manualSetup
             }
-            profile.cliCredentialsJSON = credentials
-            try ProfileManager.shared.updateProfileThrowing(profile)
-            dismiss()
-        } catch {
-            LoggingService.shared.logError("Failed to sync CLI credentials: \(error)")
-            setupMode = .manualSetup
         }
     }
 
@@ -163,7 +196,11 @@ struct SetupWizardView: View {
                     Spacer()
 
                     Button(action: {
-                        dismiss()
+                        if let detectedCLICredentials {
+                            startTrackingWithCLI(
+                                credentials: detectedCLICredentials
+                            )
+                        }
                     }) {
                         Text("wizard.claude_code_skip_setup".localized)
                             .font(.system(size: 11))
@@ -242,7 +279,12 @@ struct SetupWizardView: View {
                 case .selectOrg:
                     SelectOrgStepSetup(wizardState: $wizardState)
                 case .confirm:
-                    ConfirmStepSetup(wizardState: $wizardState, apiService: apiService, dismiss: dismiss)
+                    ConfirmStepSetup(
+                        wizardState: $wizardState,
+                        apiService: apiService,
+                        dismiss: dismiss,
+                        dependencies: dependencies
+                    )
                 }
             }
             .animation(.easeInOut(duration: 0.3), value: wizardState.currentStep)
@@ -250,7 +292,8 @@ struct SetupWizardView: View {
         .frame(width: 580, height: 680)
         .onAppear {
             // Load auto-start preference from active profile
-            if let activeProfile = ProfileManager.shared.activeProfile {
+            if let activeProfile =
+                dependencies.profileManager.activeProfile {
                 wizardState.autoStartSessionEnabled = activeProfile.autoStartSessionEnabled
             }
         }
@@ -273,16 +316,19 @@ struct SetupWizardView: View {
                     isMigrating = false
                     migrationMessage = String(format: "wizard.migration_success".localized, count)
                     // Reload profiles to reflect migrated data
-                    ProfileManager.shared.loadProfiles()
+                    dependencies.profileManager.loadProfiles()
                 }
 
                 // A legacy container can contain settings/credentials without
                 // a profile. Preserve them for explicit provider choice and
                 // never dismiss into a zero-profile state.
                 let hasProfiles = await MainActor.run {
-                    !ProfileManager.shared.profiles.isEmpty
+                    !dependencies.profileManager.profiles.isEmpty
                 }
                 if hasProfiles {
+                    await MainActor.run {
+                        dependencies.markSetupCompleted()
+                    }
                     try? await Task.sleep(
                         nanoseconds: 1_500_000_000
                     )
@@ -303,6 +349,454 @@ struct SetupWizardView: View {
         // Mark migration as completed (declined) so we don't ask again
         UserDefaults.standard.set(true, forKey: "HasMigratedFromAppGroup")
         migrationMessage = "wizard.migration_skipped".localized
+    }
+}
+
+struct SetupProviderChoiceView: View {
+    let codexAvailable: Bool
+    let onSelectClaude: () -> Void
+    let onSelectCodex: () -> Void
+
+    var body: some View {
+        VStack(spacing: 24) {
+            Image("WizardLogo")
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 80, height: 80)
+
+            VStack(spacing: 8) {
+                Text(
+                    ProviderUILocalization.text(
+                        "setup.provider.title",
+                        fallback: "Choose a Usage Provider"
+                    )
+                )
+                .font(.system(size: 24, weight: .semibold))
+                Text(
+                    ProviderUILocalization.text(
+                        "setup.provider.subtitle",
+                        fallback:
+                            "Profiles keep provider accounts and usage separate. You can add both Claude and Codex profiles."
+                    )
+                )
+                .font(.system(size: 13))
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+            }
+
+            HStack(spacing: 16) {
+                providerButton(
+                    title: "Claude",
+                    subtitle:
+                        "Connect Claude.ai, Console API, or Claude Code",
+                    icon: "sparkles",
+                    enabled: true,
+                    identifier:
+                        ProviderUIAccessibility.providerChoiceClaude,
+                    action: onSelectClaude
+                )
+                providerButton(
+                    title: "Codex",
+                    subtitle:
+                        "Link CODEX_HOME and your ChatGPT subscription",
+                    icon:
+                        "chevron.left.forwardslash.chevron.right",
+                    enabled: codexAvailable,
+                    identifier:
+                        ProviderUIAccessibility.providerChoiceCodex,
+                    action: onSelectCodex
+                )
+            }
+
+            if !codexAvailable {
+                Text(
+                    ProviderUILocalization.text(
+                        "codex.feature_unavailable",
+                        fallback:
+                            "Codex support is not available in this build."
+                    )
+                )
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+                .accessibilityIdentifier(
+                    ProviderUIAccessibility.capabilityDisabled
+                )
+            }
+        }
+        .padding(40)
+        .frame(width: 580, height: 680)
+    }
+
+    private func providerButton(
+        title: String,
+        subtitle: String,
+        icon: String,
+        enabled: Bool,
+        identifier: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            VStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.system(size: 30))
+                Text(title)
+                    .font(.system(size: 17, weight: .semibold))
+                Text(subtitle)
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            .frame(width: 205, height: 150)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color.primary.opacity(0.05))
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.55)
+        .accessibilityIdentifier(identifier)
+    }
+}
+
+struct CodexSetupWizardView: View {
+    private let dependencies: ProviderUIDependencies
+    let onBack: () -> Void
+    let onComplete: () -> Void
+
+    @StateObject private var viewModel: ProviderAccountViewModel
+    @State private var profileName = ""
+    @State private var homePath = ""
+    @State private var isHomeVerified = false
+    @State private var isCommitting = false
+    @State private var operationMessage: String?
+
+    init(
+        dependencies: ProviderUIDependencies,
+        onBack: @escaping () -> Void,
+        onComplete: @escaping () -> Void
+    ) {
+        self.dependencies = dependencies
+        self.onBack = onBack
+        self.onComplete = onComplete
+        _viewModel = StateObject(
+            wrappedValue: ProviderAccountViewModel(
+                dependencies: dependencies
+            )
+        )
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            VStack(spacing: 8) {
+                Text(
+                    ProviderUILocalization.text(
+                        "codex.setup.title",
+                        fallback: "Set Up Codex Usage"
+                    )
+                )
+                .font(.system(size: 24, weight: .semibold))
+                Text(
+                    ProviderUILocalization.text(
+                        "codex.setup.subtitle",
+                        fallback:
+                            "Link an existing Codex home. Authentication files remain owned by Codex and are never read or copied by this app."
+                    )
+                )
+                .font(.system(size: 12))
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+            }
+            .padding(28)
+
+            Divider()
+
+            ScrollView {
+                VStack(
+                    alignment: .leading,
+                    spacing: 18
+                ) {
+                    TextField(
+                        ProviderUILocalization.text(
+                            "profiles.name_placeholder",
+                            fallback: "Profile name (optional)"
+                        ),
+                        text: $profileName
+                    )
+                    .textFieldStyle(.roundedBorder)
+
+                    HStack {
+                        TextField(
+                            ProviderUILocalization.text(
+                                "codex.home.placeholder",
+                                fallback:
+                                    "Choose a CODEX_HOME directory"
+                            ),
+                            text: $homePath
+                        )
+                        .textFieldStyle(.roundedBorder)
+                        .accessibilityIdentifier(
+                            ProviderUIAccessibility.homePath
+                        )
+                        Button {
+                            chooseHome()
+                        } label: {
+                            Image(systemName: "folder")
+                        }
+                        .accessibilityIdentifier(
+                            ProviderUIAccessibility.homePicker
+                        )
+                        Button(
+                            !isHomeVerified
+                                ? ProviderUILocalization.text(
+                                    "codex.home.link",
+                                    fallback: "Verify Home"
+                                )
+                                : ProviderUILocalization.text(
+                                    "codex.home.relink",
+                                    fallback: "Verify Again"
+                                )
+                        ) {
+                            linkHome()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(homePath.isEmpty)
+                        .accessibilityIdentifier(
+                            ProviderUIAccessibility.homeLink
+                        )
+                    }
+
+                    if let operationMessage {
+                        WizardStatusBox(
+                            message: operationMessage,
+                            type: .error
+                        )
+                    }
+
+                    if isHomeVerified {
+                        accountSetup
+                    }
+                }
+                .padding(32)
+            }
+
+            Divider()
+            HStack {
+                Button("common.back".localized) {
+                    viewModel.dismiss()
+                    onBack()
+                }
+                Spacer()
+                Button(
+                    ProviderUILocalization.text(
+                        "codex.setup.start_tracking",
+                        fallback: "Start Tracking"
+                    )
+                ) {
+                    commitSetup()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!canComplete || isCommitting)
+            }
+            .padding(20)
+        }
+        .frame(width: 580, height: 680)
+        .onChange(of: homePath) { _, _ in
+            guard isHomeVerified else { return }
+            isHomeVerified = false
+            viewModel.invalidateDraft()
+            operationMessage = ProviderUILocalization.text(
+                "codex.home.reverify_after_edit",
+                fallback:
+                    "The Codex home changed. Verify it again before continuing."
+            )
+        }
+        .onChange(of: viewModel.loginState) { _, state in
+            if case .awaiting(.browser(let url)) = state {
+                NSWorkspace.shared.open(url)
+            }
+        }
+        .onDisappear {
+            viewModel.dismiss()
+        }
+    }
+
+    @ViewBuilder
+    private var accountSetup: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Divider()
+            Text(
+                ProviderUILocalization.text(
+                    "codex.setup.account",
+                    fallback: "Codex Account"
+                )
+            )
+            .font(.system(size: 14, weight: .semibold))
+
+            switch viewModel.accountState {
+            case .linked(let snapshot):
+                Label(
+                    [
+                        snapshot.account.displayName,
+                        snapshot.account.planName
+                    ]
+                    .compactMap { $0 }
+                    .joined(separator: " • "),
+                    systemImage: "checkmark.circle.fill"
+                )
+                .foregroundColor(.green)
+                .accessibilityIdentifier(
+                    ProviderUIAccessibility.accountStatus
+                )
+            case .loading:
+                HStack {
+                    ProgressView()
+                    Text("Checking Codex…")
+                }
+            case .unauthenticated:
+                Text("Sign in with Codex to read subscription usage.")
+                    .foregroundColor(.secondary)
+            case .unsupported:
+                Text(
+                    "This account does not expose ChatGPT subscription usage."
+                )
+                .foregroundColor(.red)
+            case .unavailable(let message):
+                Text(message).foregroundColor(.red)
+            case .idle:
+                EmptyView()
+            }
+
+            HStack {
+                Button("Refresh") {
+                    viewModel.refresh()
+                }
+                .accessibilityIdentifier(
+                    ProviderUIAccessibility.accountRefresh
+                )
+                Button("Sign In in Browser") {
+                    viewModel.startLogin(.browser)
+                }
+                .accessibilityIdentifier(
+                    ProviderUIAccessibility.loginStartBrowser
+                )
+                Button("Use Device Code") {
+                    viewModel.startLogin(.deviceCode)
+                }
+                .accessibilityIdentifier(
+                    ProviderUIAccessibility.loginStartDevice
+                )
+            }
+
+            switch viewModel.loginState {
+            case .awaiting(.deviceCode(
+                let verificationURL,
+                let userCode
+            )):
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Device code: \(userCode)")
+                        .font(.system(.body, design: .monospaced))
+                        .textSelection(.enabled)
+                    Button("Open Verification Page") {
+                        NSWorkspace.shared.open(verificationURL)
+                    }
+                    Button("Cancel Sign-In") {
+                        viewModel.cancelLogin()
+                    }
+                    .accessibilityIdentifier(
+                        ProviderUIAccessibility.loginCancel
+                    )
+                }
+            case .awaiting(.browser):
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Complete sign-in in the browser.")
+                    Button("Cancel Sign-In") {
+                        viewModel.cancelLogin()
+                    }
+                    .accessibilityIdentifier(
+                        ProviderUIAccessibility.loginCancel
+                    )
+                }
+            case .starting:
+                ProgressView()
+            case .cancelling:
+                Text("Canceling sign-in…")
+            case .succeeded:
+                Label(
+                    "Signed in with Codex",
+                    systemImage: "checkmark.circle.fill"
+                )
+                .foregroundColor(.green)
+            case .failed(let message):
+                Text(message).foregroundColor(.red)
+            case .idle:
+                EmptyView()
+            }
+        }
+        .font(.system(size: 12))
+    }
+
+    private var canComplete: Bool {
+        if case .linked = viewModel.accountState {
+            return true
+        }
+        return false
+    }
+
+    private func chooseHome() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        if panel.runModal() == .OK, let url = panel.url {
+            homePath = url.path
+        }
+    }
+
+    private func linkHome() {
+        do {
+            try viewModel.selectDraftCodexHome(homePath)
+            isHomeVerified = true
+            operationMessage = nil
+            viewModel.refresh()
+        } catch {
+            isHomeVerified = false
+            operationMessage =
+                ProviderAccountViewModel.message(for: error)
+        }
+    }
+
+    /// Re-canonicalizes and duplicate-checks the home immediately before the
+    /// only metadata write. Back, close, login failure, and cancellation leave
+    /// a zero-profile first run untouched.
+    private func commitSetup() {
+        guard !isCommitting else { return }
+        guard let verifiedIdentity =
+                viewModel.verifiedDraftIdentity else {
+            operationMessage = ProviderAccountViewModel.message(
+                for: CodexHomeCanonicalizationError
+                    .changedSinceVerification
+            )
+            return
+        }
+        isCommitting = true
+        Task {
+            do {
+                _ = try await dependencies.completeCodexSetup(
+                    name:
+                        profileName.isEmpty
+                        ? nil : profileName,
+                    homePath: homePath,
+                    verifiedIdentity: verifiedIdentity
+                )
+                isCommitting = false
+                onComplete()
+            } catch {
+                isCommitting = false
+                operationMessage =
+                    ProviderAccountViewModel.message(for: error)
+            }
+        }
     }
 }
 
@@ -637,6 +1131,7 @@ struct ConfirmStepSetup: View {
     @Binding var wizardState: SetupWizardState
     let apiService: ClaudeAPIService
     let dismiss: DismissAction
+    let dependencies: ProviderUIDependencies
     @State private var isSaving = false
 
     var body: some View {
@@ -750,36 +1245,21 @@ struct ConfirmStepSetup: View {
 
         Task {
             do {
-                let profileId: UUID
-                if let activeID = ProfileManager.shared.activeProfile?.id {
-                    profileId = activeID
-                } else {
-                    profileId = try ProfileManager.shared.createInitialProfile(
-                        providerConfiguration: .claude
-                    ).id
-                }
-
-                // Save to profile-specific Keychain using the refactored pattern
-                var creds = try ProfileManager.shared.loadCredentials(for: profileId)
-                creds.claudeSessionKey = wizardState.sessionKey
-                creds.organizationId = wizardState.selectedOrgId
-                try ProfileManager.shared.saveCredentials(
-                    for: profileId,
-                    credentials: creds
+                _ = try await dependencies
+                    .completeClaudeManualSetup(
+                        sessionKey: wizardState.sessionKey,
+                        organizationID:
+                            wizardState.selectedOrgId,
+                        autoStartSessionEnabled:
+                            wizardState
+                                .autoStartSessionEnabled
+                    )
+                LoggingService.shared.log(
+                    "SetupWizard: Updated profile setup preferences"
                 )
-
-                // Save the remaining non-credential setup preference.
-                if var profile = ProfileManager.shared.activeProfile {
-                    profile.autoStartSessionEnabled = wizardState.autoStartSessionEnabled
-                    ProfileManager.shared.updateProfile(profile)
-                    LoggingService.shared.log("SetupWizard: Updated profile setup preferences")
-                }
 
                 // Update statusline scripts if installed
                 try? StatuslineService.shared.updateScriptsIfInstalled()
-
-                // Mark setup as completed (shared setting)
-                SharedDataStore.shared.saveHasCompletedSetup(true)
 
                 await MainActor.run {
                     // Reset circuit breaker on successful credential save

@@ -6,12 +6,30 @@
 //
 
 import SwiftUI
+import AppKit
+import UsageCore
 
 struct ManageProfilesView: View {
-    @StateObject private var profileManager = ProfileManager.shared
+    private let dependencies: ProviderUIDependencies
+    @ObservedObject private var profileManager: ProfileManager
     @State private var showingCreateProfile = false
     @State private var newProfileName = ""
+    @State private var newProfileProvider:
+        ProfileProviderKind = .claude
+    @State private var newCodexHomePath = ""
     @State private var errorMessage: String?
+
+    init(
+        dependencies: ProviderUIDependencies? = nil
+    ) {
+        let dependencies =
+            dependencies
+            ?? ProviderUICompositionRoot.shared.dependencies
+        self.dependencies = dependencies
+        _profileManager = ObservedObject(
+            wrappedValue: dependencies.profileManager
+        )
+    }
 
     var body: some View {
         ScrollView {
@@ -26,7 +44,10 @@ struct ManageProfilesView: View {
                 SettingsContentCard {
                     VStack(alignment: .leading, spacing: DesignTokens.Spacing.medium) {
                         ForEach(profileManager.profiles) { profile in
-                            ProfileRow(profile: profile)
+                            ProfileRow(
+                                profile: profile,
+                                dependencies: dependencies
+                            )
                                 .padding(.vertical, DesignTokens.Spacing.extraSmall)
 
                             if profile.id != profileManager.profiles.last?.id {
@@ -310,12 +331,18 @@ struct ManageProfilesView: View {
         .sheet(isPresented: $showingCreateProfile) {
             CreateProfileSheet(
                 profileName: $newProfileName,
+                provider: $newProfileProvider,
+                codexHomePath: $newCodexHomePath,
+                codexAvailable:
+                    dependencies.availability.codexSupportEnabled,
                 onSave: {
                     createNewProfile()
                 },
                 onCancel: {
                     showingCreateProfile = false
                     newProfileName = ""
+                    newProfileProvider = .claude
+                    newCodexHomePath = ""
                 }
             )
         }
@@ -336,13 +363,24 @@ struct ManageProfilesView: View {
 
     private func createNewProfile() {
         let name = newProfileName.isEmpty ? nil : newProfileName
-        guard profileManager.createProfile(name: name) != nil else {
-            errorMessage = "The profile could not be saved. Please try again."
+        do {
+            _ = try dependencies.createProfile(
+                name: name,
+                provider: newProfileProvider,
+                linkedCodexHome:
+                    newProfileProvider == .codex
+                    ? newCodexHomePath : nil
+            )
+        } catch {
+            errorMessage =
+                ProviderAccountViewModel.message(for: error)
             return
         }
         errorMessage = nil
         showingCreateProfile = false
         newProfileName = ""
+        newProfileProvider = .claude
+        newCodexHomePath = ""
     }
 }
 
@@ -350,17 +388,31 @@ struct ManageProfilesView: View {
 
 struct ProfileRow: View {
     let profile: Profile
-    @StateObject private var profileManager = ProfileManager.shared
+    private let dependencies: ProviderUIDependencies
+    @ObservedObject private var profileManager: ProfileManager
     @State private var isEditing = false
     @State private var editedName: String = ""
     @State private var deletionAlert: ProfileDeletionAlert?
+    @State private var renameAlert: ProfileRenameAlert?
+
+    init(
+        profile: Profile,
+        dependencies: ProviderUIDependencies
+    ) {
+        self.profile = profile
+        self.dependencies = dependencies
+        _profileManager = ObservedObject(
+            wrappedValue: dependencies.profileManager
+        )
+    }
 
     var body: some View {
         HStack(spacing: 12) {
             // Profile Icon
-            Image(systemName: profile.hasCliAccount ? "person.crop.circle.fill.badge.checkmark" : "person.crop.circle.fill")
+            Image(systemName: profileIcon)
                 .font(.system(size: 24))
                 .foregroundColor(profileManager.activeProfile?.id == profile.id ? .accentColor : .secondary)
+                .accessibilityLabel(profileAccessibilityLabel)
 
             VStack(alignment: .leading, spacing: 4) {
                 if isEditing {
@@ -405,12 +457,17 @@ struct ProfileRow: View {
                     }
                     .buttonStyle(.plain)
                     .help("profiles.rename".localized)
+                    .accessibilityIdentifier(
+                        ProviderUIAccessibility.profileRename
+                    )
 
                     // Activate Button (if not active)
                     if profileManager.activeProfile?.id != profile.id {
                         Button(action: {
                             Task {
-                                await profileManager.activateProfile(profile.id)
+                                await dependencies.activateProfile(
+                                    profile.id
+                                )
                             }
                         }) {
                             Image(systemName: "checkmark.circle")
@@ -418,6 +475,9 @@ struct ProfileRow: View {
                         }
                         .buttonStyle(.plain)
                         .help("profiles.activate".localized)
+                        .accessibilityIdentifier(
+                            ProviderUIAccessibility.profileActivate
+                        )
                     }
 
                     // Delete Button (if not the last profile)
@@ -431,6 +491,9 @@ struct ProfileRow: View {
                         }
                         .buttonStyle(.plain)
                         .help("profiles.delete".localized)
+                        .accessibilityIdentifier(
+                            ProviderUIAccessibility.profileDelete
+                        )
                     }
                 } else {
                     // Save Button
@@ -479,34 +542,78 @@ struct ProfileRow: View {
                 )
             }
         }
+        .alert(item: $renameAlert) { alert in
+            Alert(
+                title: Text(
+                    ProviderUILocalization.text(
+                        "profiles.rename_failed_title",
+                        fallback: "Unable to Rename Profile"
+                    )
+                ),
+                message: Text(alert.message),
+                primaryButton: .default(
+                    Text("common.retry".localized)
+                ) {
+                    editedName = alert.attemptedName
+                    saveProfileName()
+                },
+                secondaryButton: .cancel(
+                    Text("common.cancel".localized)
+                )
+            )
+        }
     }
 
     private var profileInfo: String {
-        var parts: [String] = []
-
-        if let accountName = profile.cliAccountName {
-            parts.append("CLI: \(accountName)")
-        } else if profile.hasCliAccount {
-            parts.append("profiles.cli_synced".localized)
-        }
-
+        let presentation =
+            ProviderProfilePresentation(profile: profile)
+        var parts = [presentation.detailText]
         parts.append("\("profiles.created".localized) \(profile.createdAt.formatted(date: .abbreviated, time: .omitted))")
 
         return parts.joined(separator: " • ")
     }
 
+    private var profileIcon: String {
+        ProviderProfilePresentation(
+            profile: profile
+        ).systemImage
+    }
+
+    private var profileAccessibilityLabel: String {
+        let active =
+            profileManager.activeProfile?.id == profile.id
+            ? "active" : "inactive"
+        return "\(profile.name), \(profileInfo), \(active)"
+    }
+
     private func saveProfileName() {
         if !editedName.isEmpty && editedName != profile.name {
-            var updated = profile
-            updated.name = editedName
-            profileManager.updateProfile(updated)
+            do {
+                try ProfileRowMutation.rename(
+                    editedName
+                ).perform(
+                    profileID: profile.id,
+                    dependencies: dependencies
+                )
+            } catch {
+                renameAlert = ProfileRenameAlert(
+                    attemptedName: editedName,
+                    message: ProfileRenameErrorPresentation(
+                        error: error
+                    ).message
+                )
+                return
+            }
         }
         isEditing = false
     }
 
     private func deleteProfile() {
         do {
-            try profileManager.deleteProfile(profile.id)
+            try ProfileRowMutation.delete.perform(
+                profileID: profile.id,
+                dependencies: dependencies
+            )
         } catch {
             let presentation = ProfileDeletionErrorPresentation(error: error)
 
@@ -516,6 +623,51 @@ struct ProfileRow: View {
             DispatchQueue.main.async {
                 deletionAlert = .failure(presentation)
             }
+        }
+    }
+}
+
+struct ProfileRenameAlert: Identifiable {
+    let id = UUID()
+    let attemptedName: String
+    let message: String
+}
+
+enum ProfileRowMutation: Equatable {
+    case rename(String)
+    case delete
+
+    @MainActor
+    func perform(
+        profileID: UUID,
+        dependencies: ProviderUIDependencies
+    ) throws {
+        switch self {
+        case .rename(let name):
+            try dependencies.updateName(
+                name,
+                profileID: profileID
+            )
+        case .delete:
+            try dependencies.deleteProfile(profileID)
+        }
+    }
+}
+
+struct ProfileRenameErrorPresentation: Equatable {
+    static let genericMessage =
+        "Unable to rename this profile. Please try again."
+
+    let message: String
+
+    init(error: Error) {
+        if let localizedError = error as? any LocalizedError,
+           let description = localizedError.errorDescription?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !description.isEmpty {
+            message = description
+        } else {
+            message = Self.genericMessage
         }
     }
 }
@@ -559,6 +711,9 @@ struct ProfileDeletionErrorPresentation: Equatable {
 
 struct CreateProfileSheet: View {
     @Binding var profileName: String
+    @Binding var provider: ProfileProviderKind
+    @Binding var codexHomePath: String
+    let codexAvailable: Bool
     let onSave: () -> Void
     let onCancel: () -> Void
 
@@ -578,6 +733,79 @@ struct CreateProfileSheet: View {
                 Text("profiles.name_hint".localized)
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
+
+                Text(
+                    ProviderUILocalization.text(
+                        "profiles.provider_label",
+                        fallback: "Provider"
+                    )
+                )
+                .font(.system(size: 12))
+                .foregroundColor(.secondary)
+
+                Picker("", selection: $provider) {
+                    Text("Claude").tag(ProfileProviderKind.claude)
+                    Text("Codex").tag(ProfileProviderKind.codex)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .accessibilityIdentifier("profile.create.provider")
+                .onChange(of: provider) { _, newProvider in
+                    if newProvider == .codex && !codexAvailable {
+                        provider = .claude
+                    }
+                }
+
+                if provider == .codex {
+                    HStack {
+                        TextField(
+                            ProviderUILocalization.text(
+                                "codex.home.placeholder",
+                                fallback:
+                                    "Choose a CODEX_HOME directory"
+                            ),
+                            text: $codexHomePath
+                        )
+                        .textFieldStyle(.roundedBorder)
+                        .accessibilityIdentifier(
+                            ProviderUIAccessibility.homePath
+                        )
+
+                        Button {
+                            chooseCodexHome()
+                        } label: {
+                            Image(systemName: "folder")
+                        }
+                        .accessibilityIdentifier(
+                            ProviderUIAccessibility.homePicker
+                        )
+                    }
+
+                    Text(
+                        ProviderUILocalization.text(
+                            "codex.credentials.owned_by_codex",
+                            fallback:
+                                "Credentials remain in this directory and are managed only by Codex."
+                        )
+                    )
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                }
+
+                if !codexAvailable {
+                    Text(
+                        ProviderUILocalization.text(
+                            "codex.feature_unavailable",
+                            fallback:
+                                "Codex support is not available in this build."
+                        )
+                    )
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                    .accessibilityIdentifier(
+                        ProviderUIAccessibility.capabilityDisabled
+                    )
+                }
             }
 
             HStack(spacing: 12) {
@@ -590,9 +818,27 @@ struct CreateProfileSheet: View {
                     onSave()
                 }
                 .buttonStyle(.borderedProminent)
+                .disabled(
+                    provider == .codex
+                        && (!codexAvailable
+                            || codexHomePath.isEmpty)
+                )
+                .accessibilityIdentifier(
+                    ProviderUIAccessibility.profileCreate
+                )
             }
         }
         .padding(24)
         .frame(width: 400)
+    }
+
+    private func chooseCodexHome() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        if panel.runModal() == .OK, let url = panel.url {
+            codexHomePath = url.path
+        }
     }
 }

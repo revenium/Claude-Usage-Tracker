@@ -1,4 +1,6 @@
 import SwiftUI
+import Combine
+import UsageCore
 import UserNotifications
 
 // MARK: - Visual Effect Backgrounds
@@ -145,9 +147,192 @@ final class BorderlessSettingsWindow: NSWindow {
     }
 }
 
+@MainActor
+final class SettingsNavigationModel: ObservableObject {
+    @Published var selectedSection: SettingsSection
+    @Published private(set) var selectedProfileID: UUID?
+    @Published private(set) var isResolvingProfile = false
+    private var navigationGeneration: UInt64 = 0
+
+    init(
+        destination: SettingsNavigationDestination = .defaultView
+    ) {
+        selectedSection = .appearance
+        apply(destination)
+    }
+
+    func navigate(
+        to destination: SettingsNavigationDestination,
+        dependencies: ProviderUIDependencies
+    ) {
+        navigationGeneration &+= 1
+        let generation = navigationGeneration
+        apply(destination)
+        guard let profileID = selectedProfileID else {
+            isResolvingProfile = false
+            return
+        }
+        guard let targetProfile =
+                dependencies.profile(id: profileID) else {
+            selectedProfileID = nil
+            selectedSection = .manageProfiles
+            isResolvingProfile = false
+            return
+        }
+        if case .providerAccount = destination,
+           targetProfile.providerID == .claude {
+            selectedSection = .claudeAI
+        }
+        let needsActivation: Bool
+        switch destination {
+        case .providerAccount, .appearance, .general, .history:
+            needsActivation = true
+            isResolvingProfile = true
+        case .defaultView, .manageProfiles:
+            needsActivation = false
+        }
+        Task {
+            await dependencies.activateProfile(profileID)
+            guard self.navigationGeneration == generation else {
+                return
+            }
+            guard dependencies.profileManager.activeProfile?.id
+                    == profileID,
+                  dependencies.profile(id: profileID) != nil else {
+                self.selectedProfileID = nil
+                self.selectedSection = .manageProfiles
+                self.isResolvingProfile = false
+                return
+            }
+            if needsActivation {
+                self.isResolvingProfile = false
+            }
+        }
+    }
+
+    func userSelectedProfile(
+        _ profileID: UUID,
+        providerID: ProviderID,
+        dependencies: ProviderUIDependencies
+    ) {
+        navigationGeneration &+= 1
+        let generation = navigationGeneration
+        selectedProfileID = profileID
+        isResolvingProfile = true
+        Task {
+            await dependencies.activateProfile(profileID)
+            guard self.navigationGeneration == generation else {
+                return
+            }
+            guard dependencies.profileManager.activeProfile?.id
+                    == profileID,
+                  dependencies.profile(id: profileID) != nil else {
+                self.selectedProfileID = nil
+                self.selectedSection = .manageProfiles
+                self.isResolvingProfile = false
+                return
+            }
+            self.normalizeCredentialSection(for: providerID)
+            self.selectedProfileID = nil
+            self.isResolvingProfile = false
+        }
+    }
+
+    func activeProviderDidChange(_ providerID: ProviderID?) {
+        guard selectedProfileID == nil, let providerID else {
+            return
+        }
+        normalizeCredentialSection(for: providerID)
+    }
+
+    private func apply(_ destination: SettingsNavigationDestination) {
+        switch destination {
+        case .defaultView:
+            selectedProfileID = nil
+            selectedSection = .appearance
+            isResolvingProfile = false
+        case .providerAccount(let profileID):
+            selectedProfileID = profileID
+            selectedSection = .providerAccount
+            isResolvingProfile = true
+        case .appearance(let profileID):
+            selectedProfileID = profileID
+            selectedSection = .appearance
+            isResolvingProfile = true
+        case .general(let profileID):
+            selectedProfileID = profileID
+            selectedSection = .general
+            isResolvingProfile = true
+        case .history(let profileID):
+            selectedProfileID = profileID
+            selectedSection = .history
+            isResolvingProfile = true
+        case .manageProfiles:
+            selectedProfileID = nil
+            selectedSection = .manageProfiles
+            isResolvingProfile = false
+        }
+    }
+
+    private func normalizeCredentialSection(
+        for providerID: ProviderID
+    ) {
+        switch providerID {
+        case .codex:
+            if selectedSection == .claudeAI
+                || selectedSection == .apiConsole
+                || selectedSection == .cliAccount {
+                selectedSection = .providerAccount
+            }
+        case .claude:
+            if selectedSection == .providerAccount {
+                selectedSection = .claudeAI
+            }
+        default:
+            if selectedSection.isCredential {
+                selectedSection = .general
+            }
+        }
+    }
+}
+
+/// Typed handle retained by window owners so an already-open settings window
+/// can navigate to a clicked profile instead of merely raising stale content.
+@MainActor
+final class SettingsWindowNavigationController {
+    let window: NSWindow
+    let navigation: SettingsNavigationModel
+    private let dependencies: ProviderUIDependencies
+
+    init(
+        window: NSWindow,
+        navigation: SettingsNavigationModel,
+        dependencies: ProviderUIDependencies
+    ) {
+        self.window = window
+        self.navigation = navigation
+        self.dependencies = dependencies
+    }
+
+    func navigate(to destination: SettingsNavigationDestination) {
+        navigation.navigate(
+            to: destination,
+            dependencies: dependencies
+        )
+    }
+}
+
 /// Builds the settings window — fully borderless, no system titlebar.
 enum SettingsWindowBuilder {
-    static func makeWindow(size: CGSize) -> NSWindow {
+    @MainActor
+    static func makeController(
+        size: CGSize,
+        dependencies: ProviderUIDependencies? = nil,
+        destination: SettingsNavigationDestination = .defaultView
+    ) -> SettingsWindowNavigationController {
+        let dependencies =
+            dependencies
+            ?? ProviderUICompositionRoot.shared.dependencies
         let window = BorderlessSettingsWindow(
             contentRect: NSRect(origin: .zero, size: size),
             styleMask: .borderless,
@@ -155,8 +340,14 @@ enum SettingsWindowBuilder {
             defer: false
         )
 
+        let navigation = SettingsNavigationModel(
+            destination: destination
+        )
         let hostingView = NSHostingView(rootView:
-            SettingsView()
+            SettingsView(
+                dependencies: dependencies,
+                navigation: navigation
+            )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         )
         hostingView.translatesAutoresizingMaskIntoConstraints = false
@@ -171,7 +362,26 @@ enum SettingsWindowBuilder {
             ])
         }
 
-        return window
+        let controller = SettingsWindowNavigationController(
+            window: window,
+            navigation: navigation,
+            dependencies: dependencies
+        )
+        controller.navigate(to: destination)
+        return controller
+    }
+
+    @MainActor
+    static func makeWindow(
+        size: CGSize,
+        dependencies: ProviderUIDependencies? = nil,
+        destination: SettingsNavigationDestination = .defaultView
+    ) -> NSWindow {
+        makeController(
+            size: size,
+            dependencies: dependencies,
+            destination: destination
+        ).window
     }
 }
 
@@ -242,9 +452,26 @@ struct TrafficLightButton: View {
 
 /// Professional, native macOS Settings interface with multi-profile support
 struct SettingsView: View {
-    @State private var selectedSection: SettingsSection = .appearance
-    @StateObject private var profileManager = ProfileManager.shared
+    private let dependencies: ProviderUIDependencies
+    @StateObject private var navigation: SettingsNavigationModel
+    @ObservedObject private var profileManager: ProfileManager
     @Environment(\.colorScheme) private var colorScheme
+
+    init(
+        dependencies: ProviderUIDependencies? = nil,
+        navigation: SettingsNavigationModel? = nil
+    ) {
+        let dependencies =
+            dependencies
+            ?? ProviderUICompositionRoot.shared.dependencies
+        self.dependencies = dependencies
+        _navigation = StateObject(
+            wrappedValue: navigation ?? SettingsNavigationModel()
+        )
+        _profileManager = ObservedObject(
+            wrappedValue: dependencies.profileManager
+        )
+    }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -259,18 +486,28 @@ struct SettingsView: View {
                 .padding(.top, 12)
 
                 // Profile Section (Switcher + Credentials + Settings)
-                ProfileSectionContainer(selectedSection: $selectedSection)
+                ProfileSectionContainer(
+                    selectedSection: $navigation.selectedSection,
+                    dependencies: dependencies,
+                    navigation: navigation
+                )
                     .padding(.horizontal, 12)
                     .padding(.top, 8)
 
                 Spacer()
 
                 // App Settings Section
-                AppSettingsSection(selectedSection: $selectedSection)
+                AppSettingsSection(
+                    selectedSection: $navigation.selectedSection,
+                    providerID: profileManager.activeProfile?.providerID,
+                    dependencies: dependencies
+                )
                     .padding(.horizontal, 12)
 
                 // Bottom bar: About, Debug, Support, Updates
-                BottomBarSection(selectedSection: $selectedSection)
+                BottomBarSection(
+                    selectedSection: $navigation.selectedSection
+                )
                     .padding(.horizontal, 12)
                     .padding(.bottom, 8)
                     .padding(.top, 4)
@@ -280,7 +517,16 @@ struct SettingsView: View {
 
             // Content
             Group {
-                switch selectedSection {
+                if navigation.isResolvingProfile {
+                    ProgressView()
+                        .accessibilityLabel(
+                            ProviderUILocalization.text(
+                                "settings.profile.opening",
+                                fallback: "Opening profile settings"
+                            )
+                        )
+                } else {
+                    switch navigation.selectedSection {
                 // Credentials
                 case .claudeAI:
                     PersonalUsageView()
@@ -288,12 +534,21 @@ struct SettingsView: View {
                     APIBillingView()
                 case .cliAccount:
                     CLIAccountView()
+                case .providerAccount:
+                    ProviderAccountSettingsView(
+                        profileID:
+                            navigation.selectedProfileID
+                            ?? profileManager.activeProfile?.id,
+                        dependencies: dependencies
+                    )
 
                 // Profile Settings
                 case .appearance:
                     AppearanceSettingsView()
                 case .general:
-                    GeneralSettingsView()
+                    GeneralSettingsView(
+                        dependencies: dependencies
+                    )
                 case .history:
                     UsageHistoryView()
 
@@ -301,7 +556,9 @@ struct SettingsView: View {
                 case .appSettings:
                     AppSettingsView()
                 case .manageProfiles:
-                    ManageProfilesView()
+                    ManageProfilesView(
+                        dependencies: dependencies
+                    )
                 case .language:
                     LanguageSettingsView()
                 case .claudeCode:
@@ -320,6 +577,7 @@ struct SettingsView: View {
                     DebugNetworkLogView()
                 case .about:
                     AboutView()
+                    }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -331,6 +589,10 @@ struct SettingsView: View {
         }
         .frame(minWidth: 720, maxWidth: 720, maxHeight: .infinity)
         .background(SettingsBackground())
+        .onChange(of: profileManager.activeProfile?.providerID) {
+            _, providerID in
+            navigation.activeProviderDidChange(providerID)
+        }
     }
 }
 
@@ -338,7 +600,22 @@ struct SettingsView: View {
 
 struct ProfileSectionContainer: View {
     @Binding var selectedSection: SettingsSection
-    @StateObject private var profileManager = ProfileManager.shared
+    let dependencies: ProviderUIDependencies
+    @ObservedObject var navigation: SettingsNavigationModel
+    @ObservedObject private var profileManager: ProfileManager
+
+    init(
+        selectedSection: Binding<SettingsSection>,
+        dependencies: ProviderUIDependencies,
+        navigation: SettingsNavigationModel
+    ) {
+        _selectedSection = selectedSection
+        self.dependencies = dependencies
+        self.navigation = navigation
+        _profileManager = ObservedObject(
+            wrappedValue: dependencies.profileManager
+        )
+    }
 
     var profileSections: [SettingsSection] {
         SettingsSection.allCases.filter { $0.isProfileSetting && !$0.isCredential }
@@ -355,19 +632,31 @@ struct ProfileSectionContainer: View {
                 Picker("", selection: Binding(
                     get: { profileManager.activeProfile?.id ?? UUID() },
                     set: { newId in
-                        Task {
-                            await profileManager.activateProfile(newId)
+                        if let profile = profileManager.profiles.first(
+                            where: { $0.id == newId }
+                        ) {
+                            navigation.userSelectedProfile(
+                                newId,
+                                providerID: profile.providerID,
+                                dependencies: dependencies
+                            )
                         }
                     }
                 )) {
                     ForEach(profileManager.profiles) { profile in
+                        let presentation =
+                            ProviderProfilePresentation(
+                                profile: profile
+                            )
                         HStack {
                             Text(profile.name)
-                            if profile.hasCliAccount {
-                                Image(systemName: "checkmark.seal.fill")
-                                    .font(.system(size: 9))
-                                    .foregroundColor(.green)
-                            }
+                            Spacer()
+                            Label(
+                                presentation.detailText,
+                                systemImage:
+                                    presentation.systemImage
+                            )
+                            .font(.system(size: 9))
                         }
                         .tag(profile.id)
                     }
@@ -388,7 +677,10 @@ struct ProfileSectionContainer: View {
                     .padding(.horizontal, 8)
                     .padding(.top, 6)
 
-                ProfileCredentialCardsRow(selectedSection: $selectedSection)
+                ProfileCredentialCardsRow(
+                    selectedSection: $selectedSection,
+                    dependencies: dependencies
+                )
                     .padding(.horizontal, 8)
                     .padding(.bottom, 4)
             }
@@ -438,9 +730,24 @@ struct ProfileSectionContainer: View {
 
 struct AppSettingsSection: View {
     @Binding var selectedSection: SettingsSection
+    let providerID: ProviderID?
+    let dependencies: ProviderUIDependencies
 
     var sharedSections: [SettingsSection] {
-        SettingsSection.allCases.filter { !$0.isProfileSetting && !$0.isCredential && !$0.isBottomBarItem }
+        SettingsSection.allCases.filter {
+            guard !$0.isProfileSetting,
+                  !$0.isCredential,
+                  !$0.isBottomBarItem else {
+                return false
+            }
+            if $0 == .claudeCode,
+               let providerID {
+                return dependencies.capabilities(
+                    for: providerID
+                ).supports(.statusLineIntegration)
+            }
+            return true
+        }
     }
 
     var body: some View {
@@ -543,6 +850,7 @@ enum SettingsSection: String, CaseIterable {
     case claudeAI
     case apiConsole
     case cliAccount
+    case providerAccount
 
     // Profile Settings
     case appearance
@@ -567,6 +875,11 @@ enum SettingsSection: String, CaseIterable {
         case .claudeAI: return "section.claudeai_title".localized
         case .apiConsole: return "section.api_console_title".localized
         case .cliAccount: return "section.cli_account_title".localized
+        case .providerAccount:
+            return ProviderUILocalization.text(
+                "section.provider_account_title",
+                fallback: "Provider Account"
+            )
         case .appearance: return "section.appearance_title".localized
         case .general: return "section.general_title".localized
         case .history: return "section.history_title".localized
@@ -589,6 +902,8 @@ enum SettingsSection: String, CaseIterable {
         case .claudeAI: return "key.fill"
         case .apiConsole: return "dollarsign.circle.fill"
         case .cliAccount: return "terminal.fill"
+        case .providerAccount:
+            return "person.crop.circle.badge.checkmark"
         case .appearance: return "paintbrush.fill"
         case .general: return "gearshape.fill"
         case .history: return "chart.bar.xaxis"
@@ -611,6 +926,11 @@ enum SettingsSection: String, CaseIterable {
         case .claudeAI: return "section.claudeai_desc".localized
         case .apiConsole: return "section.api_console_desc".localized
         case .cliAccount: return "section.cli_account_desc".localized
+        case .providerAccount:
+            return ProviderUILocalization.text(
+                "section.provider_account_desc",
+                fallback: "Account, health, and sign-in"
+            )
         case .appearance: return "section.appearance_desc".localized
         case .general: return "section.general_desc".localized
         case .history: return "section.history_desc".localized
@@ -639,7 +959,7 @@ enum SettingsSection: String, CaseIterable {
 
     var isCredential: Bool {
         switch self {
-        case .claudeAI, .apiConsole, .cliAccount:
+        case .claudeAI, .apiConsole, .cliAccount, .providerAccount:
             return true
         default:
             return false
@@ -711,49 +1031,88 @@ struct SidebarItem: View {
 
 struct ProfileCredentialCardsRow: View {
     @Binding var selectedSection: SettingsSection
-    @StateObject private var profileManager = ProfileManager.shared
+    let dependencies: ProviderUIDependencies
+    @ObservedObject private var profileManager: ProfileManager
     @State private var credentials: ProfileCredentials?
+
+    init(
+        selectedSection: Binding<SettingsSection>,
+        dependencies: ProviderUIDependencies
+    ) {
+        _selectedSection = selectedSection
+        self.dependencies = dependencies
+        _profileManager = ObservedObject(
+            wrappedValue: dependencies.profileManager
+        )
+    }
 
     var body: some View {
         VStack(spacing: 4) {
-            // Claude.ai Card
-            Button {
-                selectedSection = .claudeAI
-            } label: {
-                CredentialMiniCard(
-                    icon: "key.fill",
-                    title: "Claude.ai",
-                    isConnected: credentials?.hasClaudeAI ?? false,
-                    isSelected: selectedSection == .claudeAI
-                )
-            }
-            .buttonStyle(.plain)
+            if profileManager.activeProfile?.providerID == .codex {
+                Button {
+                    selectedSection = .providerAccount
+                } label: {
+                    CredentialMiniCard(
+                        icon:
+                            "person.crop.circle.badge.checkmark",
+                        title: ProviderUILocalization.text(
+                            "codex.account.short_title",
+                            fallback: "Codex Account"
+                        ),
+                        isConnected:
+                            profileManager.activeProfile.map {
+                                ProviderProfilePresentation(
+                                    profile: $0
+                                ).isConnected
+                            } ?? false,
+                        isSelected:
+                            selectedSection == .providerAccount
+                    )
+                }
+                .buttonStyle(.plain)
+            } else {
+                // Claude.ai Card
+                Button {
+                    selectedSection = .claudeAI
+                } label: {
+                    CredentialMiniCard(
+                        icon: "key.fill",
+                        title: "Claude.ai",
+                        isConnected:
+                            credentials?.hasClaudeAI ?? false,
+                        isSelected: selectedSection == .claudeAI
+                    )
+                }
+                .buttonStyle(.plain)
 
-            // API Console Card
-            Button {
-                selectedSection = .apiConsole
-            } label: {
-                CredentialMiniCard(
-                    icon: "dollarsign.circle.fill",
-                    title: "API Console",
-                    isConnected: credentials?.apiSessionKey != nil,
-                    isSelected: selectedSection == .apiConsole
-                )
-            }
-            .buttonStyle(.plain)
+                // API Console Card
+                Button {
+                    selectedSection = .apiConsole
+                } label: {
+                    CredentialMiniCard(
+                        icon: "dollarsign.circle.fill",
+                        title: "API Console",
+                        isConnected:
+                            credentials?.apiSessionKey != nil,
+                        isSelected: selectedSection == .apiConsole
+                    )
+                }
+                .buttonStyle(.plain)
 
-            // CLI Account Card
-            Button {
-                selectedSection = .cliAccount
-            } label: {
-                CredentialMiniCard(
-                    icon: "terminal.fill",
-                    title: "CLI Account",
-                    isConnected: profileManager.activeProfile?.hasCliAccount ?? false,
-                    isSelected: selectedSection == .cliAccount
-                )
+                // CLI Account Card
+                Button {
+                    selectedSection = .cliAccount
+                } label: {
+                    CredentialMiniCard(
+                        icon: "terminal.fill",
+                        title: "CLI Account",
+                        isConnected: profileManager.activeProfile?
+                            .hasCliAccount ?? false,
+                        isSelected: selectedSection == .cliAccount
+                    )
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
         }
         .onAppear {
             loadCredentials()
@@ -764,8 +1123,14 @@ struct ProfileCredentialCardsRow: View {
     }
 
     private func loadCredentials() {
-        guard let profile = profileManager.activeProfile else { return }
-        credentials = try? ProfileStore.shared.loadProfileCredentials(profile.id)
+        guard let profile = profileManager.activeProfile,
+              profile.providerID == .claude else {
+            credentials = nil
+            return
+        }
+        credentials = try? dependencies.loadCredentials(
+            for: profile.id
+        )
     }
 }
 

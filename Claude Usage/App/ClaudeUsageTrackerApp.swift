@@ -7,7 +7,10 @@ struct ClaudeUsageTrackerApp: App {
     var body: some Scene {
         // This app is menu bar only, no windows by default
         Settings {
-            SettingsView()
+            SettingsView(
+                dependencies:
+                    ProviderUICompositionRoot.shared.dependencies
+            )
         }
     }
 }

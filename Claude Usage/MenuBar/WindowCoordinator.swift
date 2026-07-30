@@ -9,14 +9,27 @@ import Cocoa
 import SwiftUI
 
 /// Coordinates window lifecycle (popover, settings, GitHub prompt, detached window)
+@MainActor
 final class WindowCoordinator: NSObject {
     private var popover: NSPopover?
     private var eventMonitor: Any?
     private var detachedWindow: NSWindow?
     private var settingsWindow: NSWindow?
+    private var settingsController:
+        SettingsWindowNavigationController?
     private var githubPromptWindow: NSWindow?
+    private let providerUIDependencies: ProviderUIDependencies
 
     weak var manager: AnyObject?
+
+    init(
+        providerUIDependencies: ProviderUIDependencies? = nil
+    ) {
+        self.providerUIDependencies =
+            providerUIDependencies
+            ?? ProviderUICompositionRoot.shared.dependencies
+        super.init()
+    }
 
     // MARK: - Popover Management
 
@@ -105,11 +118,17 @@ final class WindowCoordinator: NSObject {
 
     // MARK: - Settings Window
 
-    func showSettings() {
+    func showSettings(
+        destination: SettingsNavigationDestination = .defaultView
+    ) {
         closePopoverOrWindow()
 
-        // If settings window already exists, just bring it to front
-        if let existingWindow = settingsWindow, existingWindow.isVisible {
+        // An existing window must consume the new destination before it is
+        // raised; otherwise a clicked profile opens stale settings content.
+        if let settingsController,
+           settingsController.window.isVisible {
+            settingsController.navigate(to: destination)
+            let existingWindow = settingsController.window
             existingWindow.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             LoggingService.shared.logWindowEvent("Settings window brought to front")
@@ -121,13 +140,19 @@ final class WindowCoordinator: NSObject {
             NSApp.setActivationPolicy(.regular)
             NSApp.activate(ignoringOtherApps: true)
 
-            let window = SettingsWindowBuilder.makeWindow(size: Constants.WindowSizes.settingsWindow)
+            let controller = SettingsWindowBuilder.makeController(
+                size: Constants.WindowSizes.settingsWindow,
+                dependencies: self.providerUIDependencies,
+                destination: destination
+            )
+            let window = controller.window
             window.title = "app.window.settings".localized
             window.center()
             window.delegate = self
             window.makeKeyAndOrderFront(nil)
 
             self.settingsWindow = window
+            self.settingsController = controller
             LoggingService.shared.logWindowEvent("Settings window opened")
         }
     }
@@ -187,6 +212,7 @@ final class WindowCoordinator: NSObject {
         detachedWindow = nil
         settingsWindow?.close()
         settingsWindow = nil
+        settingsController = nil
         githubPromptWindow?.close()
         githubPromptWindow = nil
         popover = nil
@@ -208,6 +234,7 @@ extension WindowCoordinator: NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         if notification.object as? NSWindow === settingsWindow {
             settingsWindow = nil
+            settingsController = nil
             NSApp.setActivationPolicy(.accessory)
         } else if notification.object as? NSWindow === githubPromptWindow {
             githubPromptWindow = nil

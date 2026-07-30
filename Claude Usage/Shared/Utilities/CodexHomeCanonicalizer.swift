@@ -147,6 +147,7 @@ enum CodexHomeCanonicalizationError: Error, LocalizedError, Equatable {
     case notDirectory
     case unsafeCharacters
     case filesystemIdentityUnavailable
+    case changedSinceVerification
 
     var errorDescription: String? {
         switch self {
@@ -164,6 +165,8 @@ enum CodexHomeCanonicalizationError: Error, LocalizedError, Equatable {
             return "The Codex home path contains unsupported characters."
         case .filesystemIdentityUnavailable:
             return "The Codex home filesystem identity could not be verified."
+        case .changedSinceVerification:
+            return "The Codex home changed after verification. Verify it again."
         }
     }
 }
