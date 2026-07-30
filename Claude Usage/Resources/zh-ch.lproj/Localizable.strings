@@ -936,3 +936,6 @@
 "notifications.sound.default" = "默认";
 "notifications.sound.none" = "无";
 "notifications.sound.preview" = "预览声音";
+
+"error.storage_write_failed" = "无法保存使用情况数据";
+"error.storage_write_failed.suggestion" = "请重试。如果问题仍然存在，请检查应用是否有权限写入其数据文件夹。";

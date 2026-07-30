@@ -1,0 +1,32 @@
+{
+  "11111111-1111-4111-8111-111111111111": {
+    "snapshots": [
+      {
+        "id": "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
+        "timestamp": 7000,
+        "resetType": "sessionReset",
+        "sessionTokensUsed": 701,
+        "sessionPercentage": 70.1,
+        "triggeringResetTime": 6990
+      }
+    ]
+  },
+  "22222222-2222-4222-8222-222222222222": {
+    "snapshots": [
+      {
+        "id": "BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB",
+        "timestamp": 8000,
+        "resetType": "weeklyReset",
+        "weeklyTokensUsed": 802,
+        "weeklyPercentage": 80.2,
+        "opusWeeklyTokensUsed": 83,
+        "opusWeeklyPercentage": 8.3,
+        "sonnetWeeklyTokensUsed": 84,
+        "sonnetWeeklyPercentage": 8.4,
+        "fableWeeklyTokensUsed": 85,
+        "fableWeeklyPercentage": 8.5,
+        "triggeringResetTime": 7990
+      }
+    ]
+  }
+}

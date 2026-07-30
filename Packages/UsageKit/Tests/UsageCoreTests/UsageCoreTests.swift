@@ -82,6 +82,78 @@ final class UsageCoreTests: XCTestCase {
         XCTAssertNil(encodedCredits[0]["isReadOnly"])
     }
 
+    func testReportRoundTripPreservesMoreThanTwoValidatedWindows() throws {
+        let percentages: [Double] = [0, 25, 100, 125]
+        let windows = try percentages.enumerated().map { index, percentage in
+            try UsageWindow(
+                id: UsageWindowID("dynamic-\(index)"),
+                displayName: "Dynamic \(index)",
+                usedPercentage: percentage,
+                resetsAt: fetchedAt.addingTimeInterval(
+                    TimeInterval((index + 1) * 3_600)
+                ),
+                duration: TimeInterval((index + 1) * 1_800)
+            )
+        }
+        let report = try UsageReport(
+            providerID: providerID,
+            health: ProviderHealth(
+                status: .degraded,
+                checkedAt: fetchedAt,
+                issue: .optionalUsageUnavailable
+            ),
+            limitGroups: [
+                UsageLimitGroup(
+                    id: UsageLimitGroupID("dynamic"),
+                    windows: windows
+                )
+            ],
+            fetchedAt: fetchedAt
+        )
+
+        let encoded = try JSONEncoder().encode(report)
+        let decoded = try JSONDecoder().decode(
+            UsageReport.self,
+            from: encoded
+        )
+
+        XCTAssertEqual(decoded, report)
+        XCTAssertEqual(decoded.health.status, .degraded)
+        XCTAssertEqual(
+            decoded.health.issue,
+            .optionalUsageUnavailable
+        )
+        XCTAssertEqual(decoded.limitGroups[0].windows.count, 4)
+        XCTAssertEqual(
+            decoded.limitGroups[0].windows.compactMap(\.usedPercentage),
+            percentages
+        )
+
+        let duplicatePayload = try JSONSerialization.jsonObject(
+            with: encoded
+        )
+        var object = try XCTUnwrap(
+            duplicatePayload as? [String: Any]
+        )
+        var groups = try XCTUnwrap(
+            object["limitGroups"] as? [[String: Any]]
+        )
+        var encodedWindows = try XCTUnwrap(
+            groups[0]["windows"] as? [[String: Any]]
+        )
+        encodedWindows.append(encodedWindows[0])
+        groups[0]["windows"] = encodedWindows
+        object["limitGroups"] = groups
+        let duplicateData = try JSONSerialization.data(withJSONObject: object)
+
+        XCTAssertThrowsError(
+            try JSONDecoder().decode(
+                UsageReport.self,
+                from: duplicateData
+            )
+        )
+    }
+
     func testDynamicGroupAndWindowIdentityIsStableAndOrderIndependent() throws {
         let firstID = try UsageWindowID("provider-window")
         let secondID = try UsageWindowID("provider-window")

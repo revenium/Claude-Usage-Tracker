@@ -82,6 +82,7 @@ typealias ProviderAPIFetch =
 nonisolated struct CapturedProviderRefreshJob: @unchecked Sendable {
     let identity: ProviderRefreshIdentity
     let profileName: String
+    let notificationSettings: NotificationSettings
     let refreshInterval: TimeInterval
     let requestContext: UsageRefreshRequestContext
     let capabilities: ProviderCapabilities
@@ -114,6 +115,7 @@ nonisolated struct CapturedClaudeProviderRequest: @unchecked Sendable {
 nonisolated struct CapturedCodexProviderConfiguration: Equatable, Sendable {
     let executableURL: URL
     let codexHomeURL: URL
+    let codexHomeIdentity: CodexHomeFilesystemIdentity
 }
 
 typealias ClaudeProviderRequestCapture =
@@ -155,6 +157,7 @@ nonisolated enum UsageProviderCaptureError: Error, Equatable, Sendable {
 
 /// Safe execution failures detected by the registry after a job is captured.
 nonisolated enum UsageProviderFetchError: Error, Equatable, Sendable {
+    case codexHomeUnavailable
     case providerIdentityMismatch(
         expected: ProviderID,
         received: ProviderID
@@ -165,7 +168,8 @@ nonisolated enum UsageProviderFetchError: Error, Equatable, Sendable {
 /// work. It owns no provider sessions, never reads Codex authentication files,
 /// and has no dependency on application singletons.
 nonisolated struct UsageProviderRegistry: Sendable {
-    typealias CodexHomeValidator = @Sendable (URL) -> Bool
+    typealias CodexHomeValidator =
+        @Sendable (URL, CodexHomeFilesystemIdentity) -> Bool
     typealias ExecutableValidator = @Sendable (URL) -> Bool
 
     private let featureAvailability: UsageProviderFeatureAvailability
@@ -283,6 +287,7 @@ nonisolated struct UsageProviderRegistry: Sendable {
                 providerRevision: profile.providerRevision
             ),
             profileName: profile.name,
+            notificationSettings: profile.notificationSettings,
             refreshInterval: refreshInterval,
             requestContext: context,
             capabilities: ClaudeUsageProviderAdapter.capabilities,
@@ -329,7 +334,8 @@ nonisolated struct UsageProviderRegistry: Sendable {
             fileURLWithPath: linkedHome.path,
             isDirectory: true
         )
-        guard codexHomeValidator(homeURL) else {
+        guard let homeIdentity = linkedHome.filesystemIdentity,
+              codexHomeValidator(homeURL, homeIdentity) else {
             throw UsageProviderCaptureError.codexHomeUnavailable
         }
 
@@ -350,7 +356,8 @@ nonisolated struct UsageProviderRegistry: Sendable {
             fetch = try codexFetchFactory(
                 CapturedCodexProviderConfiguration(
                     executableURL: executableURL,
-                    codexHomeURL: homeURL
+                    codexHomeURL: homeURL,
+                    codexHomeIdentity: homeIdentity
                 )
             )
         } catch {
@@ -371,10 +378,18 @@ nonisolated struct UsageProviderRegistry: Sendable {
                 providerRevision: profile.providerRevision
             ),
             profileName: profile.name,
+            notificationSettings: profile.notificationSettings,
             refreshInterval: refreshInterval,
             requestContext: context,
             capabilities: Self.codexCapabilities,
             coreFetch: {
+                guard codexHomeValidator(
+                    homeURL,
+                    homeIdentity
+                ) else {
+                    throw UsageProviderFetchError
+                        .codexHomeUnavailable
+                }
                 var report = try await fetch()
                 guard report.providerID == .codex else {
                     throw UsageProviderFetchError.providerIdentityMismatch(
@@ -420,16 +435,32 @@ nonisolated struct UsageProviderRegistry: Sendable {
     }
 
     nonisolated private static func defaultCodexHomeValidator(
-        _ url: URL
+        _ url: URL,
+        expectedIdentity: CodexHomeFilesystemIdentity
     ) -> Bool {
         guard url.isFileURL, url.path.hasPrefix("/"), url.path != "/" else {
             return false
         }
+        let lexicalURL = url.standardizedFileURL
+        let physicalURL = lexicalURL
+            .resolvingSymlinksInPath()
+            .standardizedFileURL
+        // Linked homes are persisted as physical paths. If that path is later
+        // replaced by a symlink, fail closed instead of silently launching a
+        // request against a different profile's authentication boundary.
+        guard lexicalURL.path == url.path,
+              physicalURL.path == lexicalURL.path else {
+            return false
+        }
         var isDirectory: ObjCBool = false
-        return FileManager.default.fileExists(
-            atPath: url.path,
+        guard FileManager.default.fileExists(
+            atPath: physicalURL.path,
             isDirectory: &isDirectory
-        ) && isDirectory.boolValue
+        ), isDirectory.boolValue else {
+            return false
+        }
+        return CodexHomeFilesystemIdentity.read(from: physicalURL)
+            == expectedIdentity
     }
 
     nonisolated private static func defaultExecutableValidator(
@@ -451,7 +482,13 @@ extension UsageProviderRegistry {
     ) throws -> @Sendable () async throws -> UsageReport {
         let processConfiguration = try CodexProcessConfiguration(
             executableURL: configuration.executableURL,
-            codexHomeURL: configuration.codexHomeURL
+            codexHomeURL: configuration.codexHomeURL,
+            expectedCodexHomeIdentity: CodexHomeIdentity(
+                deviceID:
+                    configuration.codexHomeIdentity.deviceID,
+                fileID:
+                    configuration.codexHomeIdentity.fileID
+            )
         )
         let provider = CodexUsageProvider(
             processConfiguration: processConfiguration

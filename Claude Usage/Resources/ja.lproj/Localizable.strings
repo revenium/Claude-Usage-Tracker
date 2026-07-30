@@ -946,3 +946,6 @@
 "notifications.sound.default" = "デフォルト";
 "notifications.sound.none" = "なし";
 "notifications.sound.preview" = "サウンドプレビュー";
+
+"error.storage_write_failed" = "使用状況データを保存できません";
+"error.storage_write_failed.suggestion" = "もう一度お試しください。問題が解決しない場合は、アプリにデータフォルダへの書き込み権限があることを確認してください。";

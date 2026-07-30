@@ -64,9 +64,12 @@ case "$initialized_line" in
 esac
 
 if [ "$scenario" = "blocked_stdin" ]; then
+    if [ -n "${BLOCKED_STDIN_READY_FILE:-}" ]; then
+        printf 'ready\n' > "$BLOCKED_STDIN_READY_FILE"
+    fi
     trap '' TERM
     while :; do
-        :
+        /bin/sleep 1
     done
 fi
 
@@ -102,6 +105,38 @@ case "$scenario" in
             exit 21
         fi
         printf '{"id":%s,"result":{"sequence":2}}\n' "$second_id"
+        ;;
+    multi_inflight_out_of_order)
+        first_line="$request_line"
+        first_id="$request_id"
+        read_line || exit 23
+        second_line="$received_line"
+        second_id="$(extract_id "$second_line")"
+        if [ -n "${REQUEST_LOG:-}" ]; then
+            printf '%s\n' "$second_line" >> "$REQUEST_LOG"
+        fi
+        case "$first_line" in
+            *'"method":"account/read"'*|*'"method":"account\/read"'*)
+                first_label=account
+                ;;
+            *)
+                first_label=usage
+                ;;
+        esac
+        case "$second_line" in
+            *'"method":"account/read"'*|*'"method":"account\/read"'*)
+                second_label=account
+                ;;
+            *)
+                second_label=usage
+                ;;
+        esac
+        printf '{"method":"account/updated","params":{"phase":"between"}}\n'
+        printf '{"id":"%s","result":{"request":"%s"}}\n' \
+            "$second_id" "$second_label"
+        printf '{"method":"account/rateLimits/updated","params":{"phase":"after-second"}}\n'
+        printf '{"id":%s,"result":{"request":"%s"}}\n' \
+            "$first_id" "$first_label"
         ;;
     duplicate_response)
         printf '{"id":%s,"result":{"sequence":1}}\n' "$request_id"
@@ -148,7 +183,69 @@ case "$scenario" in
     ignore_termination)
         trap '' TERM
         while :; do
-            :
+            /bin/sleep 1
+        done
+        ;;
+    descendant_tree)
+        (
+            trap '' TERM
+            (
+                trap '' TERM
+                while :; do
+                    /bin/sleep 1
+                done
+            ) &
+            grandchild_pid=$!
+            if [ -n "${GRANDCHILD_PID_FILE:-}" ]; then
+                printf '%s\n' "$grandchild_pid" > "$GRANDCHILD_PID_FILE"
+            fi
+            wait "$grandchild_pid"
+        ) &
+        child_pid=$!
+        if [ -n "${CHILD_PID_FILE:-}" ]; then
+            printf '%s\n' "$child_pid" > "$CHILD_PID_FILE"
+        fi
+        trap '' TERM
+        while :; do
+            /bin/sleep 1
+        done
+        ;;
+    descendant_after_root_exit)
+        root_pid=$$
+        (
+            child_term() {
+                # The production teardown signals known descendants before the
+                # root. Wait until the root has actually exited so this child
+                # creates a process that a root-only escalation census cannot
+                # discover.
+                while kill -0 "$root_pid" 2>/dev/null; do
+                    /bin/sleep 0.005
+                done
+                (
+                    trap '' TERM
+                    while :; do
+                        /bin/sleep 1
+                    done
+                ) &
+                late_descendant_pid=$!
+                if [ -n "${LATE_DESCENDANT_PID_FILE:-}" ]; then
+                    printf '%s\n' "$late_descendant_pid" \
+                        > "$LATE_DESCENDANT_PID_FILE"
+                fi
+                trap '' TERM
+            }
+
+            trap 'child_term' TERM
+            if [ -n "${CHILD_PID_FILE:-}" ]; then
+                printf '%s\n' "$$" > "$CHILD_PID_FILE"
+            fi
+            while :; do
+                /bin/sleep 1
+            done
+        ) &
+        trap 'exit 0' TERM
+        while :; do
+            /bin/sleep 1
         done
         ;;
     early_exit_request)
@@ -159,7 +256,7 @@ case "$scenario" in
         read_line
         ;;
     rpc_error)
-        printf '{"id":%s,"error":{"code":401,"message":"super-secret-rpc-message","data":{"token":"super-secret-token"}}}\n' "$request_id"
+        printf '{"id":%s,"error":{"code":401,"message":"redaction-sentinel","data":{"opaque":"sensitive-sentinel"}}}\n' "$request_id"
         ;;
     stderr_redaction)
         printf 'super-secret-stderr-value\n' >&2
@@ -221,6 +318,20 @@ case "$scenario" in
                 printf '{"id":%s,"result":{"futureOnly":true}}\n' "$request_id"
                 ;;
             *) exit 32 ;;
+        esac
+        ;;
+    provider_usage_malformed)
+        case "$request_line" in
+            *'"method":"account/read"'*|*'"method":"account\/read"'*)
+                printf '{"id":%s,"result":{"account":{"type":"chatgpt","email":null,"planType":"plus"},"requiresOpenaiAuth":true}}\n' "$request_id"
+                ;;
+            *'"method":"account/rateLimits/read"'*|*'"method":"account\/rateLimits\/read"'*)
+                printf '{"id":%s,"result":{"rateLimits":{"limitId":"codex","primary":{"usedPercent":37}}}}\n' "$request_id"
+                ;;
+            *'"method":"account/usage/read"'*|*'"method":"account\/usage\/read"'*)
+                printf '{"id":%s,"result":{"dailyUsageBuckets":[{"startDate":"2026-07-30","tokens":-1}]}}\n' "$request_id"
+                ;;
+            *) exit 46 ;;
         esac
         ;;
     provider_legacy_additive)
@@ -357,6 +468,28 @@ case "$scenario" in
             *) exit 37 ;;
         esac
         ;;
+    provider_login_already_authenticated)
+        case "$request_line" in
+            *'"method":"account/read"'*|*'"method":"account\/read"'*)
+                printf '{"id":%s,"result":{"account":{"type":"chatgpt","email":"already@example.com","planType":"plus"},"requiresOpenaiAuth":true}}\n' "$request_id"
+                ;;
+            *)
+                # The provider must short-circuit before login/start once the
+                # supported account preflight reports authenticated.
+                exit 44
+                ;;
+        esac
+        ;;
+    provider_login_server_error)
+        case "$request_line" in
+            *'"method":"account/login/start"'*|*'"method":"account\/login\/start"'*)
+                printf '{"id":%s,"error":{"code":500,"message":"synthetic login service failure"}}\n' "$request_id"
+                ;;
+            *)
+                exit 45
+                ;;
+        esac
+        ;;
     provider_login_cancel)
         printf '{"id":%s,"result":{"type":"chatgpt","loginId":"cancel-login-id","authUrl":"https://chatgpt.com/login"}}\n' "$request_id"
         read_line || exit 38
@@ -381,7 +514,7 @@ case "$scenario" in
         fi
         ;;
     provider_login_redaction)
-        printf '{"id":%s,"result":{"type":"chatgpt","loginId":"redact-login-id","authUrl":"https://super-secret-user:super-secret-password@chatgpt.com/login?access_token=super-secret-token"}}\n' "$request_id"
+        printf '{"id":%s,"result":{"type":"chatgpt","loginId":"redact-login-id","authUrl":"https://redaction-user:redaction-password@example.com/login?sensitive=redaction-sentinel"}}\n' "$request_id"
         ;;
     *)
         exit 99
@@ -393,6 +526,7 @@ esac
 # protocol handling and then wait for the client to close.
 case "$scenario" in
     provider_current|provider_usage_unavailable|provider_usage_empty|\
+    provider_usage_malformed|\
     provider_legacy_additive|provider_lossy_dynamic|provider_malformed_rate|\
     provider_credit_matrix|provider_daily_dst|provider_health_rate_rpc_failure|\
     provider_health_rate_malformed|provider_refresh_overall_timeout)

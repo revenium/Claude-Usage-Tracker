@@ -28,6 +28,62 @@ final class MenuReliabilityTests: HostedAppTestCase {
         }
     }
 
+    func testRefreshTimingPolicyPreservesTimerReachabilityAndWakeRules() {
+        let timer = RefreshTimingPolicy(interval: 60)
+        XCTAssertEqual(timer.interval, 60)
+        XCTAssertEqual(timer.tolerance, 6, accuracy: 0.000_001)
+        XCTAssertEqual(RefreshTimingPolicy.wakeDelay, 3)
+
+        XCTAssertFalse(
+            RefreshTimingPolicy.shouldRefreshForNetworkAvailability(
+                hasRefreshableProfile: false,
+                elapsedSinceLastTrigger: 60
+            )
+        )
+        XCTAssertFalse(
+            RefreshTimingPolicy.shouldRefreshForNetworkAvailability(
+                hasRefreshableProfile: true,
+                elapsedSinceLastTrigger: 2
+            )
+        )
+        XCTAssertTrue(
+            RefreshTimingPolicy.shouldRefreshForNetworkAvailability(
+                hasRefreshableProfile: true,
+                elapsedSinceLastTrigger: 2.001
+            )
+        )
+
+        XCTAssertFalse(
+            RefreshTimingPolicy.shouldRefreshAfterWake(
+                elapsedSinceLastAutomaticRefresh: 10
+            )
+        )
+        XCTAssertTrue(
+            RefreshTimingPolicy.shouldRefreshAfterWake(
+                elapsedSinceLastAutomaticRefresh: 10.001
+            )
+        )
+
+        let firedAt = Date(timeIntervalSinceReferenceDate: 12_345)
+        let fire = RefreshTimingPolicy.timerFired(at: firedAt)
+        XCTAssertEqual(fire.occurredAt, firedAt)
+        XCTAssertEqual(fire.trigger, .timer)
+    }
+
+    func testAutomaticRefreshTriggersRemainTypedAndNonInteractive() {
+        let triggers: [(UsageRefreshTrigger, String)] = [
+            (.startup, "startup"),
+            (.timer, "timer"),
+            (.networkAvailable, "networkAvailable"),
+            (.wake, "wake")
+        ]
+
+        for (trigger, rawValue) in triggers {
+            XCTAssertEqual(trigger.rawValue, rawValue)
+            XCTAssertFalse(trigger.isUserInitiated)
+        }
+    }
+
     func testContextMenuContainsExpectedLocalizedActionsAndShortcuts() {
         let target = MenuTarget()
         let menu = MenuBarManager.makeContextMenu(
@@ -193,6 +249,63 @@ final class MenuReliabilityTests: HostedAppTestCase {
         )
     }
 
+    func testClickedProfileNeverFallsBackToActiveUsage() {
+        let clickedID = UUID()
+        var activeUsage = ClaudeUsage.empty
+        activeUsage.sessionTokensUsed = 99
+        let activeAPI = APIUsage(
+            currentSpendCents: 99,
+            resetsAt: Date(timeIntervalSinceReferenceDate: 1_000),
+            prepaidCreditsCents: 1,
+            currency: "USD",
+            apiTokenCostCents: nil,
+            apiCostByModel: nil,
+            costBySource: nil,
+            dailyCostCents: nil
+        )
+
+        let beforeSnapshot = MenuBarManager.popoverUsage(
+            clickedProfileID: clickedID,
+            clickedProfileUsage: nil,
+            activeProfileUsage: activeUsage
+        )
+        XCTAssertEqual(beforeSnapshot.sessionTokensUsed, 0)
+        XCTAssertNil(
+            MenuBarManager.popoverAPIUsage(
+                clickedProfileID: clickedID,
+                clickedProfileAPIUsage: nil,
+                activeProfileAPIUsage: activeAPI
+            )
+        )
+
+        var clickedUsage = ClaudeUsage.empty
+        clickedUsage.sessionTokensUsed = 11
+        XCTAssertEqual(
+            MenuBarManager.popoverUsage(
+                clickedProfileID: clickedID,
+                clickedProfileUsage: clickedUsage,
+                activeProfileUsage: activeUsage
+            ).sessionTokensUsed,
+            11
+        )
+        XCTAssertEqual(
+            MenuBarManager.popoverUsage(
+                clickedProfileID: nil,
+                clickedProfileUsage: nil,
+                activeProfileUsage: activeUsage
+            ).sessionTokensUsed,
+            99
+        )
+        XCTAssertEqual(
+            MenuBarManager.popoverAPIUsage(
+                clickedProfileID: nil,
+                clickedProfileAPIUsage: nil,
+                activeProfileAPIUsage: activeAPI
+            ),
+            activeAPI
+        )
+    }
+
     func testFailureRoutingRequiresExactContextAndActiveProfile() {
         let profileID = UUID()
         let context = UsagePresentationContext(
@@ -208,6 +321,7 @@ final class MenuReliabilityTests: HostedAppTestCase {
                 providerRevision: 0
             ),
             profileName: "A",
+            inputGeneration: 0,
             invocationOrder: 1,
             trigger: .timer,
             presentationContext: context,
@@ -245,6 +359,30 @@ final class MenuReliabilityTests: HostedAppTestCase {
                 activeProfileID: UUID()
             )
         )
+        XCTAssertTrue(
+            MenuBarManager.isCurrentRefreshInput(
+                eventInputGeneration: event.inputGeneration,
+                eventInvocationOrder: event.invocationOrder,
+                currentInputGeneration: 0,
+                currentInvocationOrder: 1
+            )
+        )
+        XCTAssertFalse(
+            MenuBarManager.isCurrentRefreshInput(
+                eventInputGeneration: event.inputGeneration,
+                eventInvocationOrder: event.invocationOrder,
+                currentInputGeneration: 1,
+                currentInvocationOrder: 1
+            )
+        )
+        XCTAssertFalse(
+            MenuBarManager.isCurrentRefreshInput(
+                eventInputGeneration: event.inputGeneration,
+                eventInvocationOrder: event.invocationOrder,
+                currentInputGeneration: 0,
+                currentInvocationOrder: 2
+            )
+        )
     }
 
     func testResetHistorySuppressesDuplicatePeriodicComponents() {
@@ -279,10 +417,29 @@ final class MenuReliabilityTests: HostedAppTestCase {
 
     func testRefreshFailureReconstructsCanonicalSafeLegacyErrors() {
         let cases: [(ErrorCode, AppError)] = [
+            (.sessionKeyNotFound, .sessionKeyNotFound()),
+            (
+                .sessionKeyInvalid,
+                .sessionKeyInvalid(reason: "safe")
+            ),
+            (
+                .sessionKeyExpired,
+                AppError(
+                    code: .sessionKeyExpired,
+                    message: "error.session_key_invalid".localized,
+                    technicalDetails: "safe",
+                    isRecoverable: true,
+                    recoverySuggestion:
+                        "error.session_key_not_found.suggestion"
+                            .localized
+                )
+            ),
             (.apiUnauthorized, .apiUnauthorized()),
             (.apiRateLimited, .apiRateLimited()),
             (.apiServerError, .apiServerError(statusCode: 500)),
-            (.networkTimeout, .networkTimeout())
+            (.networkTimeout, .networkTimeout()),
+            (.networkUnavailable, .networkUnavailable()),
+            (.storageWriteFailed, .storageWriteFailed())
         ]
 
         for (code, expected) in cases {
@@ -306,6 +463,35 @@ final class MenuReliabilityTests: HostedAppTestCase {
             )
             XCTAssertNil(actual.underlyingError)
         }
+    }
+
+    func testPersistenceFailureUsesCanonicalLocalizedStorageError() {
+        let error = MenuBarManager.appError(
+            for: ProviderRefreshFailure(
+                kind: .persistence,
+                occurredAt: Date(
+                    timeIntervalSinceReferenceDate: 1
+                ),
+                isRecoverable: true,
+                consecutiveCount: 1
+            )
+        )
+
+        XCTAssertEqual(error.code, .storageWriteFailed)
+        XCTAssertEqual(
+            error.message,
+            "error.storage_write_failed".localized
+        )
+        XCTAssertEqual(
+            error.recoverySuggestion,
+            "error.storage_write_failed.suggestion".localized
+        )
+        XCTAssertEqual(
+            error.technicalDetails,
+            "Usage persistence transaction was rejected"
+        )
+        XCTAssertTrue(error.isRecoverable)
+        XCTAssertNil(error.underlyingError)
     }
 
     func testInteractiveRefreshSideEffectsAreSingleProfileOnly() {
@@ -340,6 +526,350 @@ final class MenuReliabilityTests: HostedAppTestCase {
                     eventProfileID: profileID,
                     activeProfileID: profileID
                 )
+        )
+    }
+
+    func testRefreshSideEffectRouterSeparatesCommitAndPresentedEffects()
+    {
+        let profileID = UUID()
+        let context = UsagePresentationContext(
+            epoch: 10,
+            focusedProfileID: profileID,
+            visibleProfileIDs: [profileID],
+            mode: .single
+        )
+        var activeProfile = Profile(
+            id: profileID,
+            name: "Current name"
+        )
+        activeProfile.notificationSettings = NotificationSettings(
+            enabled: true
+        )
+        let capturedSettings = NotificationSettings(
+            enabled: false,
+            soundName: "Captured sound"
+        )
+        let event = makeAcceptedEvent(
+            profileID: profileID,
+            context: context,
+            profileName: "Initiating name",
+            notificationSettings: capturedSettings,
+            components: [.providerUsage, .claudeAPI]
+        )
+        let recorder = ThreadSafeRecorder()
+        let router = makeSideEffectRouter(recorder)
+
+        router.committed(event)
+
+        XCTAssertEqual(
+            recorder.snapshot(),
+            [
+                "history:Initiating name",
+                "api-history:Initiating name"
+            ]
+        )
+
+        router.presented(
+            event,
+            currentContext: context,
+            activeProfile: activeProfile
+        )
+
+        XCTAssertEqual(
+            recorder.snapshot(),
+            [
+                "history:Initiating name",
+                "api-history:Initiating name",
+                "statusline:Initiating name",
+                "notify:Initiating name:false:Captured sound",
+                "auto:\(profileID.uuidString)"
+            ]
+        )
+    }
+
+    func testRefreshSideEffectRouterSuppressesInteractiveAEffectsAfterB()
+    {
+        let profileA = UUID()
+        let profileB = UUID()
+        let context = UsagePresentationContext(
+            epoch: 11,
+            focusedProfileID: profileA,
+            visibleProfileIDs: [profileA],
+            mode: .single
+        )
+        let event = makeAcceptedEvent(
+            profileID: profileA,
+            context: context,
+            components: [.providerUsage, .claudeAPI]
+        )
+        let recorder = ThreadSafeRecorder()
+        let router = makeSideEffectRouter(recorder)
+
+        router.committed(event)
+        router.presented(
+            event,
+            currentContext: context,
+            activeProfile: Profile(id: profileB, name: "B")
+        )
+
+        XCTAssertEqual(
+            recorder.snapshot(),
+            ["history:Captured", "api-history:Captured"]
+        )
+    }
+
+    func testRefreshSideEffectRouterPreservesViewedFailureForMixedBatch()
+    {
+        let successfulProfileID = UUID()
+        let activeProfile = Profile(name: "Active")
+        let context = UsagePresentationContext(
+            epoch: 12,
+            focusedProfileID: activeProfile.id,
+            visibleProfileIDs: [
+                successfulProfileID,
+                activeProfile.id
+            ],
+            mode: .multi
+        )
+        let result = UsageRefreshBatchResult(
+            batchID: UUID(),
+            invocationOrder: 4,
+            outcomes: [
+                successfulProfileID: .accepted,
+                activeProfile.id: .failed
+            ],
+            trigger: .manual,
+            presentationContext: context,
+            isLatestBatch: true
+        )
+        let recorder = ThreadSafeRecorder()
+        let router = makeSideEffectRouter(recorder)
+
+        router.finished(
+            result,
+            currentContext: context,
+            latestInvocationOrder: 4,
+            activeProfile: activeProfile,
+            activeSnapshot: nil
+        )
+
+        XCTAssertEqual(
+            recorder.snapshot(),
+            ["batch-finalized"]
+        )
+    }
+
+    func testRefreshSideEffectRouterRejectsReentrantlyStaleBatch()
+    {
+        let profile = Profile(name: "Active")
+        let context = UsagePresentationContext(
+            epoch: 14,
+            focusedProfileID: profile.id,
+            visibleProfileIDs: [profile.id],
+            mode: .single
+        )
+        let recorder = ThreadSafeRecorder()
+        let router = makeSideEffectRouter(recorder)
+        router.finished(
+            UsageRefreshBatchResult(
+                batchID: UUID(),
+                invocationOrder: 4,
+                outcomes: [profile.id: .accepted],
+                trigger: .manual,
+                presentationContext: context,
+                isLatestBatch: true
+            ),
+            currentContext: context,
+            latestInvocationOrder: 5,
+            activeProfile: profile,
+            activeSnapshot: makeSnapshot(
+                profile: profile,
+                context: context
+            )
+        )
+
+        XCTAssertTrue(recorder.snapshot().isEmpty)
+    }
+
+    func testRefreshSideEffectRouterCompletesSingleBatchEffectsOnce()
+    {
+        let profile = Profile(name: "Active")
+        let context = UsagePresentationContext(
+            epoch: 15,
+            focusedProfileID: profile.id,
+            visibleProfileIDs: [profile.id],
+            mode: .single
+        )
+        let result = UsageRefreshBatchResult(
+            batchID: UUID(),
+            invocationOrder: 5,
+            outcomes: [profile.id: .accepted],
+            trigger: .manual,
+            presentationContext: context,
+            isLatestBatch: true
+        )
+        let recorder = ThreadSafeRecorder()
+        let router = makeSideEffectRouter(recorder)
+
+        router.finished(
+            result,
+            currentContext: context,
+            latestInvocationOrder: 5,
+            activeProfile: profile,
+            activeSnapshot: makeSnapshot(
+                profile: profile,
+                context: context
+            )
+        )
+
+        XCTAssertEqual(
+            recorder.snapshot(),
+            [
+                "batch-finalized",
+                "single-success",
+                "claude-circuit-success",
+                "success-toast"
+            ]
+        )
+    }
+
+    func testRefreshSideEffectRouterDoesNotResetClaudeCircuitForCodex()
+    {
+        let profile = Profile(
+            name: "Codex",
+            providerConfiguration: .codex(.init())
+        )
+        let context = UsagePresentationContext(
+            epoch: 16,
+            focusedProfileID: profile.id,
+            visibleProfileIDs: [profile.id],
+            mode: .single
+        )
+        let result = UsageRefreshBatchResult(
+            batchID: UUID(),
+            invocationOrder: 6,
+            outcomes: [profile.id: .accepted],
+            trigger: .manual,
+            presentationContext: context,
+            isLatestBatch: true
+        )
+        let recorder = ThreadSafeRecorder()
+        let router = makeSideEffectRouter(recorder)
+
+        router.finished(
+            result,
+            currentContext: context,
+            latestInvocationOrder: 6,
+            activeProfile: profile,
+            activeSnapshot: makeSnapshot(
+                profile: profile,
+                context: context
+            )
+        )
+
+        XCTAssertEqual(
+            recorder.snapshot(),
+            [
+                "batch-finalized",
+                "single-success",
+                "success-toast"
+            ]
+        )
+    }
+
+    func testRefreshSideEffectRouterRequiresExactSingleSnapshot()
+    {
+        let profile = Profile(name: "Claude")
+        let context = UsagePresentationContext(
+            epoch: 17,
+            focusedProfileID: profile.id,
+            visibleProfileIDs: [profile.id],
+            mode: .single
+        )
+        let result = UsageRefreshBatchResult(
+            batchID: UUID(),
+            invocationOrder: 7,
+            outcomes: [profile.id: .accepted],
+            trigger: .manual,
+            presentationContext: context,
+            isLatestBatch: true
+        )
+        let recorder = ThreadSafeRecorder()
+        let router = makeSideEffectRouter(recorder)
+
+        router.finished(
+            result,
+            currentContext: context,
+            latestInvocationOrder: 7,
+            activeProfile: profile,
+            activeSnapshot: nil
+        )
+
+        XCTAssertEqual(recorder.snapshot(), ["batch-finalized"])
+    }
+
+    func testRefreshSideEffectRouterGatesFailurePresentation()
+    {
+        let profileID = UUID()
+        let context = UsagePresentationContext(
+            epoch: 13,
+            focusedProfileID: profileID,
+            visibleProfileIDs: [profileID],
+            mode: .single
+        )
+        let event = UsageRefreshFailureEvent(
+            sequence: 1,
+            identity: ProviderRefreshIdentity(
+                profileID: profileID,
+                providerID: .claude,
+                providerRevision: 0
+            ),
+            profileName: "Captured",
+            inputGeneration: 0,
+            invocationOrder: 1,
+            trigger: .manual,
+            presentationContext: context,
+            component: .providerUsage,
+            failure: ProviderRefreshFailure(
+                kind: .unauthenticated,
+                occurredAt: Date(
+                    timeIntervalSinceReferenceDate: 1
+                ),
+                isRecoverable: true,
+                consecutiveCount: 1,
+                legacyErrorCode: .sessionKeyNotFound
+            )
+        )
+        let recorder = ThreadSafeRecorder()
+        let router = makeSideEffectRouter(recorder)
+        let error = MenuBarManager.appError(for: event.failure)
+
+        router.failed(
+            event,
+            error: error,
+            currentContext: context,
+            activeProfileID: profileID
+        )
+        router.failed(
+            event,
+            error: error,
+            currentContext: UsagePresentationContext(
+                epoch: 14,
+                focusedProfileID: profileID,
+                visibleProfileIDs: [profileID],
+                mode: .single
+            ),
+            activeProfileID: profileID
+        )
+
+        XCTAssertEqual(
+            recorder.snapshot(),
+            [
+                "failure-log:E1000",
+                "circuit-failure",
+                "failure-alert",
+                "failure-log:E1000"
+            ]
         )
     }
 
@@ -449,6 +979,145 @@ final class MenuReliabilityTests: HostedAppTestCase {
             ProfileDeletionErrorPresentation.genericMessage
         )
         XCTAssertFalse(presentation.message.contains(secret))
+    }
+
+    private func makeAcceptedEvent(
+        profileID: UUID,
+        context: UsagePresentationContext,
+        profileName: String = "Captured",
+        notificationSettings: NotificationSettings =
+            NotificationSettings(),
+        components: Set<AcceptedUsageComponent>
+    ) -> AcceptedUsageRefreshEvent {
+        var usage = ClaudeUsage.empty
+        usage.sessionTokensUsed = 42
+        let api = APIUsage(
+            currentSpendCents: 42,
+            resetsAt: Date(timeIntervalSinceReferenceDate: 2_000),
+            prepaidCreditsCents: 58,
+            currency: "USD",
+            apiTokenCostCents: nil,
+            apiCostByModel: nil,
+            costBySource: nil,
+            dailyCostCents: nil
+        )
+        return AcceptedUsageRefreshEvent(
+            sequence: 1,
+            identity: ProviderRefreshIdentity(
+                profileID: profileID,
+                providerID: .claude,
+                providerRevision: 0
+            ),
+            inputGeneration: 0,
+            invocationOrder: 1,
+            profileName: profileName,
+            notificationSettings: notificationSettings,
+            trigger: .manual,
+            presentationContext: context,
+            capabilities: ProviderCapabilities([
+                .statusLineIntegration: .available
+            ]),
+            previousUsage: nil,
+            currentUsage: ProfileCurrentUsage(
+                providerID: .claude,
+                providerRevision: 0,
+                claudeUsage:
+                    components.contains(.providerUsage)
+                        ? usage
+                        : nil,
+                apiUsage:
+                    components.contains(.claudeAPI)
+                        ? api
+                        : nil
+            ),
+            acceptedComponents: components,
+            committedAt: Date(
+                timeIntervalSinceReferenceDate: 2_000
+            )
+        )
+    }
+
+    private func makeSnapshot(
+        profile: Profile,
+        context: UsagePresentationContext
+    ) -> PresentationSnapshot {
+        PresentationSnapshot(
+            profileID: profile.id,
+            profileName: profile.name,
+            providerID: profile.providerID,
+            providerRevision: profile.providerRevision,
+            presentationEpoch: context.epoch,
+            capabilities: ProviderCapabilities(),
+            configurationState: .ready,
+            report: nil,
+            claudeUsage: nil,
+            claudeAPIUsage: nil,
+            activity: .idle,
+            lastSuccessfulAt: Date(
+                timeIntervalSinceReferenceDate: 2_000
+            ),
+            currentFailure: nil
+        )
+    }
+
+    private func makeSideEffectRouter(
+        _ recorder: ThreadSafeRecorder
+    ) -> MenuBarManager.RefreshSideEffectRouter {
+        retain(MenuBarManager.RefreshSideEffectRouter(
+            hooks: .init(
+                recordClaude: { event, _ in
+                    recorder.append("history:\(event.profileName)")
+                },
+                writeStatusline: { event, _ in
+                    recorder.append(
+                        "statusline:\(event.profileName)"
+                    )
+                },
+                notify: { event, _ in
+                    recorder.append(
+                        "notify:\(event.profileName):"
+                            + "\(event.notificationSettings.enabled):"
+                            + event.notificationSettings.soundName
+                    )
+                },
+                autoSwitch: { _, _, profile in
+                    recorder.append(
+                        "auto:\(profile.id.uuidString)"
+                    )
+                },
+                recordAPI: { event, _ in
+                    recorder.append(
+                        "api-history:\(event.profileName)"
+                    )
+                },
+                finalizeBatch: { _ in
+                    recorder.append("batch-finalized")
+                },
+                recordBatchSuccess: { _ in
+                    recorder.append("single-success")
+                },
+                recordClaudeBatchSuccess: { _ in
+                    recorder.append("claude-circuit-success")
+                },
+                showBatchSuccess: { _ in
+                    recorder.append("success-toast")
+                },
+                autoSwitchBatch: { _, _, _ in
+                    recorder.append("batch-auto-switch")
+                },
+                logFailure: { _, error in
+                    recorder.append(
+                        "failure-log:\(error.code.rawValue)"
+                    )
+                },
+                recordInteractiveFailure: { _, _ in
+                    recorder.append("circuit-failure")
+                },
+                showInteractiveFailure: { _, _ in
+                    recorder.append("failure-alert")
+                }
+            )
+        ))
     }
 }
 

@@ -1,0 +1,20 @@
+{
+  "fixturePolicy": "Synthetic protocol fixtures only; no captured user payloads.",
+  "generatedAtUTC": "2026-07-30",
+  "generatorCommand": "codex app-server generate-json-schema --experimental --out <temporary-directory>",
+  "generatorVersion": "codex-cli 0.145.0",
+  "fixtureProtocolMethods": [
+    "initialize",
+    "initialized",
+    "account/read",
+    "account/updated",
+    "account/rateLimits/read",
+    "account/rateLimits/updated",
+    "account/usage/read",
+    "account/login/start",
+    "account/login/completed",
+    "account/login/cancel"
+  ],
+  "source": "Official locally installed Codex CLI generated JSON schemas",
+  "syntheticDataOnly": true
+}

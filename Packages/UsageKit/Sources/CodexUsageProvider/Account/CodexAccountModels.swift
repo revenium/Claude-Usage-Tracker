@@ -73,6 +73,16 @@ public enum CodexLoginCancellationOutcome: Equatable, Sendable {
     case notFound
 }
 
+/// Result of checking authentication before starting an interactive login.
+///
+/// A linked Codex home can already hold a supported ChatGPT session. In that
+/// case callers receive the account without opening an unnecessary login
+/// session or changing credentials.
+public enum CodexLoginStartResult: Sendable {
+    case alreadyAuthenticated(ProviderAccount)
+    case started(CodexLoginAttempt)
+}
+
 struct CodexAccountReadResponse: Decodable, Sendable {
     struct Account: Decodable, Sendable {
         var type: String
@@ -196,6 +206,10 @@ struct CodexAccountTokenUsageResponse: Decodable, Sendable {
 
     var summary: Summary?
     var dailyUsageBuckets: [DailyBucket]?
+
+    var containsRecognizedUsageSurface: Bool {
+        summary != nil || dailyUsageBuckets != nil
+    }
 }
 
 struct CodexLoginStartResponse: Decodable, Sendable {

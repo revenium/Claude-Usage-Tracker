@@ -1,10 +1,39 @@
+import Darwin
 import Foundation
+
+public struct CodexHomeIdentity: Equatable, Sendable {
+    public let deviceID: UInt64
+    public let fileID: UInt64
+
+    public init(deviceID: UInt64, fileID: UInt64) {
+        self.deviceID = deviceID
+        self.fileID = fileID
+    }
+
+    fileprivate static func read(
+        from url: URL,
+        fileManager: FileManager = .default
+    ) -> Self? {
+        guard let attributes = try? fileManager.attributesOfItem(
+            atPath: url.path
+        ),
+        let device = attributes[.systemNumber] as? NSNumber,
+        let file = attributes[.systemFileNumber] as? NSNumber else {
+            return nil
+        }
+        return Self(
+            deviceID: device.uint64Value,
+            fileID: file.uint64Value
+        )
+    }
+}
 
 public struct CodexProcessConfiguration: Sendable {
     let executableURL: URL
     let arguments: [String]
     let environment: [String: String]
     let codexHomeURL: URL
+    fileprivate let codexHomeIdentity: CodexHomeIdentity
     let workingDirectoryURL: URL
 
     public init(
@@ -12,6 +41,7 @@ public struct CodexProcessConfiguration: Sendable {
         arguments: [String] = ["app-server"],
         environment: [String: String] = [:],
         codexHomeURL: URL,
+        expectedCodexHomeIdentity: CodexHomeIdentity? = nil,
         workingDirectoryURL: URL? = nil
     ) throws {
         let fileManager = FileManager.default
@@ -32,9 +62,23 @@ public struct CodexProcessConfiguration: Sendable {
         guard codexHome.isFileURL,
               codexHome.path.hasPrefix("/"),
               fileManager.fileExists(atPath: codexHome.path, isDirectory: &isDirectory),
-              isDirectory.boolValue
+              isDirectory.boolValue,
+              let observedCodexHomeIdentity = CodexHomeIdentity.read(
+                  from: codexHome,
+                  fileManager: fileManager
+              )
         else {
             throw CodexTransportError.invalidConfiguration(.codexHome)
+        }
+
+        let codexHomeIdentity: CodexHomeIdentity
+        if let expectedCodexHomeIdentity {
+            guard expectedCodexHomeIdentity == observedCodexHomeIdentity else {
+                throw CodexTransportError.invalidConfiguration(.codexHome)
+            }
+            codexHomeIdentity = expectedCodexHomeIdentity
+        } else {
+            codexHomeIdentity = observedCodexHomeIdentity
         }
 
         isDirectory = false
@@ -62,6 +106,7 @@ public struct CodexProcessConfiguration: Sendable {
         self.arguments = arguments
         self.environment = environment
         self.codexHomeURL = codexHome
+        self.codexHomeIdentity = codexHomeIdentity
         self.workingDirectoryURL = workingDirectory
     }
 }
@@ -418,6 +463,51 @@ private final class BoundedByteSink: @unchecked Sendable {
     }
 }
 
+struct CodexOwnedProcessIdentity: Hashable, Sendable {
+    let identifier: Int32
+    let startSeconds: UInt64
+    let startMicroseconds: UInt64
+}
+
+struct CodexProcessObservation: Equatable, Sendable {
+    let identity: CodexOwnedProcessIdentity
+    let parentIdentifier: Int32
+    let isZombie: Bool
+}
+
+enum CodexOwnedProcessPolicy {
+    static func isLiveRootProcess(
+        _ observation: CodexProcessObservation?,
+        parentIdentifier: Int32
+    ) -> Bool {
+        guard let observation else { return false }
+        return observation.parentIdentifier == parentIdentifier
+            && !observation.isZombie
+    }
+
+    static func isLiveMatch(
+        _ expected: CodexOwnedProcessIdentity,
+        observation: CodexProcessObservation?
+    ) -> Bool {
+        guard let observation else { return false }
+        return observation.identity == expected && !observation.isZombie
+    }
+
+    static func isLiveDirectChild(
+        _ observation: CodexProcessObservation?,
+        of parent: CodexOwnedProcessIdentity,
+        parentObservation: CodexProcessObservation?
+    ) -> Bool {
+        guard let observation else { return false }
+        return isLiveMatch(
+            parent,
+            observation: parentObservation
+        )
+            && observation.parentIdentifier == parent.identifier
+            && !observation.isZombie
+    }
+}
+
 final class BoundedProcess: @unchecked Sendable {
     private let configuration: CodexProcessConfiguration
     private let limits: CodexTransportLimits
@@ -425,6 +515,10 @@ final class BoundedProcess: @unchecked Sendable {
     private let stdinPipe = Pipe()
     private let stdoutPipe = Pipe()
     private let stderrPipe = Pipe()
+    private let writeQueue = DispatchQueue(
+        label: "CodexUsageProvider.BoundedProcess.stdin",
+        qos: .utility
+    )
     private let lineBuffer: BoundedLineBuffer
     private let stateLock = NSLock()
     private var started = false
@@ -434,6 +528,9 @@ final class BoundedProcess: @unchecked Sendable {
     ] = [:]
     private var terminationStatus: Int32?
     private var launchedProcessIdentifier: Int32?
+    private var launchedProcessIdentity: CodexOwnedProcessIdentity?
+    private var ownedDescendantIdentities =
+        Set<CodexOwnedProcessIdentity>()
     private lazy var stderrSink = BoundedByteSink(
         maximumBytes: limits.maximumStderrBytes
     ) { [lineBuffer] in
@@ -491,6 +588,15 @@ final class BoundedProcess: @unchecked Sendable {
         }
 
         do {
+            guard !withUnsafeCurrentTask(body: {
+                $0?.isCancelled ?? false
+            }) else {
+                throw CodexTransportError.cancelled(
+                    method: nil,
+                    id: nil
+                )
+            }
+            try validateCodexHomeAtLaunch()
             try process.run()
             let identifier = process.processIdentifier
             guard identifier > 0 else {
@@ -498,9 +604,38 @@ final class BoundedProcess: @unchecked Sendable {
                 process.waitUntilExit()
                 throw CodexTransportError.launchFailed
             }
+            let processObservation = Self.processObservation(
+                for: identifier
+            )
+            let processIdentity =
+                CodexOwnedProcessPolicy.isLiveRootProcess(
+                    processObservation,
+                    parentIdentifier: getpid()
+                )
+                ? processObservation?.identity
+                : nil
+            if processIdentity == nil, process.isRunning {
+                // Never retain a live child whose birth identity could not be
+                // established and verified as our direct child. The direct
+                // child cannot reuse its PID before it is reaped, so this
+                // launch-failure cleanup remains scoped to the Process
+                // instance we just started.
+                _ = kill(identifier, SIGKILL)
+                process.waitUntilExit()
+                throw CodexTransportError.launchFailed
+            }
             stateLock.lock()
             launchedProcessIdentifier = identifier
+            launchedProcessIdentity = processIdentity
             stateLock.unlock()
+        } catch let error as CodexTransportError {
+            stateLock.lock()
+            started = false
+            stateLock.unlock()
+            stdoutPipe.fileHandleForReading.readabilityHandler = nil
+            stderrPipe.fileHandleForReading.readabilityHandler = nil
+            lineBuffer.fail(.eof)
+            throw error
         } catch {
             stateLock.lock()
             started = false
@@ -512,13 +647,34 @@ final class BoundedProcess: @unchecked Sendable {
         }
     }
 
+    private func validateCodexHomeAtLaunch() throws {
+        let fileManager = FileManager.default
+        let storedHome = configuration.codexHomeURL.standardizedFileURL
+        let resolvedHome = storedHome
+            .resolvingSymlinksInPath()
+            .standardizedFileURL
+        var isDirectory: ObjCBool = false
+        guard storedHome == resolvedHome,
+              fileManager.fileExists(
+                atPath: storedHome.path,
+                isDirectory: &isDirectory
+              ),
+              isDirectory.boolValue,
+              CodexHomeIdentity.read(
+                  from: storedHome,
+                  fileManager: fileManager
+              ) == configuration.codexHomeIdentity else {
+            throw CodexTransportError.invalidConfiguration(.codexHome)
+        }
+    }
+
     func send(_ data: Data, method: CodexMethod?) async throws {
         guard isWritable() else {
             throw CodexTransportError.writeFailed(method: method)
         }
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
-                DispatchQueue.global(qos: .utility).async {
+                writeQueue.async {
                     do {
                         try self.stdinPipe.fileHandleForWriting.write(
                             contentsOf: data
@@ -555,18 +711,23 @@ final class BoundedProcess: @unchecked Sendable {
         guard let wasStarted = markClosed() else { return }
 
         try? stdinPipe.fileHandleForWriting.close()
-        if wasStarted, process.isRunning {
-            process.terminate()
-        }
         if wasStarted {
-            let status = await waitForTermination(
+            signalOwnedProcessTree(SIGTERM)
+            var status = await waitForTermination(
                 timeout: limits.terminationGracePeriod
             )
-            if status == nil {
-                forceKillOwnedProcess()
-                guard await waitForTermination(
+            var descendantsExited = await waitForOwnedDescendantsExit(
+                timeout: limits.terminationGracePeriod
+            )
+            if status == nil || !descendantsExited {
+                signalOwnedProcessTree(SIGKILL)
+                status = await waitForTermination(
                     timeout: max(limits.terminationGracePeriod, 1)
-                ) != nil else {
+                )
+                descendantsExited = await waitForOwnedDescendantsExit(
+                    timeout: max(limits.terminationGracePeriod, 1)
+                )
+                guard status != nil, descendantsExited else {
                     throw CodexTransportError.timedOut(
                         stage: .termination,
                         method: nil,
@@ -603,7 +764,7 @@ final class BoundedProcess: @unchecked Sendable {
 
     private func abortBlockedIO() {
         try? stdinPipe.fileHandleForWriting.close()
-        forceKillOwnedProcess()
+        signalOwnedProcessTree(SIGKILL)
     }
 
     private func waitForTermination(timeout: TimeInterval?) async -> Int32? {
@@ -645,27 +806,194 @@ final class BoundedProcess: @unchecked Sendable {
         waiter?.resume(returning: nil)
     }
 
-    private func forceKillOwnedProcess() {
-        let identifier: Int32?
-        let hasTerminated: Bool
+    private func signalOwnedProcessTree(_ signal: Int32) {
+        let rootIdentity: CodexOwnedProcessIdentity?
+        let previouslyObservedDescendants:
+            Set<CodexOwnedProcessIdentity>
         stateLock.lock()
-        identifier = launchedProcessIdentifier
-        hasTerminated = terminationStatus != nil
+        rootIdentity = launchedProcessIdentity
+        previouslyObservedDescendants = ownedDescendantIdentities
         stateLock.unlock()
 
-        guard !hasTerminated,
-              process.isRunning,
-              let identifier,
-              identifier > 0
-        else {
-            return
+        guard let rootIdentity else { return }
+        // Census from every retained live process as well as the direct
+        // child. A TERM-handling descendant can remain alive after the root
+        // exits or is reparented and can spawn another child before KILL
+        // escalation; a root-only second census would no longer reach it.
+        var censusRoots = previouslyObservedDescendants
+        censusRoots.insert(rootIdentity)
+        var observedDescendants =
+            Set<CodexOwnedProcessIdentity>()
+        for identity in censusRoots {
+            observedDescendants.formUnion(
+                Self.descendants(of: identity)
+            )
         }
-        _ = kill(identifier, SIGKILL)
+        stateLock.lock()
+        ownedDescendantIdentities.formUnion(observedDescendants)
+        let descendants = Array(ownedDescendantIdentities)
+        let rootHasTerminated = terminationStatus != nil
+        stateLock.unlock()
+
+        // Descendants are signaled before the direct child so they cannot
+        // escape enumeration by becoming reparented during teardown.
+        for identity in descendants where Self.isLive(identity) {
+            _ = kill(identity.identifier, signal)
+        }
+        if !rootHasTerminated, Self.isLive(rootIdentity) {
+            _ = kill(rootIdentity.identifier, signal)
+        }
+    }
+
+    private func waitForOwnedDescendantsExit(
+        timeout: TimeInterval
+    ) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while true {
+            if pruneExitedDescendants() {
+                return true
+            }
+            guard Date() < deadline else {
+                return false
+            }
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+    }
+
+    private func pruneExitedDescendants() -> Bool {
+        stateLock.lock()
+        ownedDescendantIdentities = ownedDescendantIdentities.filter(
+            Self.isLive
+        )
+        let isEmpty = ownedDescendantIdentities.isEmpty
+        stateLock.unlock()
+        return isEmpty
+    }
+
+    private static func descendants(
+        of root: CodexOwnedProcessIdentity
+    ) -> [CodexOwnedProcessIdentity] {
+        var visited = Set<CodexOwnedProcessIdentity>()
+        return descendants(of: root, visited: &visited)
+    }
+
+    private static func descendants(
+        of parent: CodexOwnedProcessIdentity,
+        visited: inout Set<CodexOwnedProcessIdentity>
+    ) -> [CodexOwnedProcessIdentity] {
+        guard CodexOwnedProcessPolicy.isLiveMatch(
+            parent,
+            observation: processObservation(for: parent.identifier)
+        ),
+        visited.insert(parent).inserted else {
+            return []
+        }
+        let directChildren = childProcessIdentifiers(
+            of: parent.identifier
+        )
+        var result: [CodexOwnedProcessIdentity] = []
+        for childIdentifier in directChildren
+            where childIdentifier > 0
+        {
+            let observation = processObservation(
+                for: childIdentifier
+            )
+            guard CodexOwnedProcessPolicy.isLiveDirectChild(
+                observation,
+                of: parent,
+                parentObservation: processObservation(
+                    for: parent.identifier
+                )
+            ),
+            let child = observation?.identity else {
+                continue
+            }
+            result.append(
+                contentsOf: descendants(
+                    of: child,
+                    visited: &visited
+                )
+            )
+            result.append(child)
+        }
+        return result
+    }
+
+    private static func isLive(
+        _ identity: CodexOwnedProcessIdentity
+    ) -> Bool {
+        CodexOwnedProcessPolicy.isLiveMatch(
+            identity,
+            observation: processObservation(
+                for: identity.identifier
+            )
+        )
+    }
+
+    private static func processObservation(
+        for identifier: Int32
+    ) -> CodexProcessObservation? {
+        guard identifier > 0 else { return nil }
+        var info = proc_bsdinfo()
+        let expectedSize = MemoryLayout<proc_bsdinfo>.size
+        let returnedSize = withUnsafeMutablePointer(to: &info) {
+            proc_pidinfo(
+                identifier,
+                PROC_PIDTBSDINFO,
+                0,
+                $0,
+                Int32(expectedSize)
+            )
+        }
+        guard returnedSize == expectedSize,
+              info.pbi_pid <= UInt32(Int32.max),
+              info.pbi_ppid <= UInt32(Int32.max),
+              Int32(info.pbi_pid) == identifier else {
+            return nil
+        }
+        return CodexProcessObservation(
+            identity: CodexOwnedProcessIdentity(
+                identifier: identifier,
+                startSeconds: info.pbi_start_tvsec,
+                startMicroseconds: info.pbi_start_tvusec
+            ),
+            parentIdentifier: Int32(info.pbi_ppid),
+            isZombie: info.pbi_status == UInt32(SZOMB)
+        )
+    }
+
+    private static func childProcessIdentifiers(
+        of parent: Int32
+    ) -> [Int32] {
+        let maximumCapacity = 4_096
+        var capacity = 16
+        while capacity <= maximumCapacity {
+            var identifiers = [Int32](repeating: 0, count: capacity)
+            let returnedCount = identifiers.withUnsafeMutableBytes { buffer in
+                proc_listchildpids(
+                    parent,
+                    buffer.baseAddress,
+                    Int32(buffer.count)
+                )
+            }
+            guard returnedCount >= 0 else { return [] }
+            let count = Int(returnedCount)
+            if count < capacity {
+                return Array(identifiers.prefix(count)).filter { $0 > 0 }
+            }
+            if capacity == maximumCapacity {
+                // The census may be truncated, but signaling every known
+                // direct child is safer than discarding the populated buffer.
+                return identifiers.filter { $0 > 0 }
+            }
+            capacity *= 2
+        }
+        return []
     }
 
     deinit {
         try? stdinPipe.fileHandleForWriting.close()
-        forceKillOwnedProcess()
+        signalOwnedProcessTree(SIGKILL)
         let needsReapingBarrier: Bool
         stateLock.lock()
         needsReapingBarrier =

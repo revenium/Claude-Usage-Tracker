@@ -1006,3 +1006,6 @@
 "notifications.sound.default" = "기본값";
 "notifications.sound.none" = "없음";
 "notifications.sound.preview" = "소리 미리듣기";
+
+"error.storage_write_failed" = "사용량 데이터를 저장할 수 없음";
+"error.storage_write_failed.suggestion" = "다시 시도하세요. 문제가 계속되면 앱에 데이터 폴더 쓰기 권한이 있는지 확인하세요.";

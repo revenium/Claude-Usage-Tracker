@@ -237,6 +237,133 @@ final class ProfileProviderCoreTests: HostedAppTestCase {
     }
 
     @MainActor
+    func testCanonicalizerAndProfileStoreAcceptDistinctPhysicalHomes()
+        throws
+    {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let firstURL = root.appendingPathComponent(
+            "first-home",
+            isDirectory: true
+        )
+        let secondURL = root.appendingPathComponent(
+            "second-home",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: firstURL,
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: secondURL,
+            withIntermediateDirectories: true
+        )
+        let canonicalizer = CodexHomeCanonicalizer()
+        let firstHome = try canonicalizer.canonicalize(firstURL.path)
+        let firstProfile = Profile(
+            name: "First",
+            providerConfiguration: .codex(.init(linkedHome: firstHome))
+        )
+        let secondHome = try canonicalizer.canonicalize(
+            secondURL.path,
+            existingProfiles: [firstProfile]
+        )
+        let secondProfile = Profile(
+            name: "Second",
+            providerConfiguration: .codex(.init(linkedHome: secondHome))
+        )
+        let store = retain(ProfileStore(
+            defaults: ProviderTestDefaults(),
+            secretStore: ProviderSecretStore(),
+            usageFileStore: ProviderUsageStore()
+        ))
+
+        try seedProfilesForTesting(
+            [firstProfile, secondProfile],
+            in: store
+        )
+
+        XCTAssertNotEqual(firstHome, secondHome)
+        XCTAssertNotEqual(
+            firstHome.filesystemIdentity,
+            secondHome.filesystemIdentity
+        )
+        XCTAssertEqual(
+            store.loadProfiles().map(\.id),
+            [firstProfile.id, secondProfile.id]
+        )
+    }
+
+    @MainActor
+    func testCanonicalizerFollowsActualVolumeCaseIdentity() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let mixedCaseURL = root.appendingPathComponent(
+            "CodexHome",
+            isDirectory: true
+        )
+        let alternateCaseURL = root.appendingPathComponent(
+            "codexhome",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: mixedCaseURL,
+            withIntermediateDirectories: true
+        )
+        let canonicalizer = CodexHomeCanonicalizer()
+        let mixedCaseHome = try canonicalizer.canonicalize(
+            mixedCaseURL.path
+        )
+        let owner = Profile(
+            name: "Owner",
+            providerConfiguration: .codex(
+                .init(linkedHome: mixedCaseHome)
+            )
+        )
+
+        var alternateIsDirectory: ObjCBool = false
+        let alternateAlreadyExists = FileManager.default.fileExists(
+            atPath: alternateCaseURL.path,
+            isDirectory: &alternateIsDirectory
+        )
+        if alternateAlreadyExists {
+            XCTAssertTrue(alternateIsDirectory.boolValue)
+            let alternateIdentity = try XCTUnwrap(
+                CodexHomeFilesystemIdentity.read(from: alternateCaseURL)
+            )
+            XCTAssertEqual(
+                alternateIdentity,
+                mixedCaseHome.filesystemIdentity
+            )
+            XCTAssertThrowsError(
+                try canonicalizer.canonicalize(
+                    alternateCaseURL.path,
+                    existingProfiles: [owner]
+                )
+            ) { error in
+                XCTAssertEqual(
+                    error as? ProfileProviderConfigurationError,
+                    .duplicateCodexHome(owner.id)
+                )
+            }
+        } else {
+            try FileManager.default.createDirectory(
+                at: alternateCaseURL,
+                withIntermediateDirectories: true
+            )
+            let alternateHome = try canonicalizer.canonicalize(
+                alternateCaseURL.path,
+                existingProfiles: [owner]
+            )
+            XCTAssertNotEqual(
+                alternateHome.filesystemIdentity,
+                mixedCaseHome.filesystemIdentity
+            )
+            XCTAssertNotEqual(alternateHome, mixedCaseHome)
+        }
+    }
+
+    @MainActor
     func testProviderIdentityHomeAndRevisionCannotChangeInOrdinarySave() throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -455,6 +582,346 @@ final class ProfileProviderCoreTests: HostedAppTestCase {
             defaults.data(forKey: "profiles_v3"),
             duplicateHomeData
         )
+    }
+
+    @MainActor
+    func testGoldenLegacyMigrationPreservesDataAndSafeDiagnostics()
+        throws
+    {
+        let suite = "ProfileProviderCoreTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        let root = try makeTemporaryDirectory()
+        defer {
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: root)
+        }
+        let profileFixture = try fixtureData(
+            named: "legacy-profiles-v3-golden.json"
+        )
+        let historyFixture = try fixtureData(
+            named: "legacy-profile-history-golden.json"
+        )
+        let legacyProfiles = try JSONDecoder().decode(
+            [Profile].self,
+            from: profileFixture
+        )
+        let historiesByID = try JSONDecoder().decode(
+            [String: UsageHistoryData].self,
+            from: historyFixture
+        )
+        let primaryID = try XCTUnwrap(
+            UUID(
+                uuidString:
+                    "11111111-1111-4111-8111-111111111111"
+            )
+        )
+        let secondaryID = try XCTUnwrap(
+            UUID(
+                uuidString:
+                    "22222222-2222-4222-8222-222222222222"
+            )
+        )
+        let profileIDs = [primaryID, secondaryID]
+        let sensitiveValues = [
+            "golden-claude-secret-primary",
+            "golden-api-secret-primary",
+            "golden-cli-secret-primary",
+            "golden-claude-secret-secondary",
+            "golden-api-secret-secondary"
+        ]
+        let displayConfiguration = MultiProfileDisplayConfig(
+            iconStyle: .percentage,
+            showWeek: false,
+            showProfileLabel: true,
+            useSystemColor: true,
+            showTimeMarker: false,
+            showPaceMarker: false,
+            usePaceColoring: false,
+            showRemainingPercentage: true
+        )
+        defaults.set(profileFixture, forKey: "profiles_v3")
+        defaults.set(
+            primaryID.uuidString,
+            forKey: "activeProfileId"
+        )
+        defaults.set(
+            ProfileDisplayMode.multi.rawValue,
+            forKey: "profileDisplayMode"
+        )
+        defaults.set(
+            try JSONEncoder().encode(displayConfiguration),
+            forKey: "multiProfileDisplayConfig"
+        )
+        for profileID in profileIDs {
+            let history = try XCTUnwrap(
+                historiesByID[profileID.uuidString]
+            )
+            defaults.set(
+                try JSONEncoder().encode(history),
+                forKey: "usageHistory_\(profileID.uuidString)"
+            )
+        }
+
+        XCTAssertEqual(legacyProfiles.map(\.id), profileIDs)
+        XCTAssertEqual(
+            legacyProfiles.map(\.name),
+            ["Legacy Primary", "Legacy Secondary"]
+        )
+        XCTAssertTrue(
+            legacyProfiles.allSatisfy {
+                $0.providerConfiguration == .claude
+                    && $0.providerRevision == 0
+            }
+        )
+        XCTAssertEqual(
+            legacyProfiles.map(\.isSelectedForDisplay),
+            [true, false]
+        )
+        XCTAssertEqual(
+            legacyProfiles.map(\.createdAt),
+            [
+                Date(timeIntervalSinceReferenceDate: 1000),
+                Date(timeIntervalSinceReferenceDate: 3000)
+            ]
+        )
+        XCTAssertEqual(
+            legacyProfiles.map(\.lastUsedAt),
+            [
+                Date(timeIntervalSinceReferenceDate: 2000),
+                Date(timeIntervalSinceReferenceDate: 4000)
+            ]
+        )
+
+        let secrets = ProviderSecretStore()
+        let usageStore = ProfileUsageFileStore(
+            baseURL: root,
+            now: {
+                Date(timeIntervalSinceReferenceDate: 9000)
+            }
+        )
+        let store = retain(ProfileStore(
+            defaults: defaults,
+            secretStore: secrets,
+            usageFileStore: usageStore
+        ))
+        let firstLoad = try store.loadProfilesWithVerifiedMigration()
+        var expectedRuntimeProfiles = legacyProfiles
+        for index in expectedRuntimeProfiles.indices {
+            expectedRuntimeProfiles[index].credentialMigrationRetry =
+                .init()
+            expectedRuntimeProfiles[index].currentUsageMigrationRetry =
+                nil
+        }
+
+        XCTAssertEqual(firstLoad, expectedRuntimeProfiles)
+        XCTAssertEqual(firstLoad[0].refreshInterval, 47)
+        XCTAssertTrue(firstLoad[0].autoStartSessionEnabled)
+        XCTAssertFalse(firstLoad[0].checkOverageLimitEnabled)
+        XCTAssertEqual(
+            firstLoad[0].notificationSettings.customThresholds,
+            [82]
+        )
+        XCTAssertEqual(firstLoad[1].refreshInterval, 93)
+        XCTAssertFalse(firstLoad[1].notificationSettings.enabled)
+        XCTAssertEqual(store.loadActiveProfileId(), primaryID)
+        XCTAssertEqual(store.loadDisplayMode(), .multi)
+        XCTAssertEqual(
+            store.loadMultiProfileConfig(),
+            displayConfiguration
+        )
+
+        for profile in legacyProfiles {
+            let expectedUsage = try XCTUnwrap(
+                profile.currentUsageMigrationRetry
+            )
+            XCTAssertEqual(
+                try usageStore.loadCurrentUsage(for: profile.id),
+                expectedUsage
+            )
+            for field in ProfileSecretField.allCases {
+                let expected = profile.credentialMigrationRetry.value(
+                    for: field
+                )
+                XCTAssertEqual(
+                    secrets.values[
+                        ProfileSecretLocator(
+                            profileID: profile.id,
+                            field: field
+                        )
+                    ],
+                    expected
+                )
+            }
+        }
+
+        let historyService = retain(UsageHistoryService(
+            defaults: defaults,
+            fileStore: usageStore,
+            now: {
+                Date(timeIntervalSinceReferenceDate: 9000)
+            }
+        ))
+        for profileID in profileIDs {
+            let expectedHistory = try XCTUnwrap(
+                historiesByID[profileID.uuidString]
+            )
+            XCTAssertEqual(
+                historyService.loadHistory(for: profileID),
+                expectedHistory
+            )
+            XCTAssertEqual(
+                try usageStore.load(
+                    UsageHistoryData.self,
+                    for: profileID,
+                    providerID: "claude",
+                    kind: .history
+                ),
+                expectedHistory
+            )
+            XCTAssertNil(
+                defaults.data(
+                    forKey: "usageHistory_\(profileID.uuidString)"
+                )
+            )
+        }
+
+        let migratedProfileData = try XCTUnwrap(
+            defaults.data(forKey: "profiles_v3")
+        )
+        let migratedProfileText = try XCTUnwrap(
+            String(data: migratedProfileData, encoding: .utf8)
+        )
+        let currentFileData = try Dictionary(
+            uniqueKeysWithValues: profileIDs.map {
+                (
+                    $0,
+                    try Data(
+                        contentsOf: usageStore.fileURL(
+                            for: $0,
+                            kind: .currentUsage
+                        )
+                    )
+                )
+            }
+        )
+        let historyFileData = try Dictionary(
+            uniqueKeysWithValues: profileIDs.map {
+                (
+                    $0,
+                    try Data(
+                        contentsOf: usageStore.fileURL(
+                            for: $0,
+                            kind: .history
+                        )
+                    )
+                )
+            }
+        )
+        for profileID in profileIDs {
+            let currentEnvelope = try JSONDecoder().decode(
+                ProfileUsageFileEnvelope<ProfileCurrentUsage>.self,
+                from: try XCTUnwrap(currentFileData[profileID])
+            )
+            let historyEnvelope = try JSONDecoder().decode(
+                ProfileUsageFileEnvelope<UsageHistoryData>.self,
+                from: try XCTUnwrap(historyFileData[profileID])
+            )
+            XCTAssertEqual(currentEnvelope.profileID, profileID)
+            XCTAssertEqual(currentEnvelope.providerID, "claude")
+            XCTAssertEqual(
+                currentEnvelope.recordKind,
+                .currentUsage
+            )
+            XCTAssertEqual(historyEnvelope.profileID, profileID)
+            XCTAssertEqual(historyEnvelope.providerID, "claude")
+            XCTAssertEqual(historyEnvelope.recordKind, .history)
+        }
+        let firstMigrationWriteCount = secrets.writeCount
+        let diagnosticAudit = secrets.auditEntries.joined(
+            separator: "\n"
+        )
+        XCTAssertTrue(migratedProfileText.contains("\"provider\""))
+        XCTAssertFalse(
+            migratedProfileText.contains("credentialMigrationRetry")
+        )
+        XCTAssertFalse(
+            migratedProfileText.contains("currentUsageMigrationRetry")
+        )
+        for value in sensitiveValues {
+            XCTAssertFalse(migratedProfileText.contains(value))
+            XCTAssertFalse(diagnosticAudit.contains(value))
+            XCTAssertTrue(
+                currentFileData.values.allSatisfy {
+                    !String(decoding: $0, as: UTF8.self)
+                        .contains(value)
+                }
+            )
+            XCTAssertTrue(
+                historyFileData.values.allSatisfy {
+                    !String(decoding: $0, as: UTF8.self)
+                        .contains(value)
+                }
+            )
+        }
+        XCTAssertEqual(firstMigrationWriteCount, 5)
+        XCTAssertTrue(
+            secrets.auditEntries.allSatisfy {
+                $0.contains("profile ")
+                    && $0.contains("field ")
+            }
+        )
+        for profile in legacyProfiles {
+            XCTAssertFalse(diagnosticAudit.contains(profile.name))
+        }
+
+        let secondLoad = try store.loadProfilesWithVerifiedMigration()
+        _ = retain(UsageHistoryService(
+            defaults: defaults,
+            fileStore: usageStore,
+            now: {
+                Date(timeIntervalSinceReferenceDate: 9100)
+            }
+        ))
+
+        XCTAssertEqual(secondLoad, firstLoad)
+        XCTAssertEqual(secrets.writeCount, firstMigrationWriteCount)
+        for value in sensitiveValues {
+            XCTAssertFalse(
+                secrets.auditEntries.joined(separator: "\n")
+                    .contains(value)
+            )
+        }
+        XCTAssertEqual(
+            defaults.data(forKey: "profiles_v3"),
+            migratedProfileData
+        )
+        for profileID in profileIDs {
+            let expectedCurrentFileData = try XCTUnwrap(
+                currentFileData[profileID]
+            )
+            let expectedHistoryFileData = try XCTUnwrap(
+                historyFileData[profileID]
+            )
+            XCTAssertEqual(
+                try Data(
+                    contentsOf: usageStore.fileURL(
+                        for: profileID,
+                        kind: .currentUsage
+                    )
+                ),
+                expectedCurrentFileData
+            )
+            XCTAssertEqual(
+                try Data(
+                    contentsOf: usageStore.fileURL(
+                        for: profileID,
+                        kind: .history
+                    )
+                ),
+                expectedHistoryFileData
+            )
+        }
     }
 
     @MainActor
@@ -689,14 +1156,38 @@ final class ProfileProviderCoreTests: HostedAppTestCase {
             probeCount += 1
             return true
         })
-        XCTAssertTrue(SetupWizardDecision.shouldShow(
+        XCTAssertFalse(SetupWizardDecision.shouldShow(
             hasShownWizardOnce: true,
             activeProfile: unlinked
         ) {
             probeCount += 1
             return true
         })
+        XCTAssertFalse(SetupWizardDecision.shouldShow(
+            hasShownWizardOnce: false,
+            activeProfile: linked
+        ) {
+            probeCount += 1
+            return true
+        })
+        XCTAssertFalse(SetupWizardDecision.shouldShow(
+            hasShownWizardOnce: false,
+            activeProfile: unlinked
+        ) {
+            probeCount += 1
+            return true
+        })
         XCTAssertEqual(probeCount, 0)
+        XCTAssertFalse(
+            SetupWizardDecision.canPresentLegacyWizard(
+                activeProfile: linked
+            )
+        )
+        XCTAssertFalse(
+            SetupWizardDecision.canPresentLegacyWizard(
+                activeProfile: unlinked
+            )
+        )
     }
 
     @MainActor
@@ -861,6 +1352,132 @@ final class ProfileProviderCoreTests: HostedAppTestCase {
         XCTAssertEqual(repeatedUnlink.providerRevision, 2)
         XCTAssertEqual(usage.values[profile.id], unlinkedSentinel)
         XCTAssertEqual(eventCount, 2)
+    }
+
+    @MainActor
+    func testExactPathRelinkUpgradesLegacyUnresolvedHome() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let homeURL = root.appendingPathComponent(
+            "legacy-home",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: homeURL,
+            withIntermediateDirectories: true
+        )
+        let legacyHome = try JSONDecoder().decode(
+            CanonicalCodexHome.self,
+            from: JSONSerialization.data(
+                withJSONObject: ["path": homeURL.path]
+            )
+        )
+        XCTAssertNil(legacyHome.filesystemIdentity)
+
+        let store = retain(ProfileStore(
+            defaults: ProviderTestDefaults(),
+            secretStore: ProviderSecretStore(),
+            usageFileStore: ProviderUsageStore()
+        ))
+        let profile = Profile(
+            name: "Legacy Codex",
+            providerConfiguration: .codex(
+                .init(linkedHome: legacyHome)
+            )
+        )
+        try seedProfilesForTesting([profile], in: store)
+        let manager = retain(ProfileManager(
+            profileStore: store,
+            activationClaudeEffects: .noOp
+        ))
+        manager.loadProfiles()
+
+        let relinked = try manager.linkCodexHome(
+            homeURL.path,
+            for: profile.id
+        )
+
+        XCTAssertEqual(relinked.providerRevision, 1)
+        XCTAssertEqual(
+            relinked.providerConfiguration.codexConfiguration?
+                .linkedHome?.path,
+            homeURL.path
+        )
+        XCTAssertNotNil(
+            relinked.providerConfiguration.codexConfiguration?
+                .linkedHome?.filesystemIdentity
+        )
+    }
+
+    @MainActor
+    func testExactPathRelinkCapturesReplacementDirectoryIdentity() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let homeURL = root.appendingPathComponent(
+            "codex-home",
+            isDirectory: true
+        )
+        let replacementURL = root.appendingPathComponent(
+            "replacement",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: homeURL,
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: replacementURL,
+            withIntermediateDirectories: true
+        )
+        let originalHome = try CodexHomeCanonicalizer()
+            .canonicalize(homeURL.path)
+        let replacementIdentity = try XCTUnwrap(
+            CodexHomeFilesystemIdentity.read(from: replacementURL)
+        )
+        XCTAssertNotEqual(
+            originalHome.filesystemIdentity,
+            replacementIdentity
+        )
+
+        let store = retain(ProfileStore(
+            defaults: ProviderTestDefaults(),
+            secretStore: ProviderSecretStore(),
+            usageFileStore: ProviderUsageStore()
+        ))
+        let profile = Profile(
+            name: "Replaced Codex",
+            providerConfiguration: .codex(
+                .init(linkedHome: originalHome)
+            )
+        )
+        try seedProfilesForTesting([profile], in: store)
+        let manager = retain(ProfileManager(
+            profileStore: store,
+            activationClaudeEffects: .noOp
+        ))
+        manager.loadProfiles()
+
+        try FileManager.default.removeItem(at: homeURL)
+        try FileManager.default.moveItem(
+            at: replacementURL,
+            to: homeURL
+        )
+        let relinked = try manager.linkCodexHome(
+            homeURL.path,
+            for: profile.id
+        )
+
+        XCTAssertEqual(relinked.providerRevision, 1)
+        XCTAssertEqual(
+            relinked.providerConfiguration.codexConfiguration?
+                .linkedHome?.filesystemIdentity,
+            replacementIdentity
+        )
+        XCTAssertNotEqual(
+            relinked.providerConfiguration.codexConfiguration?
+                .linkedHome?.filesystemIdentity,
+            originalHome.filesystemIdentity
+        )
     }
 
     @MainActor
@@ -2161,6 +2778,15 @@ final class ProfileProviderCoreTests: HostedAppTestCase {
         return url
     }
 
+    private func fixtureData(named name: String) throws -> Data {
+        let fixturesURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .appendingPathComponent("Fixtures", isDirectory: true)
+        return try Data(
+            contentsOf: fixturesURL.appendingPathComponent(name)
+        )
+    }
+
     private func makeProviderReport(
         providerID: ProviderID,
         marker: TimeInterval
@@ -2205,17 +2831,20 @@ private final class ProviderSecretStore: ProfileSecretStore {
     private(set) var readCount = 0
     private(set) var writeCount = 0
     private(set) var deleteCount = 0
+    private(set) var auditEntries: [String] = []
 
     var operationCount: Int { readCount + writeCount + deleteCount }
 
     func read(_ locator: ProfileSecretLocator) throws
         -> ProfileSecretReadResult {
         readCount += 1
+        auditEntries.append("read \(locator.safeDescription)")
         return values[locator].map(ProfileSecretReadResult.value) ?? .absent
     }
 
     func write(_ value: String, to locator: ProfileSecretLocator) throws {
         writeCount += 1
+        auditEntries.append("write \(locator.safeDescription)")
         if let writeError {
             throw writeError
         }
@@ -2224,6 +2853,7 @@ private final class ProviderSecretStore: ProfileSecretStore {
 
     func delete(_ locator: ProfileSecretLocator) throws {
         deleteCount += 1
+        auditEntries.append("delete \(locator.safeDescription)")
         values.removeValue(forKey: locator)
     }
 
@@ -2231,6 +2861,7 @@ private final class ProviderSecretStore: ProfileSecretStore {
         readCount = 0
         writeCount = 0
         deleteCount = 0
+        auditEntries.removeAll()
     }
 }
 

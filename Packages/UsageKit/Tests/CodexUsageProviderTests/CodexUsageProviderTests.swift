@@ -1,8 +1,8 @@
-import CodexUsageProvider
 import Darwin
 import Foundation
 import UsageCore
 import XCTest
+@testable import CodexUsageProvider
 
 final class CodexUsageProviderTests: XCTestCase {
     func testCurrentContractMapsDynamicLimitsCreditsAndUsageSummary()
@@ -132,14 +132,53 @@ final class CodexUsageProviderTests: XCTestCase {
 
             let report = try await provider.fetchUsage()
 
-            XCTAssertEqual(report.health.status, .healthy)
+            XCTAssertEqual(report.health.status, .degraded)
+            XCTAssertEqual(
+                report.health.issue,
+                .optionalUsageUnavailable
+            )
             XCTAssertNil(report.usageSummary)
             XCTAssertEqual(report.limitGroups.count, 1)
+            XCTAssertEqual(
+                provider.capabilities[.usageSummary],
+                .unknown
+            )
             XCTAssertEqual(
                 try fake.recordedRequests().map(\.method),
                 [.accountRead, .accountRateLimitsRead, .accountUsageRead]
             )
         }
+    }
+
+    func testMalformedOptionalUsagePreservesAccountAndRateLimits()
+        async throws
+    {
+        let fake = try FakeCodexAppServer(
+            scenario: "provider_usage_malformed"
+        )
+        let provider = CodexUsageProvider(client: fake.client)
+
+        let report = try await provider.fetchUsage()
+
+        XCTAssertEqual(report.account?.planName, "plus")
+        XCTAssertEqual(report.health.status, .degraded)
+        XCTAssertEqual(report.health.issue, .optionalUsageUnavailable)
+        XCTAssertNil(report.usageSummary)
+        XCTAssertEqual(report.limitGroups.count, 1)
+        XCTAssertEqual(
+            report.limitGroups[0].id.rawValue,
+            "codex.limit.codex"
+        )
+        XCTAssertEqual(
+            report.limitGroups[0].windows[0].usedPercentage,
+            37
+        )
+        XCTAssertEqual(
+            try fake.recordedRequests().map(\.method),
+            [.accountRead, .accountRateLimitsRead, .accountUsageRead]
+        )
+        XCTAssertEqual(try fake.launchedProcessIdentifiers().count, 1)
+        try await fake.assertAllProcessesExited()
     }
 
     func testCreditAvailabilityFlagsGateFiniteBalances() async throws {
@@ -264,6 +303,72 @@ final class CodexUsageProviderTests: XCTestCase {
         XCTAssertEqual(report.limitGroups.count, 1)
         XCTAssertEqual(report.limitGroups[0].id.rawValue, "codex.limit.valid")
         XCTAssertEqual(report.limitGroups[0].windows[0].usedPercentage, 11)
+    }
+
+    func testDynamicLimitsCoverSecondaryOnlyBoundariesAndResetTimes()
+        throws
+    {
+        let referenceDate = Date(timeIntervalSince1970: 2_000)
+        let response = try CodexDomainDecoder.decode(
+            CodexRateLimitsResponse.self,
+            from: .object([
+                "rateLimitsByLimitId": .object([
+                    "secondary-only": .object([
+                        "limitId": .string("secondary-only"),
+                        "limitName": .string("Secondary only"),
+                        "secondary": .object([
+                            "usedPercent": .number(42),
+                            "windowDurationMins": .integer(60),
+                            "resetsAt": .integer(3_000)
+                        ])
+                    ]),
+                    "boundary": .object([
+                        "limitId": .string("boundary"),
+                        "primary": .object([
+                            "usedPercent": .number(0),
+                            "windowDurationMins": .integer(5),
+                            "resetsAt": .integer(1_000)
+                        ]),
+                        "secondary": .object([
+                            "usedPercent": .number(100),
+                            "windowDurationMins": .integer(10),
+                            "resetsAt": .integer(3_000)
+                        ])
+                    ])
+                ])
+            ])
+        )
+
+        let groups = try CodexReportMapper.limitGroups(from: response)
+        let secondaryOnly = try XCTUnwrap(
+            groups.first { $0.id.rawValue == "codex.limit.secondary-only" }
+        )
+        XCTAssertEqual(secondaryOnly.windows.count, 1)
+        XCTAssertEqual(
+            secondaryOnly.windows[0].id.rawValue,
+            "codex.limit.secondary-only.secondary"
+        )
+        XCTAssertEqual(secondaryOnly.windows[0].usedPercentage, 42)
+
+        let boundary = try XCTUnwrap(
+            groups.first { $0.id.rawValue == "codex.limit.boundary" }
+        )
+        XCTAssertEqual(
+            boundary.windows.compactMap(\.usedPercentage),
+            [0, 100]
+        )
+        let expiredReset = try XCTUnwrap(boundary.windows[0].resetsAt)
+        let futureReset = try XCTUnwrap(boundary.windows[1].resetsAt)
+        XCTAssertLessThan(expiredReset, referenceDate)
+        XCTAssertGreaterThan(futureReset, referenceDate)
+        XCTAssertEqual(
+            boundary.windows[0].startedAt,
+            expiredReset.addingTimeInterval(-300)
+        )
+        XCTAssertEqual(
+            boundary.windows[1].startedAt,
+            futureReset.addingTimeInterval(-600)
+        )
     }
 
     func testMalformedRequiredAccountAndRateShapesFailClosed() async throws {
@@ -420,6 +525,51 @@ final class CodexUsageProviderTests: XCTestCase {
         )
     }
 
+    func testBeginLoginReturnsAlreadyAuthenticatedWithoutStartingLogin()
+        async throws
+    {
+        let fake = try FakeCodexAppServer(
+            scenario: "provider_login_already_authenticated"
+        )
+        let provider = CodexUsageProvider(client: fake.client)
+
+        let result = try await provider.beginLogin(.browser())
+        guard case let .alreadyAuthenticated(account) = result else {
+            return XCTFail("Expected existing authenticated account")
+        }
+
+        XCTAssertEqual(account.displayName, "already@example.com")
+        XCTAssertEqual(account.planName, "plus")
+        XCTAssertEqual(
+            try fake.recordedRequests().map(\.method),
+            [.accountRead]
+        )
+        XCTAssertEqual(try fake.launchedProcessIdentifiers().count, 1)
+        try await fake.assertAllProcessesExited()
+    }
+
+    func testLoginServerErrorIsTypedAndClosesScopedSession()
+        async throws
+    {
+        let fake = try FakeCodexAppServer(
+            scenario: "provider_login_server_error"
+        )
+        let provider = CodexUsageProvider(client: fake.client)
+
+        await XCTAssertThrowsProviderError(
+            try await provider.startLogin(.browser())
+        ) {
+            XCTAssertEqual($0, .protocolFailure)
+        }
+
+        XCTAssertEqual(
+            try fake.recordedRequests().map(\.method),
+            [.accountLoginStart]
+        )
+        XCTAssertEqual(try fake.launchedProcessIdentifiers().count, 1)
+        try await fake.assertAllProcessesExited()
+    }
+
     func testLoginCancelUsesLoginIDAndClosesScopedSession() async throws {
         let fake = try FakeCodexAppServer(scenario: "provider_login_cancel")
         let attempt = try await CodexUsageProvider(
@@ -542,6 +692,44 @@ final class CodexUsageProviderTests: XCTestCase {
                 description.localizedCaseInsensitiveContains("access_token")
             )
         }
+    }
+
+    func testLiveAccountAndRateLimitSmokeWhenExplicitlyEnabled()
+        async throws
+    {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["CODEX_USAGE_LIVE_SMOKE"] == "1" else {
+            throw XCTSkip(
+                "Set CODEX_USAGE_LIVE_SMOKE=1 to enable the live smoke test."
+            )
+        }
+        guard let executablePath =
+                environment["CODEX_USAGE_LIVE_EXECUTABLE"],
+              let codexHomePath =
+                environment["CODEX_USAGE_LIVE_HOME"]
+        else {
+            return XCTFail(
+                "Live smoke requires executable and home environment variables."
+            )
+        }
+
+        let configuration = try CodexProcessConfiguration(
+            executableURL: URL(fileURLWithPath: executablePath),
+            codexHomeURL: URL(
+                fileURLWithPath: codexHomePath,
+                isDirectory: true
+            )
+        )
+        let provider = CodexUsageProvider(
+            processConfiguration: configuration
+        )
+
+        let account = try await provider.account()
+        let report = try await provider.fetchUsage()
+
+        XCTAssertNotNil(account)
+        XCTAssertEqual(report.providerID, .codex)
+        XCTAssertFalse(report.limitGroups.isEmpty)
     }
 
     private func metric(

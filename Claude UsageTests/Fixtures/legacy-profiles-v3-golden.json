@@ -1,0 +1,115 @@
+[
+  {
+    "id": "11111111-1111-4111-8111-111111111111",
+    "name": "Legacy Primary",
+    "claudeSessionKey": "golden-claude-secret-primary",
+    "organizationId": "legacy-org-primary",
+    "apiSessionKey": "golden-api-secret-primary",
+    "apiOrganizationId": "legacy-api-org-primary",
+    "apiSessionKeyExpiry": 6100,
+    "cliCredentialsJSON": "{\"claudeAiOauth\":{\"accessToken\":\"golden-cli-secret-primary\"}}",
+    "hasCliAccount": true,
+    "cliAccountSyncedAt": 1200,
+    "cliAccountName": "legacy-primary-account",
+    "claudeUsage": {
+      "sessionTokensUsed": 101,
+      "sessionLimit": 1000,
+      "sessionPercentage": 10.1,
+      "sessionResetTime": 5100,
+      "weeklyTokensUsed": 202,
+      "weeklyLimit": 2000,
+      "weeklyPercentage": 20.2,
+      "weeklyResetTime": 5200,
+      "opusWeeklyTokensUsed": 31,
+      "opusWeeklyPercentage": 3.1,
+      "sonnetWeeklyTokensUsed": 42,
+      "sonnetWeeklyPercentage": 4.2,
+      "fableWeeklyTokensUsed": 53,
+      "fableWeeklyPercentage": 5.3,
+      "fableWeeklyLimitAvailable": true,
+      "costUsed": 12.5,
+      "costLimit": 50,
+      "costCurrency": "USD",
+      "lastUpdated": 1300,
+      "userTimezone": {
+        "identifier": "GMT"
+      }
+    },
+    "apiUsage": {
+      "currentSpendCents": 1234,
+      "resetsAt": 6200,
+      "prepaidCreditsCents": 8766,
+      "currency": "USD",
+      "apiTokenCostCents": 45.5,
+      "apiCostByModel": {
+        "legacy-model": 45.5
+      },
+      "dailyCostCents": {
+        "2026-01-01": 45.5
+      }
+    },
+    "refreshInterval": 47,
+    "autoStartSessionEnabled": true,
+    "checkOverageLimitEnabled": false,
+    "notificationSettings": {
+      "enabled": true,
+      "threshold75Enabled": false,
+      "threshold90Enabled": true,
+      "threshold95Enabled": false,
+      "soundName": "Glass",
+      "customThresholds": [
+        82
+      ]
+    },
+    "isSelectedForDisplay": true,
+    "createdAt": 1000,
+    "lastUsedAt": 2000
+  },
+  {
+    "id": "22222222-2222-4222-8222-222222222222",
+    "name": "Legacy Secondary",
+    "claudeSessionKey": "golden-claude-secret-secondary",
+    "organizationId": "legacy-org-secondary",
+    "apiSessionKey": "golden-api-secret-secondary",
+    "apiOrganizationId": "legacy-api-org-secondary",
+    "claudeUsage": {
+      "sessionTokensUsed": 303,
+      "sessionLimit": 3000,
+      "sessionPercentage": 30.3,
+      "sessionResetTime": 5300,
+      "weeklyTokensUsed": 404,
+      "weeklyLimit": 4000,
+      "weeklyPercentage": 40.4,
+      "weeklyResetTime": 5400,
+      "opusWeeklyTokensUsed": 65,
+      "opusWeeklyPercentage": 6.5,
+      "sonnetWeeklyTokensUsed": 76,
+      "sonnetWeeklyPercentage": 7.6,
+      "fableWeeklyTokensUsed": 0,
+      "fableWeeklyPercentage": 0,
+      "fableWeeklyLimitAvailable": false,
+      "lastUpdated": 3300,
+      "userTimezone": {
+        "identifier": "GMT"
+      }
+    },
+    "apiUsage": {
+      "currentSpendCents": 2222,
+      "resetsAt": 6400,
+      "prepaidCreditsCents": 7778,
+      "currency": "EUR"
+    },
+    "refreshInterval": 93,
+    "autoStartSessionEnabled": false,
+    "checkOverageLimitEnabled": true,
+    "notificationSettings": {
+      "enabled": false,
+      "threshold75Enabled": true,
+      "threshold90Enabled": false,
+      "threshold95Enabled": true
+    },
+    "isSelectedForDisplay": false,
+    "createdAt": 3000,
+    "lastUsedAt": 4000
+  }
+]

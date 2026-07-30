@@ -35,6 +35,7 @@ public enum ProviderHealthIssue: String, Codable, Hashable, Sendable {
     case transportUnavailable
     case protocolMismatch
     case responseInvalid
+    case optionalUsageUnavailable
     case unknown
 }
 

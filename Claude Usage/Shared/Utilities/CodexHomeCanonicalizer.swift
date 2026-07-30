@@ -1,25 +1,68 @@
 import Foundation
 
-/// A physical CODEX_HOME path verified at link time. The unchecked factory is
-/// same-file private so app callers cannot bypass canonicalization; Codable
-/// decoding accepts a previously verified path even while it is offline.
+/// Stable filesystem identity for a linked Codex home.
+///
+/// The device/inode pair distinguishes a directory from a different directory
+/// later installed at the same canonical path.
+nonisolated struct CodexHomeFilesystemIdentity:
+    Codable,
+    Equatable,
+    Hashable,
+    Sendable
+{
+    let deviceID: UInt64
+    let fileID: UInt64
+
+    static func read(
+        from url: URL,
+        fileManager: FileManager = .default
+    ) -> Self? {
+        guard let attributes = try? fileManager.attributesOfItem(
+            atPath: url.path
+        ),
+        let device = attributes[.systemNumber] as? NSNumber,
+        let file = attributes[.systemFileNumber] as? NSNumber else {
+            return nil
+        }
+        return Self(
+            deviceID: device.uint64Value,
+            fileID: file.uint64Value
+        )
+    }
+}
+
+/// A physical CODEX_HOME path and identity verified at link time. The
+/// unchecked factory is same-file private so app callers cannot bypass
+/// canonicalization. Legacy path-only payloads decode as unresolved links so
+/// profile metadata remains recoverable, but provider capture cannot trust
+/// them until the user explicitly relinks and records an identity.
 struct CanonicalCodexHome: Codable, Equatable, Hashable {
     let path: String
+    let filesystemIdentity: CodexHomeFilesystemIdentity?
 
-    fileprivate init(verifiedPath: String) {
+    fileprivate init(
+        verifiedPath: String,
+        filesystemIdentity: CodexHomeFilesystemIdentity
+    ) {
         path = verifiedPath
+        self.filesystemIdentity = filesystemIdentity
     }
 
     private enum CodingKeys: String, CodingKey {
         case path
+        case filesystemIdentity
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(
             keyedBy: CanonicalCodingKey.self
         )
-        guard Set(container.allKeys.map(\.stringValue))
-                == [CodingKeys.path.rawValue] else {
+        let keys = Set(container.allKeys.map(\.stringValue))
+        guard keys == [CodingKeys.path.rawValue]
+                || keys == [
+                    CodingKeys.path.rawValue,
+                    CodingKeys.filesystemIdentity.rawValue
+                ] else {
             throw ProfileProviderConfigurationError.invalidCanonicalHome
         }
         let value = try container.decode(
@@ -30,6 +73,16 @@ struct CanonicalCodexHome: Codable, Equatable, Hashable {
             throw ProfileProviderConfigurationError.invalidCanonicalHome
         }
         path = value
+        if keys.contains(CodingKeys.filesystemIdentity.rawValue) {
+            filesystemIdentity = try container.decode(
+                CodexHomeFilesystemIdentity.self,
+                forKey: CanonicalCodingKey(
+                    CodingKeys.filesystemIdentity.rawValue
+                )
+            )
+        } else {
+            filesystemIdentity = nil
+        }
     }
 
     func encode(to encoder: Encoder) throws {
@@ -46,6 +99,12 @@ struct CanonicalCodexHome: Codable, Equatable, Hashable {
         try container.encode(
             path,
             forKey: CanonicalCodingKey(CodingKeys.path.rawValue)
+        )
+        try container.encodeIfPresent(
+            filesystemIdentity,
+            forKey: CanonicalCodingKey(
+                CodingKeys.filesystemIdentity.rawValue
+            )
         )
     }
 
@@ -112,7 +171,7 @@ enum CodexHomeCanonicalizationError: Error, LocalizedError, Equatable {
 struct CodexHomeCanonicalizer {
     private struct Resolution {
         let home: CanonicalCodexHome
-        let filesystemIdentity: NSObject
+        let filesystemIdentity: CodexHomeFilesystemIdentity
     }
 
     private let fileManager: FileManager
@@ -140,7 +199,7 @@ struct CodexHomeCanonicalizer {
                   let existingHome = configuration.linkedHome else {
                 continue
             }
-            if existingHome == candidate.home {
+            if existingHome.path == candidate.home.path {
                 throw ProfileProviderConfigurationError
                     .duplicateCodexHome(profile.id)
             }
@@ -150,9 +209,8 @@ struct CodexHomeCanonicalizer {
             // mount/symlink spellings; if offline, exact path comparison above
             // remains available without blocking unrelated metadata edits.
             if let existing = try? resolve(existingHome.path),
-               existing.filesystemIdentity.isEqual(
-                   candidate.filesystemIdentity
-               ) {
+               existing.filesystemIdentity
+                    == candidate.filesystemIdentity {
                 throw ProfileProviderConfigurationError
                     .duplicateCodexHome(profile.id)
             }
@@ -225,19 +283,19 @@ struct CodexHomeCanonicalizer {
             throw CodexHomeCanonicalizationError.notDirectory
         }
 
-        let values = try physicalURL.resourceValues(
-            forKeys: [.fileResourceIdentifierKey, .isDirectoryKey]
-        )
-        guard values.isDirectory == true else {
-            throw CodexHomeCanonicalizationError.notDirectory
-        }
-        guard let identity = values.fileResourceIdentifier as? NSObject else {
+        guard let identity = CodexHomeFilesystemIdentity.read(
+            from: physicalURL,
+            fileManager: fileManager
+        ) else {
             throw CodexHomeCanonicalizationError
                 .filesystemIdentityUnavailable
         }
 
         return Resolution(
-            home: CanonicalCodexHome(verifiedPath: physicalURL.path),
+            home: CanonicalCodexHome(
+                verifiedPath: physicalURL.path,
+                filesystemIdentity: identity
+            ),
             filesystemIdentity: identity
         )
     }

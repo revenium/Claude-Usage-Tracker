@@ -946,3 +946,6 @@
 "notifications.sound.default" = "Standard";
 "notifications.sound.none" = "Keiner";
 "notifications.sound.preview" = "Ton-Vorschau";
+
+"error.storage_write_failed" = "Nutzungsdaten konnten nicht gespeichert werden";
+"error.storage_write_failed.suggestion" = "Bitte versuchen Sie es erneut. Wenn das Problem weiterhin besteht, prüfen Sie, ob die App Schreibzugriff auf ihren Datenordner hat.";

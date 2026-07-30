@@ -326,6 +326,28 @@ extension AppError {
         )
     }
 
+    // MARK: - Storage Errors
+
+    @MainActor
+    static func storageWriteFailed(
+        file: String = #file,
+        line: Int = #line,
+        function: String = #function
+    ) -> AppError {
+        AppError(
+            code: .storageWriteFailed,
+            message: "error.storage_write_failed".localized,
+            technicalDetails:
+                "Usage persistence transaction was rejected",
+            isRecoverable: true,
+            recoverySuggestion:
+                "error.storage_write_failed.suggestion".localized,
+            file: file,
+            line: line,
+            function: function
+        )
+    }
+
     // MARK: - Wrapping Errors
 
     static func wrap(_ error: Error, file: String = #file, line: Int = #line, function: String = #function) -> AppError {

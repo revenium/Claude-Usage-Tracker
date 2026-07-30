@@ -185,9 +185,21 @@ final class UsagePresentationStore: ObservableObject {
         where snapshot.configurationState == .deleting {
             self.snapshots[profileID] = snapshot
         }
-        if !context.visibleProfileIDs.contains(
+        if context.visibleProfileIDs.contains(
             where: { snapshots[$0]?.providerID == .claude }
         ) {
+            // A context-only activation can supersede an in-flight status
+            // request without starting a replacement. Carry the last
+            // terminal value into the new context, but never carry the old
+            // context's loading ownership with it.
+            claudeStatus = ClaudeStatusPresentation(
+                presentationEpoch: context.epoch,
+                status: claudeStatus.status,
+                isRefreshing: false,
+                failedAt: nil,
+                failure: nil
+            )
+        } else {
             claudeStatus = .empty
         }
     }
@@ -490,7 +502,10 @@ nonisolated enum AcceptedUsageComponent: Hashable, Sendable {
 nonisolated struct AcceptedUsageRefreshEvent: @unchecked Sendable {
     let sequence: UInt64
     let identity: ProviderRefreshIdentity
+    let inputGeneration: UInt64
+    let invocationOrder: UInt64
     let profileName: String
+    let notificationSettings: NotificationSettings
     let trigger: UsageRefreshTrigger
     let presentationContext: UsagePresentationContext
     let capabilities: ProviderCapabilities
@@ -522,6 +537,7 @@ nonisolated struct UsageRefreshFailureEvent: Sendable {
     let sequence: UInt64
     let identity: ProviderRefreshIdentity
     let profileName: String
+    let inputGeneration: UInt64
     let invocationOrder: UInt64
     let trigger: UsageRefreshTrigger
     let presentationContext: UsagePresentationContext
@@ -532,6 +548,8 @@ nonisolated struct UsageRefreshFailureEvent: Sendable {
 @MainActor
 final class UsageRefreshEventHub {
     typealias Observer = @MainActor (AcceptedUsageRefreshEvent) -> Void
+    typealias PresentedObserver =
+        @MainActor (AcceptedUsageRefreshEvent) -> Void
     typealias FailureObserver =
         @MainActor (UsageRefreshFailureEvent) -> Void
     typealias BatchObserver =
@@ -539,6 +557,7 @@ final class UsageRefreshEventHub {
 
     private var nextSequence: UInt64 = 0
     private var observers: [UUID: Observer] = [:]
+    private var presentedObservers: [UUID: PresentedObserver] = [:]
     private var failureObservers: [UUID: FailureObserver] = [:]
     private var batchObservers: [UUID: BatchObserver] = [:]
 
@@ -551,8 +570,18 @@ final class UsageRefreshEventHub {
 
     func removeObserver(_ token: UUID) {
         observers.removeValue(forKey: token)
+        presentedObservers.removeValue(forKey: token)
         failureObservers.removeValue(forKey: token)
         batchObservers.removeValue(forKey: token)
+    }
+
+    @discardableResult
+    func observePresented(
+        _ observer: @escaping PresentedObserver
+    ) -> UUID {
+        let token = UUID()
+        presentedObservers[token] = observer
+        return token
     }
 
     @discardableResult
@@ -575,7 +604,10 @@ final class UsageRefreshEventHub {
 
     func publish(
         identity: ProviderRefreshIdentity,
+        inputGeneration: UInt64,
+        invocationOrder: UInt64,
         profileName: String,
+        notificationSettings: NotificationSettings,
         trigger: UsageRefreshTrigger,
         presentationContext: UsagePresentationContext,
         capabilities: ProviderCapabilities,
@@ -588,7 +620,10 @@ final class UsageRefreshEventHub {
         let event = AcceptedUsageRefreshEvent(
             sequence: nextSequence,
             identity: identity,
+            inputGeneration: inputGeneration,
+            invocationOrder: invocationOrder,
             profileName: profileName,
+            notificationSettings: notificationSettings,
             trigger: trigger,
             presentationContext: presentationContext,
             capabilities: capabilities,
@@ -603,6 +638,12 @@ final class UsageRefreshEventHub {
         return event
     }
 
+    func publishPresented(_ event: AcceptedUsageRefreshEvent) {
+        for observer in Array(presentedObservers.values) {
+            observer(event)
+        }
+    }
+
     @discardableResult
     func publishFailure(
         _ candidate: UsageRefreshFailureCandidate
@@ -612,6 +653,7 @@ final class UsageRefreshEventHub {
             sequence: nextSequence,
             identity: candidate.identity,
             profileName: candidate.profileName,
+            inputGeneration: candidate.inputGeneration,
             invocationOrder: candidate.invocationOrder,
             trigger: candidate.trigger,
             presentationContext: candidate.presentationContext,
@@ -634,6 +676,7 @@ final class UsageRefreshEventHub {
 nonisolated struct UsageRefreshCommitCandidate: @unchecked Sendable {
     let identity: ProviderRefreshIdentity
     let profileName: String
+    let notificationSettings: NotificationSettings
     let inputGeneration: UInt64
     let invocationOrder: UInt64
     let trigger: UsageRefreshTrigger
@@ -648,6 +691,7 @@ nonisolated struct UsageRefreshCommitReceipt: @unchecked Sendable {
     let previousUsage: ProfileCurrentUsage?
     let currentUsage: ProfileCurrentUsage
     let committedAt: Date
+    let acceptedEvent: AcceptedUsageRefreshEvent
 }
 
 nonisolated enum UsageRefreshCommitError: Error, Equatable {
@@ -672,12 +716,13 @@ protocol UsageRefreshCommitting: AnyObject, Sendable {
 
     func publishFailure(
         _ candidate: UsageRefreshFailureCandidate,
-        snapshot: PresentationSnapshot?,
+        snapshot: PresentationSnapshot,
         presentationStore: UsagePresentationStore
     ) async -> Bool
 
     func publishCommittedPresentation(
         _ candidate: UsageRefreshCommitCandidate,
+        receipt: UsageRefreshCommitReceipt,
         snapshot: PresentationSnapshot,
         presentationStore: UsagePresentationStore
     ) async -> Bool
@@ -802,30 +847,6 @@ final class LiveUsageRefreshCommitter: UsageRefreshCommitting {
 
     func publishFailure(
         _ candidate: UsageRefreshFailureCandidate,
-        snapshot: PresentationSnapshot?,
-        presentationStore: UsagePresentationStore
-    ) async -> Bool {
-        guard inputLedger.generation(
-            for: candidate.identity.profileID
-        ) == candidate.inputGeneration,
-        inputLedger.invocationOrder(
-            for: candidate.identity.profileID
-        ) == candidate.invocationOrder else {
-            return false
-        }
-        if let snapshot {
-            _ = presentationStore.publish(
-                snapshot,
-                expected: candidate.presentationContext,
-                invocationOrder: candidate.invocationOrder
-            )
-        }
-        eventHub.publishFailure(candidate)
-        return true
-    }
-
-    func publishCommittedPresentation(
-        _ candidate: UsageRefreshCommitCandidate,
         snapshot: PresentationSnapshot,
         presentationStore: UsagePresentationStore
     ) async -> Bool {
@@ -837,11 +858,55 @@ final class LiveUsageRefreshCommitter: UsageRefreshCommitting {
         ) == candidate.invocationOrder else {
             return false
         }
-        _ = presentationStore.publish(
+        guard presentationStore.publish(
             snapshot,
             expected: candidate.presentationContext,
             invocationOrder: candidate.invocationOrder
-        )
+        ) else {
+            return false
+        }
+        guard inputLedger.generation(
+            for: candidate.identity.profileID
+        ) == candidate.inputGeneration,
+        inputLedger.invocationOrder(
+            for: candidate.identity.profileID
+        ) == candidate.invocationOrder else {
+            return false
+        }
+        eventHub.publishFailure(candidate)
+        return true
+    }
+
+    func publishCommittedPresentation(
+        _ candidate: UsageRefreshCommitCandidate,
+        receipt: UsageRefreshCommitReceipt,
+        snapshot: PresentationSnapshot,
+        presentationStore: UsagePresentationStore
+    ) async -> Bool {
+        guard inputLedger.generation(
+            for: candidate.identity.profileID
+        ) == candidate.inputGeneration,
+        inputLedger.invocationOrder(
+            for: candidate.identity.profileID
+        ) == candidate.invocationOrder else {
+            return false
+        }
+        guard presentationStore.publish(
+            snapshot,
+            expected: candidate.presentationContext,
+            invocationOrder: candidate.invocationOrder
+        ) else {
+            return false
+        }
+        guard inputLedger.generation(
+            for: candidate.identity.profileID
+        ) == candidate.inputGeneration,
+        inputLedger.invocationOrder(
+            for: candidate.identity.profileID
+        ) == candidate.invocationOrder else {
+            return false
+        }
+        eventHub.publishPresented(receipt.acceptedEvent)
         return true
     }
 
@@ -892,28 +957,36 @@ final class LiveUsageRefreshCommitter: UsageRefreshCommitting {
                     == candidate.identity.profileID
         )
         let committedAt = now()
-        let receipt = UsageRefreshCommitReceipt(
-            previousUsage: installation.previous,
-            currentUsage: installation.current,
-            committedAt: committedAt
-        )
         // The input check, durable installation, exact readback, and accepted
         // event are one non-suspending MainActor transaction in production.
         // Provider-input invalidation therefore orders strictly before or
         // after the installed value and its event.
-        _ = eventHub.publish(
+        let acceptedEvent = eventHub.publish(
             identity: candidate.identity,
+            inputGeneration: candidate.inputGeneration,
+            invocationOrder: candidate.invocationOrder,
             profileName: candidate.profileName,
+            notificationSettings: candidate.notificationSettings,
             trigger: candidate.trigger,
             presentationContext: candidate.presentationContext,
             capabilities: candidate.capabilities,
-            previousUsage: receipt.previousUsage,
-            currentUsage: receipt.currentUsage,
+            previousUsage: installation.previous,
+            currentUsage: installation.current,
             acceptedComponents: candidate.acceptedComponents,
-            committedAt: receipt.committedAt
+            committedAt: committedAt
         )
-        return receipt
+        return UsageRefreshCommitReceipt(
+            previousUsage: installation.previous,
+            currentUsage: installation.current,
+            committedAt: committedAt,
+            acceptedEvent: acceptedEvent
+        )
     }
+}
+
+@MainActor
+private final class UsageRefreshRuntimeLifecycle {
+    var isShutdown = false
 }
 
 @MainActor
@@ -927,7 +1000,9 @@ final class UsageRefreshRuntime {
     private(set) var presentationContext: UsagePresentationContext = .empty
     private let committer: any UsageRefreshCommitting
     private let now: @Sendable () -> Date
+    private let lifecycle: UsageRefreshRuntimeLifecycle
     private var isShutdown = false
+    private var shutdownTask: Task<Void, Never>?
     private var refreshInvocationOrder: UInt64 = 0
 
     init(
@@ -946,13 +1021,19 @@ final class UsageRefreshRuntime {
         self.inputLedger = inputLedger
         self.committer = committer
         self.now = now
+        let lifecycle = UsageRefreshRuntimeLifecycle()
+        self.lifecycle = lifecycle
         engine = UsageRefreshEngine(
             committer: committer,
             presentationStore: presentationStore,
             statusFetch: statusFetch,
             now: now,
             batchObserver: { result in
-                let normalized = await MainActor.run {
+                let normalized: UsageRefreshBatchResult? =
+                    await MainActor.run(body: {
+                    guard !lifecycle.isShutdown else {
+                        return nil
+                    }
                     let normalized = UsageRefreshBatchResult(
                         batchID: result.batchID,
                         invocationOrder:
@@ -969,6 +1050,14 @@ final class UsageRefreshRuntime {
                     )
                     eventHub.publishBatch(normalized)
                     return normalized
+                })
+                guard let normalized else {
+                    return
+                }
+                guard await MainActor.run(body: {
+                    !lifecycle.isShutdown
+                }) else {
+                    return
                 }
                 await batchObserver?(normalized)
             }
@@ -1192,27 +1281,52 @@ final class UsageRefreshRuntime {
         guard !isShutdown else {
             return Task { UUID() }
         }
+        // A shared UUID makes provider identity ambiguous. Exclude every
+        // occurrence before registering inputs or capturing provider work,
+        // while retaining first-occurrence order for the valid members.
+        var seenProfileIDs = Set<UUID>()
+        var duplicateProfileIDs = Set<UUID>()
+        var firstProfiles = [Profile]()
+        for profile in profiles {
+            if seenProfileIDs.insert(profile.id).inserted {
+                firstProfiles.append(profile)
+            } else {
+                duplicateProfileIDs.insert(profile.id)
+            }
+        }
+        let refreshableProfiles = firstProfiles.filter {
+            !duplicateProfileIDs.contains($0.id)
+        }
+        let orderedProfileIDs = firstProfiles.map(\.id)
+
         refreshInvocationOrder &+= 1
         let invocationOrder = refreshInvocationOrder
-        inputLedger.register(profileIDs: profiles.map(\.id))
+        inputLedger.register(profileIDs: orderedProfileIDs)
         inputLedger.registerInvocation(
             invocationOrder,
-            profileIDs: profiles.map(\.id)
+            profileIDs: orderedProfileIDs
         )
         presentationStore.registerActivityInvocation(
             invocationOrder,
-            profileIDs: profiles.map(\.id)
+            profileIDs: orderedProfileIDs
         )
-        if profiles.contains(
+        if refreshableProfiles.contains(
             where: { $0.providerID == .claude }
         ) {
             presentationStore.registerClaudeStatusInvocation(
                 invocationOrder
             )
         }
+        let inputGenerations = Dictionary(
+            uniqueKeysWithValues: orderedProfileIDs.map {
+                ($0, inputLedger.generation(for: $0))
+            }
+        )
         let context = presentationContext
-        var unavailableProfileIDs = Set<UUID>()
-        let captured = profiles.compactMap { profile -> CapturedProviderRefreshJob? in
+        var unavailableProfileIDs = duplicateProfileIDs
+        var supersededProfileIDs = Set<UUID>()
+        let captured = refreshableProfiles.compactMap {
+            profile -> CapturedProviderRefreshJob? in
             guard !profile.deletionInProgress,
                   !inputLedger.isDeleting(profile.id) else {
                 unavailableProfileIDs.insert(profile.id)
@@ -1229,31 +1343,37 @@ final class UsageRefreshRuntime {
                     context: requestContext
                 )
             } catch {
-                publishCaptureFailure(
+                if case .profileDeletionInProgress =
+                    error as? UsageProviderCaptureError {
+                    unavailableProfileIDs.insert(profile.id)
+                } else if publishCaptureFailure(
                     error,
                     profile: profile,
                     context: context,
                     trigger: trigger,
+                    inputGeneration: inputGenerations[
+                        profile.id,
+                        default: 0
+                    ],
                     invocationOrder: invocationOrder
-                )
-                unavailableProfileIDs.insert(profile.id)
+                ) {
+                    unavailableProfileIDs.insert(profile.id)
+                } else {
+                    supersededProfileIDs.insert(profile.id)
+                }
                 return nil
             }
         }
-        let generations = Dictionary(
-            uniqueKeysWithValues: profiles.map {
-                ($0.id, inputLedger.generation(for: $0.id))
-            }
-        )
         return Task {
             await engine.enqueue(
                 captured,
                 trigger: trigger,
                 presentationContext: context,
-                inputGenerations: generations,
+                inputGenerations: inputGenerations,
                 unavailableProfileIDs: unavailableProfileIDs,
+                supersededProfileIDs: supersededProfileIDs,
                 invocationOrder: invocationOrder,
-                requestsClaudeStatus: profiles.contains {
+                requestsClaudeStatus: refreshableProfiles.contains {
                     $0.providerID == .claude
                 }
             )
@@ -1262,9 +1382,12 @@ final class UsageRefreshRuntime {
 
     func invalidate(profileID: UUID) {
         guard !isShutdown else { return }
-        _ = inputLedger.invalidate(profileID: profileID)
+        let generation = inputLedger.invalidate(profileID: profileID)
         Task {
-            await engine.invalidate(profileID: profileID)
+            await engine.invalidate(
+                profileID: profileID,
+                beforeInputGeneration: generation
+            )
         }
     }
 
@@ -1274,8 +1397,14 @@ final class UsageRefreshRuntime {
             authoritativeProfileIDs: profiles.map(\.id)
         )
         for profile in profiles {
+            let generation = inputLedger.generation(
+                for: profile.id
+            )
             Task {
-                await engine.invalidate(profileID: profile.id)
+                await engine.invalidate(
+                    profileID: profile.id,
+                    beforeInputGeneration: generation
+                )
             }
         }
     }
@@ -1283,9 +1412,13 @@ final class UsageRefreshRuntime {
     func beginDeletion(profileID: UUID) {
         guard !isShutdown else { return }
         inputLedger.beginDeletion(profileID: profileID)
+        let generation = inputLedger.generation(for: profileID)
         presentationStore.markDeleting(profileID: profileID)
         Task {
-            await engine.invalidate(profileID: profileID)
+            await engine.invalidate(
+                profileID: profileID,
+                beforeInputGeneration: generation
+            )
         }
     }
 
@@ -1302,29 +1435,48 @@ final class UsageRefreshRuntime {
     }
 
     func shutdown(profiles: [Profile]) {
-        guard !isShutdown else { return }
+        _ = beginShutdown(profiles: profiles)
+    }
+
+    func shutdownAndWait(profiles: [Profile]) async {
+        let task = beginShutdown(profiles: profiles)
+        await task.value
+    }
+
+    @discardableResult
+    private func beginShutdown(
+        profiles: [Profile]
+    ) -> Task<Void, Never> {
+        if let shutdownTask {
+            return shutdownTask
+        }
         isShutdown = true
+        lifecycle.isShutdown = true
         inputLedger.invalidateAll(
             authoritativeProfileIDs: profiles.map(\.id)
         )
         presentationStore.shutdown()
-        Task {
+        let task = Task {
             await engine.shutdown()
         }
+        shutdownTask = task
+        return task
     }
 
+    @discardableResult
     private func publishCaptureFailure(
         _ error: Error,
         profile: Profile,
         context: UsagePresentationContext,
         trigger: UsageRefreshTrigger,
+        inputGeneration: UInt64,
         invocationOrder: UInt64
-    ) {
+    ) -> Bool {
         let kind: ProviderRefreshFailureKind
         let state: ProviderConfigurationState
         switch error as? UsageProviderCaptureError {
         case .profileDeletionInProgress:
-            return
+            return false
         case .featureDisabled:
             kind = .disabled
             state = .disabled
@@ -1342,7 +1494,34 @@ final class UsageRefreshRuntime {
             state = .invalid
         }
         let cached = presentationStore.snapshot(for: profile.id)
-        presentationStore.publish(
+        let failure = ProviderRefreshFailure(
+            kind: kind,
+            occurredAt: now(),
+            isRecoverable: kind != .disabled,
+            consecutiveCount:
+                (cached?.currentFailure?.consecutiveCount ?? 0) + 1
+        )
+        let candidate = UsageRefreshFailureCandidate(
+            identity: ProviderRefreshIdentity(
+                profileID: profile.id,
+                providerID: profile.providerID,
+                providerRevision: profile.providerRevision
+            ),
+            profileName: profile.name,
+            inputGeneration: inputGeneration,
+            invocationOrder: invocationOrder,
+            trigger: trigger,
+            presentationContext: context,
+            component: .capture,
+            failure: failure
+        )
+        guard inputLedger.generation(for: profile.id)
+                == inputGeneration,
+              inputLedger.invocationOrder(for: profile.id)
+                == invocationOrder else {
+            return false
+        }
+        guard presentationStore.publish(
             PresentationSnapshot(
                 profileID: profile.id,
                 profileName: profile.name,
@@ -1356,40 +1535,21 @@ final class UsageRefreshRuntime {
                 claudeAPIUsage: cached?.claudeAPIUsage,
                 activity: .idle,
                 lastSuccessfulAt: cached?.lastSuccessfulAt,
-                currentFailure: ProviderRefreshFailure(
-                    kind: kind,
-                    occurredAt: now(),
-                    isRecoverable: kind != .disabled,
-                    consecutiveCount:
-                        (cached?.currentFailure?.consecutiveCount ?? 0) + 1
-                )
+                currentFailure: failure
             ),
             expected: context,
             invocationOrder: invocationOrder
-        )
-        eventHub.publishFailure(
-            UsageRefreshFailureCandidate(
-                identity: ProviderRefreshIdentity(
-                    profileID: profile.id,
-                    providerID: profile.providerID,
-                    providerRevision: profile.providerRevision
-                ),
-                profileName: profile.name,
-                inputGeneration:
-                    inputLedger.generation(for: profile.id),
-                invocationOrder: invocationOrder,
-                trigger: trigger,
-                presentationContext: context,
-                component: .capture,
-                failure: ProviderRefreshFailure(
-                    kind: kind,
-                    occurredAt: now(),
-                    isRecoverable: kind != .disabled,
-                    consecutiveCount:
-                        (cached?.currentFailure?.consecutiveCount ?? 0) + 1
-                )
-            )
-        )
+        ) else {
+            return false
+        }
+        guard inputLedger.generation(for: profile.id)
+                == inputGeneration,
+              inputLedger.invocationOrder(for: profile.id)
+                == invocationOrder else {
+            return false
+        }
+        eventHub.publishFailure(candidate)
+        return true
     }
 
     private func capabilities(for providerID: ProviderID)
@@ -1466,6 +1626,8 @@ actor UsageRefreshEngine {
     typealias StatusFetch = @Sendable () async throws -> ClaudeStatus
     typealias BatchObserver =
         @Sendable (UsageRefreshBatchResult) async -> Void
+    typealias MemberEnqueueObserver =
+        @Sendable (UUID, Int) async -> Void
 
     private struct Request {
         let requestID: UUID
@@ -1533,6 +1695,7 @@ actor UsageRefreshEngine {
     private let statusFetch: StatusFetch
     private let now: @Sendable () -> Date
     private let batchObserver: BatchObserver?
+    private let memberEnqueueObserver: MemberEnqueueObserver?
 
     private var slots: [UUID: Slot] = [:]
     private var batches: [UUID: Batch] = [:]
@@ -1542,19 +1705,22 @@ actor UsageRefreshEngine {
     private var latestBatchGeneration: UInt64 = 0
     private var latestStatusInvocationOrder: UInt64 = 0
     private var removedProfiles: Set<UUID> = []
+    private var minimumValidInputGenerations: [UUID: UInt64] = [:]
 
     init(
         committer: any UsageRefreshCommitting,
         presentationStore: UsagePresentationStore,
         statusFetch: @escaping StatusFetch,
         now: @escaping @Sendable () -> Date = Date.init,
-        batchObserver: BatchObserver? = nil
+        batchObserver: BatchObserver? = nil,
+        memberEnqueueObserver: MemberEnqueueObserver? = nil
     ) {
         self.committer = committer
         self.presentationStore = presentationStore
         self.statusFetch = statusFetch
         self.now = now
         self.batchObserver = batchObserver
+        self.memberEnqueueObserver = memberEnqueueObserver
     }
 
     @discardableResult
@@ -1564,6 +1730,7 @@ actor UsageRefreshEngine {
         presentationContext: UsagePresentationContext,
         inputGenerations: [UUID: UInt64],
         unavailableProfileIDs: Set<UUID> = [],
+        supersededProfileIDs: Set<UUID> = [],
         invocationOrder: UInt64? = nil,
         requestsClaudeStatus: Bool? = nil
     ) async -> UUID {
@@ -1582,7 +1749,9 @@ actor UsageRefreshEngine {
         guard !isShutdown else {
             let profileIDs = Set(
                 jobs.map(\.identity.profileID)
-            ).union(unavailableProfileIDs)
+            )
+            .union(unavailableProfileIDs)
+            .union(supersededProfileIDs)
             await batchObserver?(
                 UsageRefreshBatchResult(
                     batchID: batchID,
@@ -1600,7 +1769,9 @@ actor UsageRefreshEngine {
             )
             return batchID
         }
-        guard !jobs.isEmpty || !unavailableProfileIDs.isEmpty else {
+        guard !jobs.isEmpty
+                || !unavailableProfileIDs.isEmpty
+                || !supersededProfileIDs.isEmpty else {
             await batchObserver?(
                 UsageRefreshBatchResult(
                     batchID: batchID,
@@ -1616,8 +1787,12 @@ actor UsageRefreshEngine {
         }
 
         let jobProfileIDs = Set(jobs.map(\.identity.profileID))
+        let unavailableProfileIDs = unavailableProfileIDs
+            .subtracting(supersededProfileIDs)
         var batch = Batch(
-            outstanding: jobProfileIDs.union(unavailableProfileIDs),
+            outstanding: jobProfileIDs
+                .union(unavailableProfileIDs)
+                .union(supersededProfileIDs),
             trigger: trigger,
             presentationContext: presentationContext,
             generation: batchGeneration
@@ -1625,6 +1800,10 @@ actor UsageRefreshEngine {
         for profileID in unavailableProfileIDs {
             batch.outstanding.remove(profileID)
             batch.outcomes[profileID] = .unavailable
+        }
+        for profileID in supersededProfileIDs {
+            batch.outstanding.remove(profileID)
+            batch.outcomes[profileID] = .superseded
         }
         batches[batchID] = batch
 
@@ -1646,7 +1825,11 @@ actor UsageRefreshEngine {
         for request in requests {
             register(request)
         }
-        for request in requests {
+        for (index, request) in requests.enumerated() {
+            await memberEnqueueObserver?(
+                request.job.identity.profileID,
+                index
+            )
             await enqueue(request)
         }
 
@@ -1677,20 +1860,45 @@ actor UsageRefreshEngine {
         return batchID
     }
 
-    func invalidate(profileID: UUID) async {
+    func invalidate(
+        profileID: UUID,
+        beforeInputGeneration minimumValidInputGeneration: UInt64
+    ) async {
         guard !isShutdown else { return }
+        minimumValidInputGenerations[profileID] = max(
+            minimumValidInputGenerations[profileID] ?? 0,
+            minimumValidInputGeneration
+        )
         guard var slot = slots[profileID] else { return }
-        slot.generation &+= 1
-        if let running = slot.running,
-           running.phase == .fetching {
-            running.task.cancel()
+        let invalidatesRunning = slot.running.map {
+            $0.request.inputGeneration < minimumValidInputGeneration
+        } ?? false
+        let invalidatesPending = slot.pending.map {
+            $0.inputGeneration < minimumValidInputGeneration
+        } ?? false
+        guard invalidatesRunning || invalidatesPending else {
+            return
         }
-        let pending = slot.pending
-        slot.pending = nil
+        if invalidatesRunning {
+            if let running = slot.running,
+               slot.generation == running.generation {
+                slot.generation &+= 1
+            }
+            if let running = slot.running {
+                if running.phase == .fetching {
+                    running.task.cancel()
+                }
+            }
+        }
+        let invalidatedPending =
+            invalidatesPending ? slot.pending : nil
+        if invalidatesPending {
+            slot.pending = nil
+        }
         slots[profileID] = slot
-        if let pending {
+        if let invalidatedPending {
             await finishBatchMember(
-                pending,
+                invalidatedPending,
                 outcome: .superseded
             )
         }
@@ -1719,19 +1927,48 @@ actor UsageRefreshEngine {
     func shutdown() async {
         guard !isShutdown else { return }
         isShutdown = true
-        for slot in slots.values {
-            slot.running?.task.cancel()
+        let requestTasks = slots.values.compactMap {
+            $0.running?.task
         }
-        statusRunning?.1.cancel()
+        let statusTask = statusRunning?.1
+        for task in requestTasks {
+            task.cancel()
+        }
+        statusTask?.cancel()
         slots.removeAll()
         batches.removeAll()
         statusRunning = nil
         statusPending = nil
         await presentationStore.shutdown()
+        for task in requestTasks {
+            await task.value
+        }
+        await statusTask?.value
     }
 
     private func enqueue(_ request: Request) async {
         let profileID = request.job.identity.profileID
+        guard !isShutdown else { return }
+        guard request.inputGeneration
+                >= (minimumValidInputGenerations[profileID] ?? 0) else {
+            await finishBatchMember(
+                request,
+                outcome: .superseded
+            )
+            return
+        }
+        let currentInputGeneration =
+            await committer.currentInputGeneration(for: profileID)
+        guard !isShutdown else { return }
+        guard request.inputGeneration == currentInputGeneration,
+              request.inputGeneration
+                >= (minimumValidInputGenerations[profileID] ?? 0) else {
+            await finishBatchMember(
+                request,
+                outcome: .superseded
+            )
+            return
+        }
         guard !removedProfiles.contains(profileID) else {
             await finishBatchMember(
                 request,
@@ -1784,6 +2021,10 @@ actor UsageRefreshEngine {
 
     private func register(_ request: Request) {
         let profileID = request.job.identity.profileID
+        guard request.inputGeneration
+                >= (minimumValidInputGenerations[profileID] ?? 0) else {
+            return
+        }
         guard !removedProfiles.contains(profileID) else {
             return
         }
@@ -1807,12 +2048,23 @@ actor UsageRefreshEngine {
         generation: UInt64
     ) async {
         let profileID = request.job.identity.profileID
+        guard !isShutdown,
+              !removedProfiles.contains(profileID),
+              request.inputGeneration
+                >= (minimumValidInputGenerations[profileID] ?? 0) else {
+            await finishBatchMember(
+                request,
+                outcome: .superseded
+            )
+            return
+        }
         let task = Task { [weak self] in
             await withTaskGroup(
                 of: ComponentCompletion.self
             ) { group in
                 group.addTask {
                     do {
+                        try Task.checkCancellation()
                         return .provider(
                             .success(
                                 try await request.job.coreFetch()
@@ -1825,6 +2077,7 @@ actor UsageRefreshEngine {
                 if let apiFetch = request.job.apiFetch {
                     group.addTask {
                         do {
+                            try Task.checkCancellation()
                             return .api(
                                 .success(try await apiFetch())
                             )
@@ -1935,6 +2188,8 @@ actor UsageRefreshEngine {
             let candidate = UsageRefreshCommitCandidate(
                 identity: request.job.identity,
                 profileName: request.job.profileName,
+                notificationSettings:
+                    request.job.notificationSettings,
                 inputGeneration: request.inputGeneration,
                 invocationOrder: request.invocationOrder,
                 trigger: request.trigger,
@@ -1950,8 +2205,7 @@ actor UsageRefreshEngine {
                 guard var slot = await checkedSlot(
                     for: request,
                     generation: generation,
-                    completion: .provider(result),
-                    acceptedOnGenerationMismatch: true
+                    completion: .provider(result)
                 ), var running = slot.running else {
                     return
                 }
@@ -1977,6 +2231,7 @@ actor UsageRefreshEngine {
                 guard await committer
                     .publishCommittedPresentation(
                         candidate,
+                        receipt: receipt,
                         snapshot: snapshot,
                         presentationStore: presentationStore
                     ) else {
@@ -2119,6 +2374,8 @@ actor UsageRefreshEngine {
             let candidate = UsageRefreshCommitCandidate(
                 identity: request.job.identity,
                 profileName: request.job.profileName,
+                notificationSettings:
+                    request.job.notificationSettings,
                 inputGeneration: request.inputGeneration,
                 invocationOrder: request.invocationOrder,
                 trigger: request.trigger,
@@ -2134,8 +2391,7 @@ actor UsageRefreshEngine {
                 guard var slot = await checkedSlot(
                     for: request,
                     generation: generation,
-                    completion: .api(result),
-                    acceptedOnGenerationMismatch: true
+                    completion: .api(result)
                 ), var running = slot.running else {
                     return
                 }
@@ -2162,6 +2418,7 @@ actor UsageRefreshEngine {
                 guard await committer
                     .publishCommittedPresentation(
                         candidate,
+                        receipt: receipt,
                         snapshot: snapshot,
                         presentationStore: presentationStore
                     ) else {
@@ -2200,7 +2457,9 @@ actor UsageRefreshEngine {
                 await apiFailed(
                     request,
                     generation: generation,
-                    error: error
+                    error:
+                        UsageRefreshCommitError.persistenceRejected,
+                    component: .persistence
                 )
             }
         case .failure(let error):
@@ -2215,7 +2474,8 @@ actor UsageRefreshEngine {
     private func apiFailed(
         _ request: Request,
         generation: UInt64,
-        error: Error
+        error: Error,
+        component: UsageRefreshFailureComponent = .claudeAPI
     ) async {
         let cached = try? await committer.loadCurrentUsage(
             for: request.job.identity
@@ -2254,7 +2514,7 @@ actor UsageRefreshEngine {
                 trigger: request.trigger,
                 presentationContext:
                     request.presentationContext,
-                component: .claudeAPI,
+                component: component,
                 failure: terminalFailure
             ),
             snapshot: snapshot,
@@ -2424,14 +2684,26 @@ actor UsageRefreshEngine {
     }
 
     private func startPendingIfNeeded(profileID: UUID) async {
-        guard var slot = slots[profileID],
+        guard !isShutdown,
+              let slot = slots[profileID],
               let pending = slot.pending else {
             return
         }
-        slot.pending = nil
-        slots[profileID] = slot
-        guard pending.invocationOrder
-                == slot.latestInvocationOrder,
+        let currentInputGeneration =
+            await committer.currentInputGeneration(for: profileID)
+        guard var authoritativeSlot = slots[profileID],
+              authoritativeSlot.pending?.requestID
+                == pending.requestID else {
+            return
+        }
+        authoritativeSlot.pending = nil
+        slots[profileID] = authoritativeSlot
+        guard !isShutdown,
+              pending.inputGeneration == currentInputGeneration,
+              pending.inputGeneration
+                >= (minimumValidInputGenerations[profileID] ?? 0),
+              pending.invocationOrder
+                == authoritativeSlot.latestInvocationOrder,
               !removedProfiles.contains(profileID) else {
             await finishBatchMember(
                 pending,
@@ -2439,7 +2711,10 @@ actor UsageRefreshEngine {
             )
             return
         }
-        await start(pending, generation: slot.generation)
+        await start(
+            pending,
+            generation: authoritativeSlot.generation
+        )
     }
 
     private func finishBatchMember(
@@ -2604,6 +2879,16 @@ actor UsageRefreshEngine {
                 kind = .transport
                 recoverable = true
             }
+        } else if let error = error as? UsageProviderFetchError {
+            legacyErrorCode = nil
+            switch error {
+            case .codexHomeUnavailable:
+                kind = .invalidConfiguration
+                recoverable = false
+            case .providerIdentityMismatch:
+                kind = .protocolMismatch
+                recoverable = true
+            }
         } else if let error = error as? UsageRefreshCommitError {
             legacyErrorCode = nil
             switch error {
@@ -2618,7 +2903,9 @@ actor UsageRefreshEngine {
             }
             recoverable = true
         } else if let appError = error as? AppError {
-            legacyErrorCode = appError.code
+            legacyErrorCode = Self.allowedLegacyRefreshCode(
+                appError.code
+            )
             switch appError.code {
             case .sessionKeyNotFound, .sessionKeyInvalid,
                     .sessionKeyExpired, .apiUnauthorized:
@@ -2627,6 +2914,8 @@ actor UsageRefreshEngine {
                 kind = .timedOut
             case .apiInvalidResponse, .apiParsingFailed:
                 kind = .malformedResponse
+            case .storageWriteFailed:
+                kind = .persistence
             default:
                 kind = .transport
             }
@@ -2643,7 +2932,7 @@ actor UsageRefreshEngine {
                 legacyErrorCode = .networkUnavailable
             default:
                 kind = .transport
-                legacyErrorCode = .networkGenericError
+                legacyErrorCode = nil
             }
             recoverable = true
         } else {
@@ -2660,10 +2949,33 @@ actor UsageRefreshEngine {
         )
     }
 
+    private static func allowedLegacyRefreshCode(
+        _ code: ErrorCode
+    ) -> ErrorCode? {
+        switch code {
+        case .sessionKeyNotFound,
+                .sessionKeyInvalid,
+                .sessionKeyExpired,
+                .apiUnauthorized,
+                .apiRateLimited,
+                .apiServerError,
+                .apiServiceUnavailable,
+                .apiInvalidResponse,
+                .apiParsingFailed,
+                .networkTimeout,
+                .networkUnavailable,
+                .storageWriteFailed:
+            return code
+        default:
+            return nil
+        }
+    }
+
     private func enqueueStatus(
         for context: UsagePresentationContext,
         invocationOrder: UInt64
     ) async {
+        guard !isShutdown else { return }
         guard invocationOrder
                 >= latestStatusInvocationOrder else {
             return
@@ -2672,7 +2984,8 @@ actor UsageRefreshEngine {
         await presentationStore.registerClaudeStatusInvocation(
             invocationOrder
         )
-        guard invocationOrder
+        guard !isShutdown,
+              invocationOrder
                 == latestStatusInvocationOrder else {
             return
         }
@@ -2710,8 +3023,10 @@ actor UsageRefreshEngine {
     }
 
     private func startStatus(_ request: StatusRequest) async {
+        guard !isShutdown else { return }
         let task = Task { [weak self, statusFetch] in
             do {
+                try Task.checkCancellation()
                 let status = try await statusFetch()
                 await self?.statusCompleted(
                     request,

@@ -924,3 +924,6 @@
 "notifications.sound.default" = "Par défaut";
 "notifications.sound.none" = "Aucun";
 "notifications.sound.preview" = "Aperçu du son";
+
+"error.storage_write_failed" = "Impossible d’enregistrer les données d’utilisation";
+"error.storage_write_failed.suggestion" = "Veuillez réessayer. Si le problème persiste, vérifiez que l’application est autorisée à écrire dans son dossier de données.";

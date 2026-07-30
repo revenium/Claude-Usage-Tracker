@@ -944,3 +944,6 @@
 "notifications.sound.default" = "Predefinito";
 "notifications.sound.none" = "Nessuno";
 "notifications.sound.preview" = "Anteprima suono";
+
+"error.storage_write_failed" = "Impossibile salvare i dati di utilizzo";
+"error.storage_write_failed.suggestion" = "Riprova. Se il problema persiste, verifica che l'app disponga dell'autorizzazione per scrivere nella cartella dei dati.";

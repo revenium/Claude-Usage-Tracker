@@ -150,6 +150,7 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
         var commitGate: ManualGate<Void>?
         var providerCommitGate: ManualGate<Void>?
         var apiCommitGate: ManualGate<Void>?
+        var postCommitGate: ManualGate<Void>?
         var failureGate: ManualGate<Void>?
         var presentationGate: ManualGate<Void>?
         var forcedCommitError: UsageRefreshCommitError?
@@ -157,6 +158,8 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
         private(set) var durableCommits:
             [(UsageRefreshCommitCandidate, UsageRefreshCommitReceipt)] = []
         private(set) var acceptedPublications:
+            [(UsageRefreshCommitCandidate, UsageRefreshCommitReceipt)] = []
+        private(set) var presentedPublications:
             [(UsageRefreshCommitCandidate, UsageRefreshCommitReceipt)] = []
         private(set) var failurePublications:
             [UsageRefreshFailureCandidate] = []
@@ -247,10 +250,29 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
                 current.apiUsage = candidate.apiUsage
             }
 
+            let acceptedEvent = AcceptedUsageRefreshEvent(
+                sequence: UInt64(acceptedPublications.count + 1),
+                identity: candidate.identity,
+                inputGeneration: candidate.inputGeneration,
+                invocationOrder: candidate.invocationOrder,
+                profileName: candidate.profileName,
+                notificationSettings:
+                    candidate.notificationSettings,
+                trigger: candidate.trigger,
+                presentationContext:
+                    candidate.presentationContext,
+                capabilities: candidate.capabilities,
+                previousUsage: previous,
+                currentUsage: current,
+                acceptedComponents:
+                    candidate.acceptedComponents,
+                committedAt: TestValues.now
+            )
             let receipt = UsageRefreshCommitReceipt(
                 previousUsage: previous,
                 currentUsage: current,
-                committedAt: TestValues.now
+                committedAt: TestValues.now,
+                acceptedEvent: acceptedEvent
             )
             usageByProfile[candidate.identity.profileID] = current
             durableCommits.append((candidate, receipt))
@@ -258,12 +280,15 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
             // verified persistence and accepted-event publication are one
             // atomic operation after the optional pre-commit suspension.
             acceptedPublications.append((candidate, receipt))
+            if let postCommitGate {
+                _ = await postCommitGate.wait()
+            }
             return receipt
         }
 
         func publishFailure(
             _ candidate: UsageRefreshFailureCandidate,
-            snapshot: PresentationSnapshot?,
+            snapshot: PresentationSnapshot,
             presentationStore: UsagePresentationStore
         ) async -> Bool {
             if let failureGate {
@@ -282,12 +307,25 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
                         == candidate.invocationOrder else {
                 return false
             }
-            if let snapshot {
-                _ = presentationStore.publish(
-                    snapshot,
-                    expected: candidate.presentationContext,
-                    invocationOrder: candidate.invocationOrder
-                )
+            guard presentationStore.publish(
+                snapshot,
+                expected: candidate.presentationContext,
+                invocationOrder: candidate.invocationOrder
+            ) else {
+                return false
+            }
+            guard ledger.generation(
+                for: candidate.identity.profileID
+            ) == candidate.inputGeneration else {
+                return false
+            }
+            let publishedInvocationOrder = ledger.invocationOrder(
+                for: candidate.identity.profileID
+            )
+            guard publishedInvocationOrder == 0
+                    || publishedInvocationOrder
+                        == candidate.invocationOrder else {
+                return false
             }
             failurePublications.append(candidate)
             return true
@@ -295,6 +333,7 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
 
         func publishCommittedPresentation(
             _ candidate: UsageRefreshCommitCandidate,
+            receipt: UsageRefreshCommitReceipt,
             snapshot: PresentationSnapshot,
             presentationStore: UsagePresentationStore
         ) async -> Bool {
@@ -314,11 +353,27 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
                         == candidate.invocationOrder else {
                 return false
             }
-            _ = presentationStore.publish(
+            guard presentationStore.publish(
                 snapshot,
                 expected: candidate.presentationContext,
                 invocationOrder: candidate.invocationOrder
+            ) else {
+                return false
+            }
+            guard ledger.generation(
+                for: candidate.identity.profileID
+            ) == candidate.inputGeneration else {
+                return false
+            }
+            let postPresentationOrder = ledger.invocationOrder(
+                for: candidate.identity.profileID
             )
+            guard postPresentationOrder == 0
+                    || postPresentationOrder
+                        == candidate.invocationOrder else {
+                return false
+            }
+            presentedPublications.append((candidate, receipt))
             return true
         }
 
@@ -442,7 +497,10 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
         for _ in 0..<2 {
             _ = hub.publish(
                 identity: identity,
+                inputGeneration: 0,
+                invocationOrder: 1,
                 profileName: "Profile",
+                notificationSettings: NotificationSettings(),
                 trigger: .manual,
                 presentationContext: makeContext(
                     visible: [identity.profileID]
@@ -469,7 +527,10 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
 
         let first = hub.publish(
             identity: identity,
+            inputGeneration: 0,
+            invocationOrder: 1,
             profileName: "Profile",
+            notificationSettings: NotificationSettings(),
             trigger: .manual,
             presentationContext: makeContext(
                 visible: [identity.profileID]
@@ -482,7 +543,10 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
         )
         let second = hub.publish(
             identity: identity,
+            inputGeneration: 0,
+            invocationOrder: 2,
             profileName: "Profile",
+            notificationSettings: NotificationSettings(),
             trigger: .retry,
             presentationContext: makeContext(
                 visible: [identity.profileID]
@@ -508,15 +572,20 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
             report: try makeReport(providerID: .codex)
         )
         var acceptedEvents: [AcceptedUsageRefreshEvent] = []
+        var presentedEvents: [AcceptedUsageRefreshEvent] = []
         var failureEvents: [UsageRefreshFailureEvent] = []
         var batchEvents: [UsageRefreshBatchResult] = []
         _ = hub.observe { acceptedEvents.append($0) }
+        _ = hub.observePresented { presentedEvents.append($0) }
         _ = hub.observeFailures { failureEvents.append($0) }
         _ = hub.observeBatches { batchEvents.append($0) }
 
         let accepted = hub.publish(
             identity: identity,
+            inputGeneration: 0,
+            invocationOrder: 1,
             profileName: "Profile",
+            notificationSettings: NotificationSettings(),
             trigger: .manual,
             presentationContext: makeContext(
                 visible: [identity.profileID]
@@ -531,7 +600,7 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
             UsageRefreshFailureCandidate(
                 identity: identity,
                 profileName: "Profile",
-                inputGeneration: 0,
+                inputGeneration: 4,
                 invocationOrder: 1,
                 trigger: .retry,
                 presentationContext: makeContext(
@@ -546,6 +615,7 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
                 )
             )
         )
+        hub.publishPresented(accepted)
         let batchID = UUID()
         hub.publishBatch(
             UsageRefreshBatchResult(
@@ -561,11 +631,18 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
         )
 
         XCTAssertEqual(acceptedEvents.count, 1)
+        XCTAssertEqual(presentedEvents.count, 1)
         XCTAssertEqual(failureEvents.count, 1)
         XCTAssertEqual(batchEvents.count, 1)
+        XCTAssertEqual(failed.inputGeneration, 4)
+        XCTAssertEqual(failureEvents.first?.inputGeneration, 4)
         XCTAssertTrue(batchEvents[0].isLatestBatch)
         XCTAssertEqual(
             acceptedEvents.first?.sequence,
+            accepted.sequence
+        )
+        XCTAssertEqual(
+            presentedEvents.first?.sequence,
             accepted.sequence
         )
         XCTAssertEqual(
@@ -769,6 +846,64 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
         XCTAssertFalse(store.claudeStatus.isRefreshing)
     }
 
+    func testContextActivationClearsInheritedStatusLoadingOwnership()
+        throws
+    {
+        let identity = makeIdentity(providerID: .claude)
+        let oldContext = makeContext(
+            epoch: 1,
+            visible: [identity.profileID]
+        )
+        let newContext = makeContext(
+            epoch: 2,
+            visible: [identity.profileID]
+        )
+        let invocationOrder: UInt64 = 10
+        let store = retain(UsagePresentationStore())
+        store.activate(
+            oldContext,
+            hydrated: [
+                identity.profileID: makeSnapshot(
+                    identity: identity,
+                    epoch: oldContext.epoch,
+                    report: try makeReport(providerID: .claude)
+                )
+            ]
+        )
+        store.registerClaudeStatusInvocation(invocationOrder)
+        XCTAssertTrue(
+            store.beginClaudeStatus(
+                expected: oldContext,
+                invocationOrder: invocationOrder
+            )
+        )
+        XCTAssertTrue(store.claudeStatus.isRefreshing)
+
+        store.activate(
+            newContext,
+            hydrated: [
+                identity.profileID: makeSnapshot(
+                    identity: identity,
+                    epoch: newContext.epoch,
+                    report: try makeReport(providerID: .claude)
+                )
+            ]
+        )
+
+        XCTAssertEqual(
+            store.claudeStatus.presentationEpoch,
+            newContext.epoch
+        )
+        XCTAssertFalse(store.claudeStatus.isRefreshing)
+        XCTAssertFalse(
+            store.publishClaudeStatus(
+                .operational,
+                expected: oldContext,
+                invocationOrder: invocationOrder
+            )
+        )
+    }
+
     func testEmptyBatchCompletesImmediately() async {
         let context = makeContext()
         let harness = makeHarness(context: context)
@@ -803,6 +938,28 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
                 harness.batches.snapshot[0].outcomes[profileID]
             ),
             .unavailable
+        )
+    }
+
+    func testSupersededOnlyBatchCompletesImmediately() async {
+        let profileID = UUID()
+        let context = makeContext(visible: [profileID])
+        let harness = makeHarness(context: context)
+
+        _ = await harness.engine.enqueue(
+            [],
+            trigger: .manual,
+            presentationContext: context,
+            inputGenerations: [:],
+            supersededProfileIDs: [profileID]
+        )
+
+        XCTAssertEqual(harness.batches.snapshot.count, 1)
+        XCTAssertEqual(
+            outcome(
+                harness.batches.snapshot[0].outcomes[profileID]
+            ),
+            .superseded
         )
     }
 
@@ -923,6 +1080,81 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
             2
         )
         XCTAssertEqual(tags.filter { $0 == .accepted }.count, 1)
+    }
+
+    func testOverlappingTimerRefreshesKeepOnlyLatestPendingRequest()
+        async throws
+    {
+        let identity = makeIdentity()
+        let context = makeContext(visible: [identity.profileID])
+        let harness = makeHarness(
+            identities: [identity],
+            context: context
+        )
+        let firstGate = ManualGate<ProviderFetchResult>()
+        let latestGate = ManualGate<ProviderFetchResult>()
+
+        _ = await enqueue(
+            makeGatedJob(
+                identity: identity,
+                gate: firstGate,
+                trigger: .timer
+            ),
+            on: harness,
+            context: context
+        )
+        let firstStarted = await waitForStarts(firstGate, count: 1)
+        XCTAssertTrue(firstStarted)
+
+        _ = await enqueue(
+            makeGatedJob(
+                identity: identity,
+                gate: latestGate,
+                trigger: .timer
+            ),
+            on: harness,
+            context: context
+        )
+
+        firstGate.resolve(
+            ProviderFetchResult(
+                report: try makeReport(
+                    providerID: .codex,
+                    marker: 1
+                )
+            )
+        )
+        let latestStarted = await waitForStarts(latestGate, count: 1)
+        XCTAssertTrue(latestStarted)
+        latestGate.resolve(
+            ProviderFetchResult(
+                report: try makeReport(
+                    providerID: .codex,
+                    marker: 2
+                )
+            )
+        )
+        await assertEventually {
+            harness.batches.snapshot.count == 2
+        }
+
+        XCTAssertEqual(harness.committer.durableCommits.count, 1)
+        XCTAssertEqual(
+            harness.committer.cachedUsage(
+                for: identity.profileID
+            )?.report?.usageSummary?.metrics.first?.value,
+            2
+        )
+        XCTAssertTrue(
+            harness.batches.snapshot.allSatisfy {
+                $0.trigger == .timer
+            }
+        )
+        let outcomes = harness.batches.snapshot.compactMap {
+            outcome($0.outcomes[identity.profileID])
+        }
+        XCTAssertEqual(outcomes.filter { $0 == .superseded }.count, 1)
+        XCTAssertEqual(outcomes.filter { $0 == .accepted }.count, 1)
     }
 
     func testDifferentProfilesFetchConcurrently() async throws {
@@ -1305,20 +1537,475 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
         let fetchStarted = await waitForStarts(gate, count: 1)
         XCTAssertTrue(fetchStarted)
 
-        _ = harness.ledger.invalidate(profileID: identity.profileID)
-        await harness.engine.invalidate(profileID: identity.profileID)
+        let invalidatedGeneration = harness.ledger.invalidate(
+            profileID: identity.profileID
+        )
+        await harness.engine.invalidate(
+            profileID: identity.profileID,
+            beforeInputGeneration: invalidatedGeneration
+        )
         await assertEventually {
             harness.batches.snapshot.count == 1
         }
 
         XCTAssertEqual(harness.committer.durableCommits.count, 0)
         XCTAssertEqual(harness.committer.acceptedPublications.count, 0)
+        XCTAssertEqual(harness.committer.presentedPublications.count, 0)
         XCTAssertEqual(
             outcome(
                 harness.batches.snapshot[0]
                     .outcomes[identity.profileID]
             ),
             .superseded
+        )
+    }
+
+    func testInvalidationBeforeEnqueuePreventsStaleFetchLaunch()
+        async throws
+    {
+        let identity = makeIdentity()
+        let context = makeContext(visible: [identity.profileID])
+        let harness = makeHarness(
+            identities: [identity],
+            context: context
+        )
+        let fetchCalls = Locked(0)
+        let minimumValidGeneration = harness.ledger.invalidate(
+            profileID: identity.profileID
+        )
+        await harness.engine.invalidate(
+            profileID: identity.profileID,
+            beforeInputGeneration: minimumValidGeneration
+        )
+
+        _ = await harness.engine.enqueue(
+            [
+                makeJob(
+                    identity: identity,
+                    coreFetch: {
+                        fetchCalls.withValue { $0 += 1 }
+                        return ProviderFetchResult(
+                            report: try Self.makeReport(
+                                providerID: .codex,
+                                marker: 1
+                            )
+                        )
+                    }
+                )
+            ],
+            trigger: .manual,
+            presentationContext: context,
+            inputGenerations: [identity.profileID: 0],
+            invocationOrder: 1
+        )
+        await assertEventually {
+            harness.batches.snapshot.count == 1
+        }
+
+        XCTAssertEqual(fetchCalls.snapshot(), 0)
+        XCTAssertEqual(
+            outcome(
+                harness.batches.snapshot[0]
+                    .outcomes[identity.profileID]
+            ),
+            .superseded
+        )
+
+        _ = await harness.engine.enqueue(
+            [
+                makeJob(
+                    identity: identity,
+                    coreFetch: {
+                        fetchCalls.withValue { $0 += 1 }
+                        return ProviderFetchResult(
+                            report: try Self.makeReport(
+                                providerID: .codex,
+                                marker: 2
+                            )
+                        )
+                    }
+                )
+            ],
+            trigger: .retry,
+            presentationContext: context,
+            inputGenerations: [
+                identity.profileID: minimumValidGeneration
+            ],
+            invocationOrder: 2
+        )
+        await assertEventually {
+            harness.batches.snapshot.count == 2
+        }
+
+        XCTAssertEqual(fetchCalls.snapshot(), 1)
+        XCTAssertEqual(
+            outcome(
+                harness.batches.snapshot.first {
+                    $0.invocationOrder == 2
+                }?.outcomes[identity.profileID]
+            ),
+            .accepted
+        )
+    }
+
+    func testStaleEnqueueBeforeActorInvalidationDoesNotLaunchFetch()
+        async throws
+    {
+        let identity = makeIdentity()
+        let context = makeContext(visible: [identity.profileID])
+        let harness = makeHarness(
+            identities: [identity],
+            context: context
+        )
+        let fetchCalls = Locked(0)
+        let minimumValidGeneration = harness.ledger.invalidate(
+            profileID: identity.profileID
+        )
+
+        _ = await harness.engine.enqueue(
+            [
+                makeJob(
+                    identity: identity,
+                    coreFetch: {
+                        fetchCalls.withValue { $0 += 1 }
+                        return ProviderFetchResult(
+                            report: try Self.makeReport(
+                                providerID: .codex,
+                                marker: 1
+                            )
+                        )
+                    }
+                )
+            ],
+            trigger: .manual,
+            presentationContext: context,
+            inputGenerations: [identity.profileID: 0],
+            invocationOrder: 1
+        )
+        await assertEventually {
+            harness.batches.snapshot.count == 1
+        }
+
+        XCTAssertEqual(fetchCalls.snapshot(), 0)
+        XCTAssertEqual(
+            outcome(
+                harness.batches.snapshot[0]
+                    .outcomes[identity.profileID]
+            ),
+            .superseded
+        )
+
+        await harness.engine.invalidate(
+            profileID: identity.profileID,
+            beforeInputGeneration: minimumValidGeneration
+        )
+        _ = await harness.engine.enqueue(
+            [
+                makeJob(
+                    identity: identity,
+                    coreFetch: {
+                        fetchCalls.withValue { $0 += 1 }
+                        return ProviderFetchResult(
+                            report: try Self.makeReport(
+                                providerID: .codex,
+                                marker: 2
+                            )
+                        )
+                    }
+                )
+            ],
+            trigger: .retry,
+            presentationContext: context,
+            inputGenerations: [
+                identity.profileID: minimumValidGeneration
+            ],
+            invocationOrder: 2
+        )
+        await assertEventually {
+            harness.batches.snapshot.count == 2
+        }
+
+        XCTAssertEqual(fetchCalls.snapshot(), 1)
+        XCTAssertEqual(
+            outcome(
+                harness.batches.snapshot.first {
+                    $0.invocationOrder == 2
+                }?.outcomes[identity.profileID]
+            ),
+            .accepted
+        )
+    }
+
+    func testDelayedInvalidationPreservesNewGenerationRequest()
+        async throws
+    {
+        let identity = makeIdentity()
+        let context = makeContext(visible: [identity.profileID])
+        let harness = makeHarness(
+            identities: [identity],
+            context: context
+        )
+        let gate = ManualGate<ProviderFetchResult>()
+        let generation = harness.ledger.invalidate(
+            profileID: identity.profileID
+        )
+        _ = await harness.engine.enqueue(
+            [makeGatedJob(identity: identity, gate: gate)],
+            trigger: .manual,
+            presentationContext: context,
+            inputGenerations: [
+                identity.profileID: generation
+            ],
+            invocationOrder: 1
+        )
+        let started = await waitForStarts(gate, count: 1)
+        XCTAssertTrue(started)
+
+        await harness.engine.invalidate(
+            profileID: identity.profileID,
+            beforeInputGeneration: generation
+        )
+        gate.resolve(
+            ProviderFetchResult(
+                report: try makeReport(providerID: .codex)
+            )
+        )
+        await assertEventually {
+            harness.batches.snapshot.count == 1
+        }
+
+        XCTAssertEqual(harness.committer.durableCommits.count, 1)
+        XCTAssertEqual(
+            outcome(
+                harness.batches.snapshot[0]
+                    .outcomes[identity.profileID]
+            ),
+            .accepted
+        )
+    }
+
+    func testDelayedInvalidationPreservesNewPendingGeneration()
+        async throws
+    {
+        let identity = makeIdentity()
+        let context = makeContext(visible: [identity.profileID])
+        let harness = makeHarness(
+            identities: [identity],
+            context: context
+        )
+        let oldGate = CancellationGate<ProviderFetchResult>()
+        _ = await enqueue(
+            makeJob(
+                identity: identity,
+                coreFetch: { try await oldGate.wait() }
+            ),
+            on: harness,
+            context: context
+        )
+        let oldStarted = await waitForStarts(oldGate, count: 1)
+        XCTAssertTrue(oldStarted)
+
+        let generation = harness.ledger.invalidate(
+            profileID: identity.profileID
+        )
+        let replacementGate = ManualGate<ProviderFetchResult>()
+        _ = await harness.engine.enqueue(
+            [
+                makeGatedJob(
+                    identity: identity,
+                    gate: replacementGate
+                )
+            ],
+            trigger: .retry,
+            presentationContext: context,
+            inputGenerations: [
+                identity.profileID: generation
+            ],
+            invocationOrder: 2
+        )
+        await harness.engine.invalidate(
+            profileID: identity.profileID,
+            beforeInputGeneration: generation
+        )
+
+        let replacementStarted = await waitForStarts(
+            replacementGate,
+            count: 1
+        )
+        XCTAssertTrue(replacementStarted)
+        replacementGate.resolve(
+            ProviderFetchResult(
+                report: try makeReport(
+                    providerID: .codex,
+                    marker: 2
+                )
+            )
+        )
+        await assertEventually {
+            harness.batches.snapshot.count == 2
+        }
+
+        XCTAssertEqual(
+            outcome(
+                harness.batches.snapshot.first {
+                    $0.invocationOrder == 1
+                }?.outcomes[identity.profileID]
+            ),
+            .superseded
+        )
+        XCTAssertEqual(
+            outcome(
+                harness.batches.snapshot.first {
+                    $0.invocationOrder == 2
+                }?.outcomes[identity.profileID]
+            ),
+            .accepted
+        )
+    }
+
+    func testPendingRequestRevalidatesInputsBeforeFetchLaunch()
+        async throws
+    {
+        let identity = makeIdentity()
+        let context = makeContext(visible: [identity.profileID])
+        let harness = makeHarness(
+            identities: [identity],
+            context: context
+        )
+        let oldGate = ManualGate<ProviderFetchResult>()
+        _ = await enqueue(
+            makeGatedJob(identity: identity, gate: oldGate),
+            on: harness,
+            context: context
+        )
+        let oldStarted = await waitForStarts(oldGate, count: 1)
+        XCTAssertTrue(oldStarted)
+        let replacementFetches = Locked(0)
+        _ = await harness.engine.enqueue(
+            [
+                makeJob(
+                    identity: identity,
+                    coreFetch: {
+                        replacementFetches.withValue { $0 += 1 }
+                        return ProviderFetchResult(
+                            report: try Self.makeReport(
+                                providerID: .codex,
+                                marker: 2
+                            )
+                        )
+                    }
+                )
+            ],
+            trigger: .retry,
+            presentationContext: context,
+            inputGenerations: [identity.profileID: 0],
+            invocationOrder: 2
+        )
+
+        _ = harness.ledger.invalidate(
+            profileID: identity.profileID
+        )
+        oldGate.resolve(
+            ProviderFetchResult(
+                report: try makeReport(
+                    providerID: .codex,
+                    marker: 1
+                )
+            )
+        )
+        await assertEventually {
+            harness.batches.snapshot.count == 2
+        }
+
+        XCTAssertEqual(replacementFetches.snapshot(), 0)
+        XCTAssertEqual(
+            outcome(
+                harness.batches.snapshot.first {
+                    $0.invocationOrder == 2
+                }?.outcomes[identity.profileID]
+            ),
+            .superseded
+        )
+    }
+
+    func testNewerRegistrationAfterDurableCommitSupersedesOldBatch()
+        async throws
+    {
+        let identity = makeIdentity()
+        let context = makeContext(visible: [identity.profileID])
+        let harness = makeHarness(
+            identities: [identity],
+            context: context
+        )
+        let postCommitGate = ManualGate<Void>()
+        harness.committer.postCommitGate = postCommitGate
+        _ = await harness.engine.enqueue(
+            [
+                makeImmediateJob(
+                    identity: identity,
+                    result: ProviderFetchResult(
+                        report: try makeReport(
+                            providerID: .codex,
+                            marker: 1
+                        )
+                    )
+                )
+            ],
+            trigger: .manual,
+            presentationContext: context,
+            inputGenerations: [identity.profileID: 0],
+            invocationOrder: 1
+        )
+        let commitReturnedToEngine = await waitForStarts(
+            postCommitGate,
+            count: 1
+        )
+        XCTAssertTrue(commitReturnedToEngine)
+        XCTAssertEqual(harness.committer.durableCommits.count, 1)
+
+        _ = await harness.engine.enqueue(
+            [
+                makeImmediateJob(
+                    identity: identity,
+                    result: ProviderFetchResult(
+                        report: try makeReport(
+                            providerID: .codex,
+                            marker: 2
+                        )
+                    )
+                )
+            ],
+            trigger: .retry,
+            presentationContext: context,
+            inputGenerations: [identity.profileID: 0],
+            invocationOrder: 2
+        )
+        postCommitGate.resolve(())
+        await assertEventually {
+            harness.batches.snapshot.count == 2
+        }
+
+        XCTAssertEqual(
+            outcome(
+                harness.batches.snapshot.first {
+                    $0.invocationOrder == 1
+                }?.outcomes[identity.profileID]
+            ),
+            .superseded
+        )
+        XCTAssertEqual(
+            outcome(
+                harness.batches.snapshot.first {
+                    $0.invocationOrder == 2
+                }?.outcomes[identity.profileID]
+            ),
+            .accepted
+        )
+        XCTAssertEqual(
+            harness.store.snapshot(
+                for: identity.profileID
+            )?.report?.usageSummary?.metrics.first?.value,
+            2
         )
     }
 
@@ -1348,7 +2035,9 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
         let refreshingSnapshot = harness.store.snapshot(
             for: identity.profileID
         )
-        _ = harness.ledger.invalidate(profileID: identity.profileID)
+        let invalidatedGeneration = harness.ledger.invalidate(
+            profileID: identity.profileID
+        )
         commitGate.resolve(())
         await assertEventually {
             harness.batches.snapshot.count == 1
@@ -1375,7 +2064,10 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
             ),
             .superseded
         )
-        await harness.engine.invalidate(profileID: identity.profileID)
+        await harness.engine.invalidate(
+            profileID: identity.profileID,
+            beforeInputGeneration: invalidatedGeneration
+        )
     }
 
     func testCommitAndAcceptedPublicationRemainAtomic()
@@ -1411,6 +2103,7 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
 
         XCTAssertEqual(harness.committer.durableCommits.count, 1)
         XCTAssertEqual(harness.committer.acceptedPublications.count, 1)
+        XCTAssertEqual(harness.committer.presentedPublications.count, 1)
         XCTAssertNotNil(harness.store.snapshot(for: identity.profileID))
         XCTAssertEqual(
             outcome(
@@ -1458,7 +2151,9 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
             for: identity.profileID
         )
 
-        _ = harness.ledger.invalidate(profileID: identity.profileID)
+        let invalidatedGeneration = harness.ledger.invalidate(
+            profileID: identity.profileID
+        )
         presentationGate.resolve(())
         await assertEventually {
             harness.batches.snapshot.count == 1
@@ -1483,7 +2178,10 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
             ),
             .superseded
         )
-        await harness.engine.invalidate(profileID: identity.profileID)
+        await harness.engine.invalidate(
+            profileID: identity.profileID,
+            beforeInputGeneration: invalidatedGeneration
+        )
     }
 
     func testProviderRevisionMismatchSuppressesCommit() async throws {
@@ -1643,7 +2341,12 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
 
         harness.ledger.beginDeletion(profileID: identity.profileID)
         harness.store.markDeleting(profileID: identity.profileID)
-        await harness.engine.invalidate(profileID: identity.profileID)
+        await harness.engine.invalidate(
+            profileID: identity.profileID,
+            beforeInputGeneration: harness.ledger.generation(
+                for: identity.profileID
+            )
+        )
         XCTAssertEqual(
             harness.store.snapshot(
                 for: identity.profileID
@@ -1718,7 +2421,12 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
 
         harness.ledger.beginDeletion(profileID: identity.profileID)
         harness.store.markDeleting(profileID: identity.profileID)
-        await harness.engine.invalidate(profileID: identity.profileID)
+        await harness.engine.invalidate(
+            profileID: identity.profileID,
+            beforeInputGeneration: harness.ledger.generation(
+                for: identity.profileID
+            )
+        )
         await harness.engine.remove(profileID: identity.profileID)
         harness.ledger.completeDeletion(profileID: identity.profileID)
         XCTAssertNil(harness.store.snapshot(for: identity.profileID))
@@ -1834,9 +2542,17 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
             identities: [identity],
             context: context
         )
-        let gate = ManualGate<ProviderFetchResult>()
+        let exited = Locked(false)
+        let gate = CancellationGate<ProviderFetchResult> {
+            exited.withValue { $0 = true }
+        }
         _ = await enqueue(
-            makeGatedJob(identity: identity, gate: gate),
+            makeJob(
+                identity: identity,
+                coreFetch: {
+                    try await gate.wait()
+                }
+            ),
             on: harness,
             context: context
         )
@@ -1844,19 +2560,91 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
         XCTAssertTrue(fetchStarted)
 
         await harness.engine.shutdown()
-        gate.resolve(
-            ProviderFetchResult(
-                report: try makeReport(providerID: .codex)
-            )
-        )
-        _ = await eventually(
-            attempts: 100
-        ) {
-            harness.committer.commitAttempts.count > 0
-        }
 
+        XCTAssertTrue(exited.snapshot())
         XCTAssertEqual(harness.committer.commitAttempts.count, 0)
         XCTAssertEqual(harness.committer.acceptedPublications.count, 0)
+        XCTAssertTrue(harness.store.snapshots.isEmpty)
+    }
+
+    func testShutdownPreventsLaterBatchMembersAndStatusFromStarting()
+        async throws
+    {
+        let claude = makeIdentity(providerID: .claude)
+        let codex = makeIdentity(providerID: .codex)
+        let context = makeContext(
+            visible: [claude.profileID, codex.profileID]
+        )
+        let secondMemberGate = ManualGate<Void>()
+        let statusFetches = Locked(0)
+        let harness = makeHarness(
+            identities: [claude, codex],
+            context: context,
+            statusFetch: {
+                statusFetches.withValue { $0 += 1 }
+                return .operational
+            },
+            memberEnqueueObserver: { _, index in
+                if index == 1 {
+                    await secondMemberGate.wait()
+                }
+            }
+        )
+        let firstExited = Locked(false)
+        let firstFetch = CancellationGate<ProviderFetchResult> {
+            firstExited.withValue { $0 = true }
+        }
+        let secondFetches = Locked(0)
+
+        let enqueueTask = Task {
+            await harness.engine.enqueue(
+                [
+                    makeJob(
+                        identity: claude,
+                        coreFetch: {
+                            try await firstFetch.wait()
+                        }
+                    ),
+                    makeJob(
+                        identity: codex,
+                        coreFetch: {
+                            secondFetches.withValue { $0 += 1 }
+                            return ProviderFetchResult(
+                                report: try Self.makeReport(
+                                    providerID: .codex
+                                )
+                            )
+                        }
+                    )
+                ],
+                trigger: .manual,
+                presentationContext: context,
+                inputGenerations: [
+                    claude.profileID: 0,
+                    codex.profileID: 0
+                ],
+                invocationOrder: 1,
+                requestsClaudeStatus: true
+            )
+        }
+        let firstStarted = await waitForStarts(
+            firstFetch,
+            count: 1
+        )
+        XCTAssertTrue(firstStarted)
+        let secondMemberReached = await waitForStarts(
+            secondMemberGate,
+            count: 1
+        )
+        XCTAssertTrue(secondMemberReached)
+
+        await harness.engine.shutdown()
+        secondMemberGate.resolve(())
+        _ = await enqueueTask.value
+
+        XCTAssertTrue(firstExited.snapshot())
+        XCTAssertEqual(secondFetches.snapshot(), 0)
+        XCTAssertEqual(statusFetches.snapshot(), 0)
         XCTAssertTrue(harness.store.snapshots.isEmpty)
     }
 
@@ -2549,6 +3337,176 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
         )
     }
 
+    func testAPICommitFailurePublishesTypedPersistenceFailure()
+        async throws
+    {
+        let identity = makeIdentity(providerID: .claude)
+        let context = makeContext(visible: [identity.profileID])
+        let harness = makeHarness(
+            identities: [identity],
+            context: context
+        )
+        let apiGate = ManualGate<APIUsage>()
+        let coreResult = ProviderFetchResult(
+            report: try makeReport(providerID: .claude),
+            claudeUsage: makeClaudeUsage(marker: 5)
+        )
+        _ = await enqueue(
+            makeJob(
+                identity: identity,
+                coreFetch: { coreResult },
+                apiFetch: {
+                    await apiGate.wait()
+                }
+            ),
+            on: harness,
+            context: context
+        )
+        let apiStarted = await waitForStarts(apiGate, count: 1)
+        XCTAssertTrue(apiStarted)
+        await assertEventually {
+            harness.committer.durableCommits.count == 1
+        }
+        harness.committer.forcedCommitError =
+            .persistenceRejected
+        apiGate.resolve(makeAPIUsage(spend: 6))
+        await assertEventually {
+            harness.batches.snapshot.count == 1
+                && harness.committer.failurePublications.count == 1
+        }
+
+        XCTAssertEqual(
+            harness.committer.failurePublications[0].component,
+            .persistence
+        )
+        XCTAssertEqual(
+            harness.committer.failurePublications[0].failure.kind,
+            .persistence
+        )
+        XCTAssertEqual(
+            outcome(
+                harness.batches.snapshot[0]
+                    .outcomes[identity.profileID]
+            ),
+            .accepted
+        )
+    }
+
+    func testProviderIdentityMismatchPublishesProtocolFailure()
+        async
+    {
+        let identity = makeIdentity()
+        let context = makeContext(visible: [identity.profileID])
+        let harness = makeHarness(
+            identities: [identity],
+            context: context
+        )
+        _ = await enqueue(
+            makeJob(
+                identity: identity,
+                coreFetch: {
+                    throw UsageProviderFetchError
+                        .providerIdentityMismatch(
+                            expected: .codex,
+                            received: .claude
+                        )
+                }
+            ),
+            on: harness,
+            context: context
+        )
+        await assertEventually {
+            harness.batches.snapshot.count == 1
+        }
+
+        XCTAssertEqual(
+            harness.committer.failurePublications.first?
+                .failure.kind,
+            .protocolMismatch
+        )
+        XCTAssertEqual(
+            outcome(
+                harness.batches.snapshot[0]
+                    .outcomes[identity.profileID]
+            ),
+            .failed
+        )
+    }
+
+    func testUnrelatedAppErrorCodeDoesNotCrossRefreshBoundary()
+        async
+    {
+        let identity = makeIdentity()
+        let context = makeContext(visible: [identity.profileID])
+        let harness = makeHarness(
+            identities: [identity],
+            context: context
+        )
+        _ = await enqueue(
+            makeJob(
+                identity: identity,
+                coreFetch: {
+                    throw AppError(
+                        code: .githubGenericError,
+                        message: "Safe fixture",
+                        isRecoverable: true
+                    )
+                }
+            ),
+            on: harness,
+            context: context
+        )
+        await assertEventually {
+            harness.batches.snapshot.count == 1
+        }
+
+        XCTAssertEqual(
+            harness.committer.failurePublications.first?
+                .failure.kind,
+            .transport
+        )
+        XCTAssertNil(
+            harness.committer.failurePublications.first?
+                .failure.legacyErrorCode
+        )
+    }
+
+    func testUnclassifiedURLErrorDoesNotBypassLegacyAllowlist()
+        async
+    {
+        let identity = makeIdentity()
+        let context = makeContext(visible: [identity.profileID])
+        let harness = makeHarness(
+            identities: [identity],
+            context: context
+        )
+        _ = await enqueue(
+            makeJob(
+                identity: identity,
+                coreFetch: {
+                    throw URLError(.badURL)
+                }
+            ),
+            on: harness,
+            context: context
+        )
+        await assertEventually {
+            harness.batches.snapshot.count == 1
+        }
+
+        let failure = harness.committer.failurePublications.first?
+            .failure
+        XCTAssertEqual(failure?.kind, .transport)
+        XCTAssertNil(failure?.legacyErrorCode)
+        let appError = failure.map {
+            MenuBarManager.appError(for: $0)
+        }
+        XCTAssertEqual(
+            appError?.code,
+            .apiGenericError
+        )
+    }
+
     func testAPISuccessPreservesCachedClaudeReport() async throws {
         let identity = makeIdentity(providerID: .claude)
         let cachedReport = try makeReport(
@@ -2747,7 +3705,9 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
             harness.committer.failurePublications.isEmpty
         )
 
-        _ = harness.ledger.invalidate(profileID: identity.profileID)
+        let invalidatedGeneration = harness.ledger.invalidate(
+            profileID: identity.profileID
+        )
         failureGate.resolve(())
         await assertEventually {
             harness.batches.snapshot.count == 1
@@ -2774,7 +3734,66 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
             ),
             .superseded
         )
-        await harness.engine.invalidate(profileID: identity.profileID)
+        await harness.engine.invalidate(
+            profileID: identity.profileID,
+            beforeInputGeneration: invalidatedGeneration
+        )
+    }
+
+    func testSnapshotSubscriberInvalidationSuppressesFailureEvent()
+        async
+    {
+        let identity = makeIdentity()
+        let context = makeContext(visible: [identity.profileID])
+        let harness = makeHarness(
+            identities: [identity],
+            context: context
+        )
+        var invalidatedGeneration: UInt64?
+        let observation = harness.store.$snapshots.sink {
+            snapshots in
+            guard invalidatedGeneration == nil,
+                  snapshots[identity.profileID]?
+                    .currentFailure != nil else {
+                return
+            }
+            invalidatedGeneration = harness.ledger.invalidate(
+                profileID: identity.profileID
+            )
+        }
+
+        _ = await enqueue(
+            makeFailingJob(identity: identity),
+            on: harness,
+            context: context
+        )
+        await assertEventually {
+            harness.batches.snapshot.count == 1
+        }
+
+        XCTAssertNotNil(invalidatedGeneration)
+        XCTAssertTrue(
+            harness.committer.failurePublications.isEmpty
+        )
+        XCTAssertNotNil(
+            harness.store.snapshot(
+                for: identity.profileID
+            )?.currentFailure
+        )
+        XCTAssertEqual(
+            outcome(
+                harness.batches.snapshot[0]
+                    .outcomes[identity.profileID]
+            ),
+            .superseded
+        )
+        if let invalidatedGeneration {
+            await harness.engine.invalidate(
+                profileID: identity.profileID,
+                beforeInputGeneration: invalidatedGeneration
+            )
+        }
+        withExtendedLifetime(observation) {}
     }
 
     func testSuccessResetsSubsequentFailureCount() async throws {
@@ -2964,7 +3983,129 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
 
         XCTAssertEqual(harness.committer.durableCommits.count, 1)
         XCTAssertEqual(harness.committer.acceptedPublications.count, 1)
+        XCTAssertEqual(harness.committer.presentedPublications.count, 0)
         XCTAssertNil(harness.store.snapshot(for: identity.profileID))
+        XCTAssertEqual(
+            outcome(
+                harness.batches.snapshot[0]
+                    .outcomes[identity.profileID]
+            ),
+            .superseded
+        )
+    }
+
+    func testSnapshotSubscriberCanStaleProjectionButNotPresentedStage()
+        async throws
+    {
+        let identity = makeIdentity()
+        let context = makeContext(visible: [identity.profileID])
+        let harness = makeHarness(
+            identities: [identity],
+            context: context
+        )
+        var advanced = false
+        let observation = harness.store.$snapshots.sink {
+            snapshots in
+            guard !advanced,
+                  snapshots[identity.profileID]?.report != nil else {
+                return
+            }
+            advanced = true
+            harness.ledger.registerInvocation(
+                2,
+                profileIDs: [identity.profileID]
+            )
+        }
+
+        _ = await enqueue(
+            makeImmediateJob(
+                identity: identity,
+                result: ProviderFetchResult(
+                    report: try makeReport(
+                        providerID: .codex
+                    )
+                )
+            ),
+            on: harness,
+            context: context
+        )
+        await assertEventually {
+            harness.batches.snapshot.count == 1
+        }
+
+        XCTAssertTrue(advanced)
+        XCTAssertEqual(harness.committer.durableCommits.count, 1)
+        XCTAssertEqual(
+            harness.committer.acceptedPublications.count,
+            1
+        )
+        XCTAssertEqual(
+            harness.committer.presentedPublications.count,
+            0
+        )
+        XCTAssertNotNil(
+            harness.store.snapshot(
+                for: identity.profileID
+            )?.report
+        )
+        XCTAssertEqual(
+            outcome(
+                harness.batches.snapshot[0]
+                    .outcomes[identity.profileID]
+            ),
+            .superseded
+        )
+        withExtendedLifetime(observation) {}
+    }
+
+    func testStalePresentationContextSuppressesFailurePublication()
+        async
+    {
+        let identity = makeIdentity()
+        let oldContext = makeContext(
+            epoch: 1,
+            visible: [identity.profileID]
+        )
+        let harness = makeHarness(
+            identities: [identity],
+            context: oldContext
+        )
+        let gate = ManualGate<Void>()
+        _ = await enqueue(
+            makeJob(
+                identity: identity,
+                coreFetch: {
+                    await gate.wait()
+                    throw TestFailure.core
+                }
+            ),
+            on: harness,
+            context: oldContext
+        )
+        let started = await waitForStarts(gate, count: 1)
+        XCTAssertTrue(started)
+
+        let newContext = makeContext(
+            epoch: 2,
+            visible: [identity.profileID]
+        )
+        harness.store.activate(newContext)
+        gate.resolve(())
+        await assertEventually {
+            harness.batches.snapshot.count == 1
+        }
+
+        XCTAssertTrue(
+            harness.committer.failurePublications.isEmpty
+        )
+        XCTAssertNil(harness.store.snapshot(for: identity.profileID))
+        XCTAssertEqual(
+            outcome(
+                harness.batches.snapshot[0]
+                    .outcomes[identity.profileID]
+            ),
+            .superseded
+        )
     }
 
     func testSingleToMultiContextChangeRejectsOldPresentation()
@@ -3016,7 +4157,7 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
                 harness.batches.snapshot[0]
                     .outcomes[first.profileID]
             ),
-            .accepted
+            .superseded
         )
     }
 
@@ -3066,7 +4207,7 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
                 harness.batches.snapshot[0]
                     .outcomes[first.profileID]
             ),
-            .accepted
+            .superseded
         )
     }
 
@@ -3665,7 +4806,7 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
         presentationGate.resolve(())
         statusGate.resolve(.operational)
         _ = await refreshTask.value
-        await runtime.engine.shutdown()
+        await runtime.shutdownAndWait(profiles: [profile])
         for _ in 0..<100 {
             await Task.yield()
         }
@@ -3684,6 +4825,204 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
             runtime.presentationStore.claudeStatus.isRefreshing
         )
         XCTAssertNil(runtime.presentationStore.claudeStatus.failure)
+    }
+
+    func testRuntimeShutdownWaitsForCancelledFetchToExit()
+        async
+    {
+        let profile = Profile(
+            name: "Claude",
+            claudeSessionKey: "session",
+            organizationId: "organization"
+        )
+        let identity = ProviderRefreshIdentity(
+            profileID: profile.id,
+            providerID: .claude,
+            providerRevision: profile.providerRevision
+        )
+        let exited = Locked(false)
+        let gate = CancellationGate<ClaudeUsage> {
+            exited.withValue { $0 = true }
+        }
+        let registry = UsageProviderRegistry(
+            featureAvailability: .production,
+            claudeRequestCapture: { _ in
+                CapturedClaudeProviderRequest(
+                    coreFetch: {
+                        try await gate.wait()
+                    }
+                )
+            },
+            codexExecutableResolver: {
+                throw TestFailure.core
+            },
+            codexFetchFactory: { _ in
+                throw TestFailure.core
+            },
+            now: { TestValues.now }
+        )
+        let batches = BatchRecorder()
+        let ledger = UsageRefreshInputLedger()
+        let committer = FakeCommitter(ledger: ledger)
+        committer.register(identity)
+        let runtime = makeRuntime(
+            ledger: ledger,
+            committer: committer,
+            batches: batches,
+            registry: registry
+        )
+        runtime.activate(
+            profiles: [profile],
+            focusedProfileID: profile.id,
+            visibleProfileIDs: [profile.id],
+            epoch: 1
+        )
+
+        let refreshTask = runtime.refresh(
+            profiles: [profile],
+            trigger: .manual
+        )
+        let started = await waitForStarts(gate, count: 1)
+        XCTAssertTrue(started)
+
+        await runtime.shutdownAndWait(profiles: [profile])
+        _ = await refreshTask.value
+
+        XCTAssertTrue(exited.snapshot())
+        XCTAssertTrue(runtime.presentationStore.snapshots.isEmpty)
+        XCTAssertTrue(batches.snapshot.isEmpty)
+    }
+
+    func testRuntimeDuplicateIDsFailClosedBeforeProviderCapture()
+        async
+    {
+        let duplicateID = UUID()
+        let first = Profile(
+            name: "First",
+            claudeSessionKey: "session-first",
+            organizationId: "organization-first"
+        )
+        let duplicateClaude = Profile(
+            id: duplicateID,
+            name: "Duplicate Claude",
+            claudeSessionKey: "session-duplicate",
+            organizationId: "organization-duplicate"
+        )
+        let second = Profile(
+            name: "Second",
+            claudeSessionKey: "session-second",
+            organizationId: "organization-second"
+        )
+        let duplicateCodex = Profile(
+            id: duplicateID,
+            name: "Duplicate Codex",
+            providerConfiguration: .codex(.init())
+        )
+        let firstIdentity = ProviderRefreshIdentity(
+            profileID: first.id,
+            providerID: .claude,
+            providerRevision: first.providerRevision
+        )
+        let secondIdentity = ProviderRefreshIdentity(
+            profileID: second.id,
+            providerID: .claude,
+            providerRevision: second.providerRevision
+        )
+        let captureOrder = Locked<[UUID]>([])
+        let codexResolverCalls = Locked(0)
+        let codexFactoryCalls = Locked(0)
+        let statusFetches = Locked(0)
+        let usage = makeClaudeUsage(marker: 63)
+        let registry = UsageProviderRegistry(
+            featureAvailability: .testing(),
+            claudeRequestCapture: { profile in
+                captureOrder.withValue { $0.append(profile.id) }
+                return CapturedClaudeProviderRequest(
+                    coreFetch: { usage }
+                )
+            },
+            codexExecutableResolver: {
+                codexResolverCalls.withValue { $0 += 1 }
+                throw TestFailure.core
+            },
+            codexFetchFactory: { _ in
+                codexFactoryCalls.withValue { $0 += 1 }
+                throw TestFailure.core
+            },
+            now: { TestValues.now }
+        )
+        let batches = BatchRecorder()
+        let ledger = UsageRefreshInputLedger()
+        let committer = FakeCommitter(ledger: ledger)
+        committer.register(firstIdentity)
+        committer.register(secondIdentity)
+        let runtime = makeRuntime(
+            ledger: ledger,
+            committer: committer,
+            batches: batches,
+            registry: registry,
+            statusFetch: {
+                statusFetches.withValue { $0 += 1 }
+                return .operational
+            }
+        )
+        runtime.activate(
+            profiles: [first, second],
+            focusedProfileID: first.id,
+            visibleProfileIDs: [
+                first.id,
+                second.id,
+                duplicateID
+            ],
+            epoch: 1,
+            mode: .multi
+        )
+        var failureEvents = [UsageRefreshFailureEvent]()
+        _ = runtime.eventHub.observeFailures {
+            failureEvents.append($0)
+        }
+
+        _ = await runtime.refresh(
+            profiles: [
+                first,
+                duplicateClaude,
+                second,
+                duplicateCodex
+            ],
+            trigger: .manual
+        ).value
+        await assertEventually {
+            batches.snapshot.count == 1
+                && statusFetches.snapshot() == 1
+        }
+
+        XCTAssertEqual(captureOrder.snapshot(), [first.id, second.id])
+        XCTAssertEqual(codexResolverCalls.snapshot(), 0)
+        XCTAssertEqual(codexFactoryCalls.snapshot(), 0)
+        XCTAssertEqual(batches.snapshot[0].outcomes.count, 3)
+        XCTAssertEqual(
+            outcome(batches.snapshot[0].outcomes[first.id]),
+            .accepted
+        )
+        XCTAssertEqual(
+            outcome(batches.snapshot[0].outcomes[second.id]),
+            .accepted
+        )
+        XCTAssertEqual(
+            outcome(batches.snapshot[0].outcomes[duplicateID]),
+            .unavailable
+        )
+        XCTAssertFalse(
+            committer.commitAttempts.contains {
+                $0.identity.profileID == duplicateID
+            }
+        )
+        XCTAssertFalse(
+            committer.failurePublications.contains {
+                $0.identity.profileID == duplicateID
+            }
+        )
+        XCTAssertTrue(failureEvents.isEmpty)
     }
 
     func testRuntimeCaptureUnavailablePublishesTypedFailure()
@@ -3737,6 +5076,244 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
                 for: profile.id
             )?.currentFailure?.kind,
             .disabled
+        )
+    }
+
+    func testRuntimeCaptureFailureSubscriberInvalidationSuppressesEvent()
+        async
+    {
+        let profile = Profile(
+            name: "Codex",
+            providerConfiguration: .codex(.init())
+        )
+        let identity = ProviderRefreshIdentity(
+            profileID: profile.id,
+            providerID: .codex,
+            providerRevision: profile.providerRevision
+        )
+        let batches = BatchRecorder()
+        let ledger = UsageRefreshInputLedger()
+        let committer = FakeCommitter(ledger: ledger)
+        committer.register(identity)
+        let runtime = makeRuntime(
+            ledger: ledger,
+            committer: committer,
+            batches: batches
+        )
+        runtime.activate(
+            profiles: [profile],
+            focusedProfileID: profile.id,
+            visibleProfileIDs: [profile.id],
+            epoch: 1
+        )
+        var failureEvents: [UsageRefreshFailureEvent] = []
+        _ = runtime.eventHub.observeFailures {
+            failureEvents.append($0)
+        }
+        var armed = false
+        var invalidatedGeneration: UInt64?
+        let observation = runtime.presentationStore.$snapshots.sink {
+            snapshots in
+            guard armed,
+                  invalidatedGeneration == nil,
+                  snapshots[profile.id]?.currentFailure != nil else {
+                return
+            }
+            invalidatedGeneration = ledger.invalidate(
+                profileID: profile.id
+            )
+        }
+        armed = true
+
+        _ = await runtime.refresh(
+            profiles: [profile],
+            trigger: .manual
+        ).value
+        await assertEventually {
+            batches.snapshot.count == 1
+        }
+
+        XCTAssertNotNil(invalidatedGeneration)
+        XCTAssertTrue(failureEvents.isEmpty)
+        XCTAssertEqual(
+            outcome(batches.snapshot[0].outcomes[profile.id]),
+            .superseded
+        )
+        XCTAssertEqual(
+            runtime.presentationStore.snapshot(
+                for: profile.id
+            )?.currentFailure?.kind,
+            .disabled
+        )
+        withExtendedLifetime(observation) {}
+    }
+
+    func testRuntimeCaptureSelfInvalidationSuppressesFailureEvent()
+        async
+    {
+        let profile = Profile(
+            name: "Claude",
+            claudeSessionKey: "session",
+            organizationId: "organization"
+        )
+        let identity = ProviderRefreshIdentity(
+            profileID: profile.id,
+            providerID: .claude,
+            providerRevision: profile.providerRevision
+        )
+        let ledger = UsageRefreshInputLedger()
+        let registry = UsageProviderRegistry(
+            featureAvailability: .production,
+            claudeRequestCapture: { capturedProfile in
+                _ = ledger.invalidate(
+                    profileID: capturedProfile.id
+                )
+                throw TestFailure.core
+            },
+            codexExecutableResolver: {
+                throw TestFailure.core
+            },
+            codexFetchFactory: { _ in
+                throw TestFailure.core
+            },
+            now: { TestValues.now }
+        )
+        let batches = BatchRecorder()
+        let committer = FakeCommitter(ledger: ledger)
+        committer.register(identity)
+        let runtime = makeRuntime(
+            ledger: ledger,
+            committer: committer,
+            batches: batches,
+            registry: registry
+        )
+        runtime.activate(
+            profiles: [profile],
+            focusedProfileID: profile.id,
+            visibleProfileIDs: [profile.id],
+            epoch: 1
+        )
+        var failureEvents: [UsageRefreshFailureEvent] = []
+        _ = runtime.eventHub.observeFailures {
+            failureEvents.append($0)
+        }
+
+        _ = await runtime.refresh(
+            profiles: [profile],
+            trigger: .manual
+        ).value
+        await assertEventually {
+            batches.snapshot.count == 1
+        }
+
+        XCTAssertEqual(ledger.generation(for: profile.id), 1)
+        XCTAssertTrue(failureEvents.isEmpty)
+        XCTAssertNil(
+            runtime.presentationStore.snapshot(
+                for: profile.id
+            )?.currentFailure
+        )
+        XCTAssertEqual(
+            outcome(batches.snapshot[0].outcomes[profile.id]),
+            .superseded
+        )
+    }
+
+    func testSecondCaptureInvalidationSupersedesAlreadyCapturedProfile()
+        async
+    {
+        let profileA = Profile(
+            name: "Claude A",
+            claudeSessionKey: "session-a",
+            organizationId: "organization-a"
+        )
+        let profileB = Profile(
+            name: "Claude B",
+            claudeSessionKey: "session-b",
+            organizationId: "organization-b"
+        )
+        let identityA = ProviderRefreshIdentity(
+            profileID: profileA.id,
+            providerID: .claude,
+            providerRevision: profileA.providerRevision
+        )
+        let identityB = ProviderRefreshIdentity(
+            profileID: profileB.id,
+            providerID: .claude,
+            providerRevision: profileB.providerRevision
+        )
+        let ledger = UsageRefreshInputLedger()
+        let fetchesA = Locked(0)
+        let usageA = makeClaudeUsage(marker: 61)
+        let usageB = makeClaudeUsage(marker: 62)
+        let registry = UsageProviderRegistry(
+            featureAvailability: .production,
+            claudeRequestCapture: { capturedProfile in
+                if capturedProfile.id == profileA.id {
+                    return CapturedClaudeProviderRequest(
+                        coreFetch: {
+                            fetchesA.withValue { $0 += 1 }
+                            return usageA
+                        }
+                    )
+                }
+                _ = ledger.invalidate(profileID: profileA.id)
+                return CapturedClaudeProviderRequest(
+                    coreFetch: { usageB }
+                )
+            },
+            codexExecutableResolver: {
+                throw TestFailure.core
+            },
+            codexFetchFactory: { _ in
+                throw TestFailure.core
+            },
+            now: { TestValues.now }
+        )
+        let batches = BatchRecorder()
+        let committer = FakeCommitter(ledger: ledger)
+        committer.register(identityA)
+        committer.register(identityB)
+        let runtime = makeRuntime(
+            ledger: ledger,
+            committer: committer,
+            batches: batches,
+            registry: registry
+        )
+        runtime.activate(
+            profiles: [profileA, profileB],
+            focusedProfileID: profileA.id,
+            visibleProfileIDs: [profileA.id, profileB.id],
+            epoch: 1,
+            mode: .multi
+        )
+
+        _ = await runtime.refresh(
+            profiles: [profileA, profileB],
+            trigger: .manual
+        ).value
+        await assertEventually {
+            batches.snapshot.count == 1
+        }
+
+        XCTAssertEqual(fetchesA.snapshot(), 0)
+        XCTAssertFalse(
+            committer.durableCommits.contains {
+                $0.0.identity.profileID == profileA.id
+            }
+        )
+        XCTAssertFalse(
+            committer.acceptedPublications.contains {
+                $0.0.identity.profileID == profileA.id
+            }
+        )
+        XCTAssertEqual(
+            outcome(batches.snapshot[0].outcomes[profileA.id]),
+            .superseded
+        )
+        XCTAssertEqual(
+            outcome(batches.snapshot[0].outcomes[profileB.id]),
+            .accepted
         )
     }
 
@@ -4337,6 +5914,47 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
         XCTAssertTrue(runtime.presentationStore.snapshots.isEmpty)
     }
 
+    func testRuntimeShutdownFencesLateEngineBatchCallbacks()
+        async throws
+    {
+        let identity = makeIdentity()
+        let batches = BatchRecorder()
+        let ledger = UsageRefreshInputLedger()
+        let committer = FakeCommitter(ledger: ledger)
+        committer.register(identity)
+        let runtime = makeRuntime(
+            ledger: ledger,
+            committer: committer,
+            batches: batches
+        )
+        var eventBatches: [UsageRefreshBatchResult] = []
+        _ = runtime.eventHub.observeBatches {
+            eventBatches.append($0)
+        }
+        await runtime.shutdownAndWait(profiles: [])
+
+        _ = await runtime.engine.enqueue(
+            [
+                makeImmediateJob(
+                    identity: identity,
+                    result: ProviderFetchResult(
+                        report: try makeReport(
+                            providerID: .codex
+                        )
+                    )
+                )
+            ],
+            trigger: .manual,
+            presentationContext: .empty,
+            inputGenerations: [identity.profileID: 0],
+            invocationOrder: 1
+        )
+
+        XCTAssertTrue(batches.snapshot.isEmpty)
+        XCTAssertTrue(eventBatches.isEmpty)
+        XCTAssertTrue(committer.commitAttempts.isEmpty)
+    }
+
     func testRuntimeEmptyRefreshCompletesEmptyBatch() async {
         let batches = BatchRecorder()
         let ledger = UsageRefreshInputLedger()
@@ -4426,7 +6044,9 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
         cached: [UUID: ProfileCurrentUsage] = [:],
         statusFetch: @escaping UsageRefreshEngine.StatusFetch = {
             .operational
-        }
+        },
+        memberEnqueueObserver:
+            UsageRefreshEngine.MemberEnqueueObserver? = nil
     ) -> Harness {
         let ledger = retain(UsageRefreshInputLedger())
         let committer = retain(FakeCommitter(ledger: ledger))
@@ -4446,7 +6066,8 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
             now: { TestValues.now },
             batchObserver: { result in
                 batches.append(result)
-            }
+            },
+            memberEnqueueObserver: memberEnqueueObserver
         ))
         return Harness(
             ledger: ledger,
@@ -4541,6 +6162,7 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
         CapturedProviderRefreshJob(
             identity: identity,
             profileName: "Profile",
+            notificationSettings: NotificationSettings(),
             refreshInterval: refreshInterval,
             requestContext: UsageRefreshRequestContext(
                 trigger: trigger,
@@ -4569,10 +6191,12 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
 
     private func makeGatedJob(
         identity: ProviderRefreshIdentity,
-        gate: ManualGate<ProviderFetchResult>
+        gate: ManualGate<ProviderFetchResult>,
+        trigger: UsageRefreshTrigger = .manual
     ) -> CapturedProviderRefreshJob {
         Self.makeJob(
             identity: identity,
+            trigger: trigger,
             coreFetch: {
                 await gate.wait()
             }

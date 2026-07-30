@@ -78,16 +78,20 @@ struct PopoverContentView: View {
 
     // Computed properties for multi-profile mode support
     private var displayUsage: ClaudeUsage {
-        manager.clickedProfileUsage ?? manager.usage
+        MenuBarManager.popoverUsage(
+            clickedProfileID: manager.clickedProfileId,
+            clickedProfileUsage: manager.clickedProfileUsage,
+            activeProfileUsage: manager.usage
+        )
     }
 
     private var displayAPIUsage: APIUsage? {
-        // When viewing a non-active profile, use only that profile's API data
-        // to avoid leaking the active profile's console data
-        if manager.clickedProfileUsage != nil {
-            return manager.clickedProfileAPIUsage
-        }
-        return manager.apiUsage
+        MenuBarManager.popoverAPIUsage(
+            clickedProfileID: manager.clickedProfileId,
+            clickedProfileAPIUsage:
+                manager.clickedProfileAPIUsage,
+            activeProfileAPIUsage: manager.apiUsage
+        )
     }
 
     var body: some View {

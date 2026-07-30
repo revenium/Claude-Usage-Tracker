@@ -1,5 +1,6 @@
 import Cocoa
 import SwiftUI
+import UsageCore
 import UserNotifications
 
 struct SetupWizardDecision {
@@ -8,14 +9,20 @@ struct SetupWizardDecision {
         activeProfile: Profile?,
         hasValidClaudeCLI: () -> Bool
     ) -> Bool {
+        if activeProfile?.providerID == .codex {
+            // Provider routing precedes the one-time Claude migration wizard.
+            // Otherwise a first-launch Codex profile would enter the wizard
+            // branch, be rejected by the presentation guard, and initialize
+            // no menu-bar UI.
+            return false
+        }
         guard hasShownWizardOnce else { return true }
         guard let activeProfile else { return true }
 
         switch activeProfile.providerConfiguration {
-        case .codex(let configuration):
-            // Linking a verified home completes provider setup. Never probe
-            // Claude Keychain or CLI state for a Codex target.
-            return configuration.linkedHome == nil
+        case .codex:
+            // Covered before the first-launch rule above.
+            return false
         case .claude:
             if activeProfile.hasAnyCredentials {
                 return false
@@ -23,12 +30,17 @@ struct SetupWizardDecision {
             return !hasValidClaudeCLI()
         }
     }
+
+    static func canPresentLegacyWizard(activeProfile: Profile?) -> Bool {
+        activeProfile?.providerID != .codex
+    }
 }
 
 @MainActor
 class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     private var menuBarManager: MenuBarManager?
     private var setupWindow: NSWindow?
+    private var terminationTask: Task<Void, Never>?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Hosted unit tests load the application target in-process. They must
@@ -202,6 +214,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     /// Shows the setup wizard window (can be called manually for testing)
     func showSetupWizardManually() {
         LoggingService.shared.log("AppDelegate: showSetupWizardManually called")
+        guard SetupWizardDecision.canPresentLegacyWizard(
+            activeProfile: ProfileManager.shared.activeProfile
+        ) else {
+            LoggingService.shared.log(
+                "AppDelegate: Ignoring legacy Claude setup for Codex profile"
+            )
+            return
+        }
 
         // Temporarily show dock icon for the setup window
         NSApp.setActivationPolicy(.regular)
@@ -241,8 +261,25 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    func applicationShouldTerminate(
+        _ sender: NSApplication
+    ) -> NSApplication.TerminateReply {
+        guard let menuBarManager else {
+            return .terminateNow
+        }
+        guard terminationTask == nil else {
+            return .terminateLater
+        }
+        terminationTask = Task { @MainActor in
+            await menuBarManager.cleanupAndWaitForTermination()
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
-        // Cleanup
+        // Idempotent fallback for termination paths that do not consult the
+        // delegate reply gate.
         menuBarManager?.cleanup()
     }
 

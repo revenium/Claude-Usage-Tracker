@@ -1030,3 +1030,6 @@
 "notifications.sound.default" = "Default";
 "notifications.sound.none" = "None";
 "notifications.sound.preview" = "Preview sound";
+
+"error.storage_write_failed" = "Unable to save usage data";
+"error.storage_write_failed.suggestion" = "Please try again. If the problem continues, check that the app has permission to write to its data folder.";

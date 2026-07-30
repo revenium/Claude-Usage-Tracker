@@ -65,6 +65,24 @@ public struct CodexUsageProvider: UsageProvider, Sendable {
         try await requestAccountStatus(refreshToken: refreshToken)
     }
 
+    /// Returns an existing supported account without starting another login.
+    ///
+    /// Logged-out homes proceed through the requested official interactive
+    /// flow, while non-subscription account modes remain explicitly
+    /// unsupported.
+    public func beginLogin(
+        _ flow: CodexLoginFlow
+    ) async throws -> CodexLoginStartResult {
+        switch try await accountStatus() {
+        case let .supported(account):
+            return .alreadyAuthenticated(account)
+        case .unauthenticated:
+            return .started(try await startLogin(flow))
+        case .unsupported:
+            throw UsageProviderError.unsupportedAccount
+        }
+    }
+
     public func health() async -> ProviderHealth {
         let checkedAt = now()
         do {
@@ -117,16 +135,28 @@ public struct CodexUsageProvider: UsageProvider, Sendable {
             let mappedCredits = try CodexReportMapper.credits(
                 from: snapshot.rateLimits
             )
-            let mappedSummary = try snapshot.usage.flatMap {
-                try CodexReportMapper.usageSummary(from: $0)
+            let summaryResult = Self.mapOptionalUsage(snapshot.usage)
+            let mappedSummary: UsageSummary?
+            let health: ProviderHealth
+            switch summaryResult {
+            case let .available(summary):
+                mappedSummary = summary
+                health = ProviderHealth(
+                    status: .healthy,
+                    checkedAt: fetchedAt
+                )
+            case .unavailable:
+                mappedSummary = nil
+                health = ProviderHealth(
+                    status: .degraded,
+                    checkedAt: fetchedAt,
+                    issue: .optionalUsageUnavailable
+                )
             }
             return try UsageReport(
                 providerID: .codex,
                 account: snapshot.account,
-                health: ProviderHealth(
-                    status: .healthy,
-                    checkedAt: fetchedAt
-                ),
+                health: health,
                 limitGroups: mappedLimits,
                 usageSummary: mappedSummary,
                 credits: mappedCredits,
@@ -289,29 +319,36 @@ public struct CodexUsageProvider: UsageProvider, Sendable {
     private func requestOptionalTokenUsage(
         session: CodexAppServerSession? = nil
     )
-        async throws -> CodexAccountTokenUsageResponse?
+        async throws -> OptionalTokenUsageSnapshot
     {
         do {
             let rawResponse = try await request(
                 .accountUsageRead,
                 session: session
             )
-            return try CodexDomainDecoder.decode(
+            let decoded = try CodexDomainDecoder.decode(
                 CodexAccountTokenUsageResponse.self,
                 from: rawResponse
             )
+            guard decoded.containsRecognizedUsageSurface else {
+                return .unavailable
+            }
+            return .available(decoded)
         } catch let error as CodexTransportError {
             if case let .rpcFailure(code, method, _) = error,
                code == -32601,
                method == .accountUsageRead
             {
-                return nil
+                return .unavailable
             }
             throw Self.map(error)
         } catch let error as UsageProviderError {
+            if error == .malformedResponse {
+                return .unavailable
+            }
             throw error
         } catch {
-            throw UsageProviderError.malformedResponse
+            return .unavailable
         }
     }
 
@@ -364,7 +401,27 @@ public struct CodexUsageProvider: UsageProvider, Sendable {
         }
     }
 
+    private static func mapOptionalUsage(
+        _ usage: OptionalTokenUsageSnapshot
+    ) -> OptionalUsageMapping {
+        switch usage {
+        case let .available(response):
+            do {
+                return .available(
+                    try CodexReportMapper.usageSummary(from: response)
+                )
+            } catch {
+                return .unavailable
+            }
+        case .unavailable:
+            return .unavailable
+        }
+    }
+
     static func map(_ error: Error) -> UsageProviderError {
+        if error is CancellationError {
+            return .cancelled
+        }
         guard let transportError = error as? CodexTransportError else {
             if let providerError = error as? UsageProviderError {
                 return providerError
@@ -507,7 +564,17 @@ public struct CodexUsageProvider: UsageProvider, Sendable {
 private struct RefreshSnapshot: Sendable {
     var account: ProviderAccount
     var rateLimits: CodexRateLimitsResponse
-    var usage: CodexAccountTokenUsageResponse?
+    var usage: OptionalTokenUsageSnapshot
+}
+
+private enum OptionalTokenUsageSnapshot: Sendable {
+    case available(CodexAccountTokenUsageResponse)
+    case unavailable
+}
+
+private enum OptionalUsageMapping {
+    case available(UsageSummary?)
+    case unavailable
 }
 
 public actor CodexLoginAttempt {

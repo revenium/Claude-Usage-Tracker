@@ -393,13 +393,30 @@ class ProfileManager: ObservableObject {
             throw ProfileProviderConfigurationError
                 .codexProfileRequired(profileID)
         }
-        if profile.providerConfiguration.codexConfiguration?
-            .linkedHome?.path == path {
-            return try replaceCodexLinkedHome(
-                profile.providerConfiguration.codexConfiguration?
-                    .linkedHome,
-                for: profileID
-            )
+        if let existingHome = profile.providerConfiguration
+            .codexConfiguration?.linkedHome,
+           existingHome.path == path {
+            do {
+                let home = try codexHomeCanonicalizer.canonicalize(
+                    path,
+                    excludingProfileID: profileID,
+                    existingProfiles: profiles
+                )
+                return try replaceCodexLinkedHome(home, for: profileID)
+            } catch let error as CodexHomeCanonicalizationError {
+                guard error == .missing,
+                      existingHome.filesystemIdentity != nil else {
+                    throw error
+                }
+                // Preserve an already-verified offline link. This keeps
+                // unrelated metadata edits and pending-mutation recovery
+                // available without allowing a legacy path-only link to
+                // bypass explicit re-verification.
+                return try replaceCodexLinkedHome(
+                    existingHome,
+                    for: profileID
+                )
+            }
         }
         let home = try codexHomeCanonicalizer.canonicalize(
             path,
