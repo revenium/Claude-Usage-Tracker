@@ -428,6 +428,18 @@ jobs:
           gh release download "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" \
             --dir "$remote_dir"
+          for asset_name in \
+            "$RELEASE_ASSET" \
+            "$RELEASE_ASSET.sha256" \
+            appcast.xml \
+            release-metadata.json; do
+            cmp -s \
+              "release/$asset_name" \
+              "$remote_dir/$asset_name" || {
+                echo "Remote draft asset differs from the verified local artifact: $asset_name" >&2
+                exit 1
+              }
+          done
           ./scripts/verify_release_artifacts.sh \
             --require-developer-id \
             --require-notarization \

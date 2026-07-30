@@ -110,6 +110,8 @@ rg -q -- '--draft' "$release_workflow" \
     || fail 'release workflow does not create a private draft'
 rg -q 'verified-draft' "$release_workflow" \
     || fail 'release workflow does not re-download its draft assets'
+rg -q 'cmp -s' "$release_workflow" \
+    || fail 'release workflow does not byte-compare remote and local draft assets'
 rg -q -- '--draft=false' "$release_workflow" \
     || fail 'release workflow does not explicitly publish the verified draft'
 
