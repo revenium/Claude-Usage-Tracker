@@ -460,6 +460,11 @@ struct SetupProviderChoiceView: View {
 }
 
 struct CodexSetupWizardView: View {
+    private enum FocusTarget: Hashable {
+        case profileName
+        case homePath
+    }
+
     private let dependencies: ProviderUIDependencies
     let onBack: () -> Void
     let onComplete: () -> Void
@@ -470,6 +475,7 @@ struct CodexSetupWizardView: View {
     @State private var isHomeVerified = false
     @State private var isCommitting = false
     @State private var operationMessage: String?
+    @FocusState private var focusTarget: FocusTarget?
 
     init(
         dependencies: ProviderUIDependencies,
@@ -496,6 +502,9 @@ struct CodexSetupWizardView: View {
                     )
                 )
                 .font(.system(size: 24, weight: .semibold))
+                .accessibilityIdentifier(
+                    ProviderUIAccessibility.setupTitle
+                )
                 Text(
                     ProviderUILocalization.text(
                         "codex.setup.subtitle",
@@ -524,6 +533,10 @@ struct CodexSetupWizardView: View {
                         text: $profileName
                     )
                     .textFieldStyle(.roundedBorder)
+                    .focused($focusTarget, equals: .profileName)
+                    .accessibilityIdentifier(
+                        ProviderUIAccessibility.profileName
+                    )
 
                     HStack {
                         TextField(
@@ -535,6 +548,7 @@ struct CodexSetupWizardView: View {
                             text: $homePath
                         )
                         .textFieldStyle(.roundedBorder)
+                        .focused($focusTarget, equals: .homePath)
                         .accessibilityIdentifier(
                             ProviderUIAccessibility.homePath
                         )
@@ -597,6 +611,10 @@ struct CodexSetupWizardView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(!canComplete || isCommitting)
+                .keyboardShortcut(.defaultAction)
+                .accessibilityIdentifier(
+                    ProviderUIAccessibility.setupComplete
+                )
             }
             .padding(20)
         }
@@ -615,6 +633,9 @@ struct CodexSetupWizardView: View {
             if case .awaiting(.browser(let url)) = state {
                 NSWorkspace.shared.open(url)
             }
+        }
+        .onAppear {
+            focusTarget = .homePath
         }
         .onDisappear {
             viewModel.dismiss()
@@ -651,14 +672,28 @@ struct CodexSetupWizardView: View {
             case .loading:
                 HStack {
                     ProgressView()
-                    Text("Checking Codex…")
+                    Text(
+                        ProviderUILocalization.text(
+                            "codex.account.checking",
+                            fallback: "Checking Codex…"
+                        )
+                    )
                 }
             case .unauthenticated:
-                Text("Sign in with Codex to read subscription usage.")
+                Text(
+                    ProviderUILocalization.text(
+                        "codex.account.signed_out",
+                        fallback: "Sign-in required"
+                    )
+                )
                     .foregroundColor(.secondary)
             case .unsupported:
                 Text(
-                    "This account does not expose ChatGPT subscription usage."
+                    ProviderUILocalization.text(
+                        "codex.account.unsupported",
+                        fallback:
+                            "This account does not expose ChatGPT subscription usage."
+                    )
                 )
                 .foregroundColor(.red)
             case .unavailable(let message):
@@ -668,19 +703,29 @@ struct CodexSetupWizardView: View {
             }
 
             HStack {
-                Button("Refresh") {
+                Button("common.refresh".localized) {
                     viewModel.refresh()
                 }
                 .accessibilityIdentifier(
                     ProviderUIAccessibility.accountRefresh
                 )
-                Button("Sign In in Browser") {
+                Button(
+                    ProviderUILocalization.text(
+                        "codex.login.browser",
+                        fallback: "Sign In in Browser"
+                    )
+                ) {
                     viewModel.startLogin(.browser)
                 }
                 .accessibilityIdentifier(
                     ProviderUIAccessibility.loginStartBrowser
                 )
-                Button("Use Device Code") {
+                Button(
+                    ProviderUILocalization.text(
+                        "codex.login.device",
+                        fallback: "Use Device Code"
+                    )
+                ) {
                     viewModel.startLogin(.deviceCode)
                 }
                 .accessibilityIdentifier(
@@ -694,13 +739,35 @@ struct CodexSetupWizardView: View {
                 let userCode
             )):
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Device code: \(userCode)")
+                    Text(
+                        ProviderUILocalization.text(
+                            "codex.login.user_code",
+                            fallback: "Device code"
+                        )
+                        + ": \(userCode)"
+                    )
                         .font(.system(.body, design: .monospaced))
                         .textSelection(.enabled)
-                    Button("Open Verification Page") {
+                        .accessibilityIdentifier(
+                            ProviderUIAccessibility.loginDeviceCode
+                        )
+                    Button(
+                        ProviderUILocalization.text(
+                            "codex.login.open_verification",
+                            fallback: "Open Verification Page"
+                        )
+                    ) {
                         NSWorkspace.shared.open(verificationURL)
                     }
-                    Button("Cancel Sign-In") {
+                    .accessibilityIdentifier(
+                        ProviderUIAccessibility.loginOpenVerification
+                    )
+                    Button(
+                        ProviderUILocalization.text(
+                            "codex.login.cancel",
+                            fallback: "Cancel Sign-In"
+                        )
+                    ) {
                         viewModel.cancelLogin()
                     }
                     .accessibilityIdentifier(
@@ -709,8 +776,19 @@ struct CodexSetupWizardView: View {
                 }
             case .awaiting(.browser):
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Complete sign-in in the browser.")
-                    Button("Cancel Sign-In") {
+                    Text(
+                        ProviderUILocalization.text(
+                            "codex.login.browser_waiting",
+                            fallback:
+                                "Complete sign-in in the browser."
+                        )
+                    )
+                    Button(
+                        ProviderUILocalization.text(
+                            "codex.login.cancel",
+                            fallback: "Cancel Sign-In"
+                        )
+                    ) {
                         viewModel.cancelLogin()
                     }
                     .accessibilityIdentifier(
@@ -720,10 +798,18 @@ struct CodexSetupWizardView: View {
             case .starting:
                 ProgressView()
             case .cancelling:
-                Text("Canceling sign-in…")
+                Text(
+                    ProviderUILocalization.text(
+                        "codex.login.cancelling",
+                        fallback: "Canceling sign-in…"
+                    )
+                )
             case .succeeded:
                 Label(
-                    "Signed in with Codex",
+                    ProviderUILocalization.text(
+                        "codex.login.succeeded",
+                        fallback: "Signed in with Codex"
+                    ),
                     systemImage: "checkmark.circle.fill"
                 )
                 .foregroundColor(.green)

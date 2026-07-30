@@ -11,7 +11,7 @@ REPOSITORY_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 RESOURCES_DIR="${LOCALIZATION_RESOURCES_DIR:-$REPOSITORY_ROOT/Claude Usage/Resources}"
 SOURCE_DIR="${LOCALIZATION_SOURCE_DIR:-$REPOSITORY_ROOT/Claude Usage}"
 SKIP_SOURCE_SCAN="${LOCALIZATION_SKIP_SOURCE_SCAN:-0}"
-EXPECTED_LOCALES=(de en es fr it ja ko pt zh-ch)
+EXPECTED_LOCALES=(de en es fr it ja ko pt zh-Hans)
 
 fail() {
     printf 'error: %s\n' "$*" >&2
@@ -64,7 +64,7 @@ export LOCALIZATION_VALIDATOR_SOURCE_DIR="$SOURCE_DIR"
 export LOCALIZATION_VALIDATOR_SKIP_SOURCE_SCAN="$SKIP_SOURCE_SCAN"
 
 ruby -r json -r open3 -r pathname -r set <<'RUBY'
-EXPECTED_LOCALES = %w[de en es fr it ja ko pt zh-ch].freeze
+EXPECTED_LOCALES = %w[de en es fr it ja ko pt zh-Hans].freeze
 
 # Keep this intentionally narrow. A value identical to its lookup key normally
 # means a missing translation was hidden by an explicit self-value. Add only

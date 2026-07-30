@@ -1511,6 +1511,7 @@ class MenuBarManager: NSObject, ObservableObject {
         // Create SwiftUI content view
         let contentView = PopoverContentView(
             manager: self,
+            profileManager: profileManager,
             onRefresh: { [weak self] in
                 guard let self else { return }
                 self.refreshPopover(
@@ -3168,6 +3169,7 @@ extension MenuBarManager: NSPopoverDelegate {
         // those constraints conflict with a detached window's content sizing.
         let contentView = PopoverContentView(
             manager: self,
+            profileManager: profileManager,
             onRefresh: { [weak self] in
                 guard let self else { return }
                 self.refreshPopover(

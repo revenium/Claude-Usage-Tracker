@@ -22,15 +22,26 @@ class LanguageManager: ObservableObject {
 
     private init() {
         // Load saved language or use system default
-        if let savedCode = UserDefaults.standard.string(forKey: Constants.UserDefaultsKeys.appLanguage),
-           let language = SupportedLanguage(rawValue: savedCode) {
+        if let savedCode = UserDefaults.standard.string(
+            forKey: Constants.UserDefaultsKeys.appLanguage
+        ),
+           let language = SupportedLanguage.from(code: savedCode) {
             currentLanguage = language
         } else {
             // Detect system language and match to supported languages
-            let systemLanguage = Locale.current.language.languageCode?.identifier ?? "en"
-            currentLanguage = SupportedLanguage.allCases.first { $0.code == systemLanguage } ?? .english
+            let systemLanguage =
+                Locale.current.language.languageCode?.identifier
+                ?? "en"
+            currentLanguage =
+                SupportedLanguage.from(code: systemLanguage)
+                ?? .english
         }
 
+        // Canonicalize saved legacy aliases such as zh-cn and zh-ch.
+        UserDefaults.standard.set(
+            currentLanguage.code,
+            forKey: Constants.UserDefaultsKeys.appLanguage
+        )
         applyLanguage()
     }
 
@@ -53,12 +64,25 @@ class LanguageManager: ObservableObject {
         case portuguese = "pt"
         case japanese = "ja"
         case korean = "ko"
-        case zhCn = "zh-cn"
+        case simplifiedChinese = "zh-Hans"
 
         var id: String { rawValue }
 
         /// Language code for localization
         var code: String { rawValue }
+
+        static func from(code: String) -> SupportedLanguage? {
+            let normalized = code.lowercased()
+                .replacingOccurrences(of: "_", with: "-")
+            switch normalized {
+            case "zh", "zh-cn", "zh-ch", "zh-hans":
+                return .simplifiedChinese
+            default:
+                return allCases.first {
+                    $0.rawValue.lowercased() == normalized
+                }
+            }
+        }
 
         /// Display name in the language itself (native name)
         var displayName: String {
@@ -71,7 +95,7 @@ class LanguageManager: ObservableObject {
             case .portuguese: return "Português"
             case .japanese: return "日本語"
             case .korean: return "한국어"
-            case .zhCn: return "简体中文"
+            case .simplifiedChinese: return "简体中文"
             }
         }
 
@@ -86,7 +110,7 @@ class LanguageManager: ObservableObject {
             case .portuguese: return "Portuguese"
             case .japanese: return "Japanese"
             case .korean: return "Korean"
-            case .zhCn: return "Simplified Chinese"
+            case .simplifiedChinese: return "Simplified Chinese"
             }
         }
 
@@ -101,7 +125,7 @@ class LanguageManager: ObservableObject {
             case .portuguese: return "🇵🇹"
             case .japanese: return "🇯🇵"
             case .korean: return "🇰🇷"
-            case .zhCn: return "🇨🇳"
+            case .simplifiedChinese: return "🇨🇳"
             }
         }
     }

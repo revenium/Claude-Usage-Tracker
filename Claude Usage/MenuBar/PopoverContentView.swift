@@ -124,15 +124,19 @@ struct PopoverContentView: View {
     // Replaces NSPopover's native resize animation, which can recurse indefinitely
     // on macOS 26/27 when preferredContentSize drives the hosting controller.
     @State private var appeared = false
-    @StateObject private var profileManager = ProfileManager.shared
+    @ObservedObject private var profileManager: ProfileManager
 
     init(
         manager: MenuBarManager,
+        profileManager: ProfileManager,
         onRefresh: @escaping () -> Void,
         onManageProfiles: @escaping () -> Void,
         onPreferences: @escaping () -> Void
     ) {
         self.manager = manager
+        _profileManager = ObservedObject(
+            wrappedValue: profileManager
+        )
         self.onRefresh = onRefresh
         navigationActions = PopoverNavigationActions(
             manageProfiles: onManageProfiles,
@@ -268,6 +272,7 @@ struct PopoverContentView: View {
         ) {
         case .claudeLegacy:
             SmartHeader(
+                profileManager: profileManager,
                 usage: legacyDisplayUsage,
                 status: manager.status,
                 isRefreshing: isRefreshing,
@@ -296,6 +301,7 @@ struct PopoverContentView: View {
             }
         case .normalized:
             ProviderPopoverHeader(
+                profileManager: profileManager,
                 presentation: presentation,
                 claudeStatus: manager.status,
                 isRefreshing: isRefreshing
@@ -516,9 +522,19 @@ struct PopoverDivider: View {
 // MARK: - Profile Switcher Compact (for header)
 
 struct ProfileSwitcherCompact: View {
-    @StateObject private var profileManager = ProfileManager.shared
+    @ObservedObject private var profileManager: ProfileManager
     @State private var isHovered = false
     let onManageProfiles: () -> Void
+
+    init(
+        profileManager: ProfileManager,
+        onManageProfiles: @escaping () -> Void
+    ) {
+        _profileManager = ObservedObject(
+            wrappedValue: profileManager
+        )
+        self.onManageProfiles = onManageProfiles
+    }
 
     private var rows: [ProviderProfileRowPresentation] {
         ProviderProfileRowPresentation.make(
@@ -715,6 +731,7 @@ struct SmartHeader: View {
         string: "https://status.claude.com"
     )!
 
+    @ObservedObject private var profileManager: ProfileManager
     let usage: ClaudeUsage
     let status: ClaudeStatus
     let isRefreshing: Bool
@@ -723,7 +740,27 @@ struct SmartHeader: View {
     let onPreferences: () -> Void
     var clickedProfileId: UUID? = nil
 
-    @StateObject private var profileManager = ProfileManager.shared
+    init(
+        profileManager: ProfileManager,
+        usage: ClaudeUsage,
+        status: ClaudeStatus,
+        isRefreshing: Bool,
+        onRefresh: @escaping () -> Void,
+        onManageProfiles: @escaping () -> Void,
+        onPreferences: @escaping () -> Void,
+        clickedProfileId: UUID? = nil
+    ) {
+        _profileManager = ObservedObject(
+            wrappedValue: profileManager
+        )
+        self.usage = usage
+        self.status = status
+        self.isRefreshing = isRefreshing
+        self.onRefresh = onRefresh
+        self.onManageProfiles = onManageProfiles
+        self.onPreferences = onPreferences
+        self.clickedProfileId = clickedProfileId
+    }
 
     private var statusColor: Color {
         switch status.indicator.color {
@@ -757,7 +794,10 @@ struct SmartHeader: View {
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                ProfileSwitcherCompact(onManageProfiles: onManageProfiles)
+                ProfileSwitcherCompact(
+                    profileManager: profileManager,
+                    onManageProfiles: onManageProfiles
+                )
 
                 // Status
                 Button(action: {

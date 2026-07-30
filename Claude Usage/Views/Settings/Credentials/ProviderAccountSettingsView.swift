@@ -9,6 +9,7 @@ struct ProviderAccountSettingsView: View {
     @State private var homePath = ""
     @State private var operationMessage: String?
     @State private var showingUnlinkConfirmation = false
+    @FocusState private var homeFieldFocused: Bool
 
     init(
         profileID: UUID?,
@@ -61,6 +62,10 @@ struct ProviderAccountSettingsView: View {
         }
         .onAppear {
             selectAndRefresh()
+            if profile?.providerConfiguration.codexConfiguration?
+                .linkedHome == nil {
+                homeFieldFocused = true
+            }
         }
         .onChange(of: profileID) { _, _ in
             selectAndRefresh()
@@ -76,6 +81,9 @@ struct ProviderAccountSettingsView: View {
             isPresented: $showingUnlinkConfirmation
         ) {
             Button("common.cancel".localized, role: .cancel) {}
+                .accessibilityIdentifier(
+                    ProviderUIAccessibility.unlinkCancel
+                )
             Button(
                 text("codex.unlink.action", "Unlink"),
                 role: .destructive
@@ -178,6 +186,7 @@ struct ProviderAccountSettingsView: View {
                         text: $homePath
                     )
                     .textFieldStyle(.roundedBorder)
+                    .focused($homeFieldFocused)
                     .accessibilityIdentifier(
                         ProviderUIAccessibility.homePath
                     )
@@ -204,6 +213,7 @@ struct ProviderAccountSettingsView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(homePath.isEmpty)
+                    .keyboardShortcut(.defaultAction)
                     .accessibilityIdentifier(
                         ProviderUIAccessibility.homeLink
                     )
@@ -365,6 +375,9 @@ struct ProviderAccountSettingsView: View {
                 ),
                 color: healthColor(health.status)
             )
+            .accessibilityIdentifier(
+                ProviderUIAccessibility.accountUnauthenticated
+            )
         case .unsupported(let health):
             VStack(alignment: .leading, spacing: 6) {
                 statusRow(
@@ -384,8 +397,14 @@ struct ProviderAccountSettingsView: View {
                 .font(DesignTokens.Typography.caption)
                 .foregroundColor(.secondary)
             }
+            .accessibilityIdentifier(
+                ProviderUIAccessibility.accountUnsupported
+            )
         case .unavailable(let message):
             capabilityMessage(message, color: .red)
+                .accessibilityIdentifier(
+                    ProviderUIAccessibility.accountUnavailable
+                )
         }
     }
 
@@ -422,6 +441,9 @@ struct ProviderAccountSettingsView: View {
                         .accessibilityLabel(
                             text("codex.login.user_code", "Device code")
                         )
+                        .accessibilityIdentifier(
+                            ProviderUIAccessibility.loginDeviceCode
+                        )
                     Button(
                         text(
                             "codex.login.open_verification",
@@ -430,6 +452,9 @@ struct ProviderAccountSettingsView: View {
                     ) {
                         NSWorkspace.shared.open(verificationURL)
                     }
+                    .accessibilityIdentifier(
+                        ProviderUIAccessibility.loginOpenVerification
+                    )
                 }
                 Button(
                     text("codex.login.cancel", "Cancel Sign-In")
@@ -594,15 +619,29 @@ enum ProviderUIAccessibility {
     static let providerChoiceClaude = "setup.provider.claude"
     static let providerChoiceCodex = "setup.provider.codex"
     static let homePath = "codex.home.path"
+    static let profileName = "codex.profile.name"
+    static let setupTitle = "codex.setup.title"
     static let homePicker = "codex.home.picker"
     static let homeLink = "codex.home.link"
     static let loginStartBrowser = "codex.login.browser.start"
     static let loginStartDevice = "codex.login.device.start"
     static let loginCancel = "codex.login.cancel"
+    static let loginDeviceCode = "codex.login.device.code"
+    static let loginOpenVerification =
+        "codex.login.device.open_verification"
     static let accountStatus = "codex.account.status"
     static let accountRefresh = "codex.account.refresh"
     static let unlink = "codex.home.unlink"
     static let unlinkConfirmation = "codex.home.unlink.confirm"
+    static let unlinkCancel = "codex.home.unlink.cancel"
+    static let accountUnauthenticated =
+        "codex.account.unauthenticated"
+    static let accountUnsupported = "codex.account.unsupported"
+    static let accountUnavailable = "codex.account.unavailable"
+    static let setupComplete = "codex.setup.start_tracking"
+    static let historySurface = "history.surface"
+    static let historyTimeScale = "history.time_scale"
+    static let historyExport = "history.export"
     static let profileCreate = "profile.create"
     static let profileRename = "profile.rename"
     static let profileActivate = "profile.activate"

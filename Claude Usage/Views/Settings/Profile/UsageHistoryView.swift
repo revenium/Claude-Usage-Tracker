@@ -38,7 +38,13 @@ nonisolated struct NormalizedHistorySeriesIdentity:
 
 /// Usage history view showing charts and historical data
 struct UsageHistoryView: View {
+    typealias HistoryLoader = @MainActor (
+        UUID,
+        ProviderID
+    ) -> UsageHistoryData
+
     private let dependencies: ProviderUIDependencies
+    private let historyLoader: HistoryLoader
     @ObservedObject private var profileManager: ProfileManager
     @State private var historyData: UsageHistoryData = UsageHistoryData()
     @State private var selectedTimeScale: ChartTimeScale = .hours24
@@ -46,8 +52,17 @@ struct UsageHistoryView: View {
 
     /// Require the caller's composition root so settings navigation, history,
     /// capabilities, and export observe the same profile manager.
-    init(dependencies: ProviderUIDependencies) {
+    init(
+        dependencies: ProviderUIDependencies,
+        historyLoader: @escaping HistoryLoader = {
+            UsageHistoryService.shared.loadHistory(
+                for: $0,
+                providerID: $1
+            )
+        }
+    ) {
         self.dependencies = dependencies
+        self.historyLoader = historyLoader
         _profileManager = ObservedObject(
             wrappedValue: dependencies.profileManager
         )
@@ -77,6 +92,9 @@ struct UsageHistoryView: View {
                     }
                     .pickerStyle(.menu)
                     .frame(width: 110)
+                    .accessibilityIdentifier(
+                        ProviderUIAccessibility.historyTimeScale
+                    )
                 }
 
                 if let profile = profileManager.activeProfile {
@@ -126,6 +144,9 @@ struct UsageHistoryView: View {
             selectedWindowKey = "all"
             loadHistory()
         }
+        .accessibilityIdentifier(
+            ProviderUIAccessibility.historySurface
+        )
     }
 
     private struct WindowSeries: Identifiable {
@@ -343,6 +364,9 @@ struct UsageHistoryView: View {
                 .foregroundColor(.accentColor)
             }
             .menuStyle(.borderlessButton)
+            .accessibilityIdentifier(
+                ProviderUIAccessibility.historyExport
+            )
         }
         .padding(.top, 8)
     }
@@ -355,9 +379,9 @@ struct UsageHistoryView: View {
             return
         }
 
-        historyData = UsageHistoryService.shared.loadHistory(
-            for: profile.id,
-            providerID: profile.providerID
+        historyData = historyLoader(
+            profile.id,
+            profile.providerID
         )
     }
 

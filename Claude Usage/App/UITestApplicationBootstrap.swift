@@ -2,6 +2,7 @@
 import AppKit
 import SwiftUI
 import UsageCore
+import CodexUsageProvider
 
 /// The native UI-test host uses production views and the production Codex
 /// provider/process stack while isolating every app-owned persistence surface.
@@ -186,13 +187,16 @@ enum UITestApplicationBootstrap {
                 destination: .defaultView
             )
         case .history:
-            return settingsWindow(
-                dependencies: dependencies,
-                destination: .history(
-                    profileID:
-                        requiredActiveProfileID(
-                            compositionRoot.profileManager
-                        )
+            return makeHostingWindow(
+                title: "Claude Usage UI Tests — History",
+                size: CGSize(width: 920, height: 680),
+                view: AnyView(
+                    UsageHistoryView(
+                        dependencies: dependencies,
+                        historyLoader: { _, _ in
+                            UsageHistoryData()
+                        }
+                    )
                 )
             )
         case .popover:
@@ -318,70 +322,166 @@ private final class UITestHistoryService: ProfileHistoryDeleting {
 }
 
 /// Popover coverage is hosted in a regular window because XCUITest cannot
-/// reliably address a status-item NSPopover. The refresh operation still uses
-/// the real provider factory and process path; only the shell is test-hosted.
+/// reliably address a status-item NSPopover. The production normalized header,
+/// content, settings actions, provider factory, and process path remain intact.
 @MainActor
 private struct UITestPopoverSurface: View {
     let compositionRoot: ProviderUICompositionRoot
-    @StateObject private var viewModel: ProviderAccountViewModel
-
-    init(compositionRoot: ProviderUICompositionRoot) {
-        self.compositionRoot = compositionRoot
-        _viewModel = StateObject(
-            wrappedValue: ProviderAccountViewModel(
-                dependencies: compositionRoot.dependencies
-            )
-        )
-    }
+    @State private var presentation:
+        NormalizedUsagePresentation?
+    @State private var isRefreshing = false
+    @State private var settingsController:
+        SettingsWindowNavigationController?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Codex")
-                .font(.title2.bold())
-            Text(statusText)
-                .accessibilityIdentifier("codex.account.status")
-            Button("common.refresh".localized) {
-                viewModel.refresh()
+        let current = presentation ?? missingPresentation
+        VStack(alignment: .leading, spacing: 0) {
+            ProviderPopoverHeader(
+                profileManager: compositionRoot.profileManager,
+                presentation: current,
+                claudeStatus: .unknown,
+                isRefreshing: isRefreshing,
+                onRefresh: refresh,
+                onManageProfiles: {
+                    showSettings(destination: .manageProfiles)
+                },
+                onPreferences: {
+                    showSettings(destination: .defaultView)
+                }
+            )
+            PopoverDivider()
+            ScrollView {
+                NormalizedUsageView(
+                    presentation: current,
+                    displayPreferences:
+                        NormalizedUsageDisplayPreferences(
+                            showRemainingPercentage: false,
+                            showTimeMarker: true,
+                            showPaceMarker: true,
+                            usePaceColoring: true
+                        ),
+                    timeDisplay: .both,
+                    now: Date()
+                )
             }
-            .keyboardShortcut("r", modifiers: .command)
-            .accessibilityIdentifier("popover.action.refresh")
-            Button("common.settings".localized) {}
-                .keyboardShortcut(",", modifiers: .command)
-                .accessibilityIdentifier("popover.action.settings")
-            Spacer()
+            .frame(maxHeight: 540)
         }
-        .padding(20)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityIdentifier("ui-testing.surface.popover")
         .onAppear {
-            viewModel.selectProfile(
-                compositionRoot.profileManager.activeProfile?.id
-            )
-            viewModel.refresh()
-        }
-        .onDisappear {
-            viewModel.dismiss()
+            refresh()
         }
     }
 
-    private var statusText: String {
-        switch viewModel.accountState {
-        case .idle:
-            return "Idle"
-        case .loading:
-            return "Loading"
-        case .linked(let snapshot):
-            return [
-                snapshot.account.displayName,
-                snapshot.account.planName
-            ].compactMap { $0 }.joined(separator: " · ")
-        case .unauthenticated:
-            return "Sign in required"
-        case .unsupported:
-            return "Unsupported account"
-        case .unavailable:
-            return "Unavailable"
+    private var activeProfile: Profile {
+        compositionRoot.profileManager.activeProfile
+            ?? Profile(
+                name: "Codex",
+                providerConfiguration: .codex(.init())
+            )
+    }
+
+    private var expectedProfile: NormalizedUsageExpectedProfile {
+        NormalizedUsageExpectedProfile(
+            id: activeProfile.id,
+            name: activeProfile.name,
+            providerID: activeProfile.providerID,
+            providerRevision: activeProfile.providerRevision
+        )
+    }
+
+    private var missingPresentation:
+        NormalizedUsagePresentation {
+        NormalizedUsagePresentationBuilder.make(
+            snapshot: nil,
+            expectedProfile: expectedProfile,
+            now: Date()
+        )
+    }
+
+    private func refresh() {
+        guard !isRefreshing,
+              let home = activeProfile.providerConfiguration
+                .codexConfiguration?.linkedHome else {
+            return
         }
+        isRefreshing = true
+        Task {
+            let snapshot: PresentationSnapshot
+            do {
+                let captured = try compositionRoot
+                    .codexProviderFactory.capture(
+                        linkedHome: home
+                    )
+                let provider = try compositionRoot
+                    .codexProviderFactory.makeFreshProvider(
+                        captured
+                    )
+                let report = try await provider.fetchUsage()
+                snapshot = makeSnapshot(
+                    report: report,
+                    failure: nil
+                )
+            } catch {
+                snapshot = makeSnapshot(
+                    report: nil,
+                    failure: ProviderRefreshFailure(
+                        kind: .transport,
+                        occurredAt: Date(),
+                        isRecoverable: true,
+                        consecutiveCount: 1
+                    )
+                )
+            }
+            presentation =
+                NormalizedUsagePresentationBuilder.make(
+                    snapshot: snapshot,
+                    expectedProfile: expectedProfile,
+                    now: Date()
+                )
+            isRefreshing = false
+        }
+    }
+
+    private func makeSnapshot(
+        report: UsageReport?,
+        failure: ProviderRefreshFailure?
+    ) -> PresentationSnapshot {
+        PresentationSnapshot(
+            profileID: activeProfile.id,
+            profileName: activeProfile.name,
+            providerID: activeProfile.providerID,
+            providerRevision: activeProfile.providerRevision,
+            presentationEpoch: 1,
+            capabilities:
+                compositionRoot.codexProviderFactory.capabilities,
+            configurationState: .ready,
+            report: report,
+            claudeUsage: nil,
+            claudeAPIUsage: nil,
+            activity: .idle,
+            lastSuccessfulAt: report == nil ? nil : Date(),
+            currentFailure: failure
+        )
+    }
+
+    private func showSettings(
+        destination: SettingsNavigationDestination
+    ) {
+        let controller = SettingsWindowBuilder.makeController(
+            size: CGSize(width: 920, height: 680),
+            dependencies: compositionRoot.dependencies,
+            destination: destination
+        )
+        controller.window.title =
+            "Claude Usage UI Tests — Popover Settings"
+        controller.window.setAccessibilityIdentifier(
+            "ui-testing.surface.popover-settings"
+        )
+        controller.window.center()
+        controller.window.makeKeyAndOrderFront(nil)
+        settingsController = controller
+        NSApp.activate(ignoringOtherApps: true)
     }
 }
 #endif

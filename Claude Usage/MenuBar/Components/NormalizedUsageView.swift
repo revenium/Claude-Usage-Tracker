@@ -742,6 +742,7 @@ enum NormalizedUsageStrings {
 }
 
 struct ProviderPopoverHeader: View {
+    @ObservedObject var profileManager: ProfileManager
     let presentation: NormalizedUsagePresentation
     let claudeStatus: ClaudeStatus
     let isRefreshing: Bool
@@ -802,6 +803,7 @@ struct ProviderPopoverHeader: View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
                 ProfileSwitcherCompact(
+                    profileManager: profileManager,
                     onManageProfiles: onManageProfiles
                 )
 

@@ -37,7 +37,7 @@ nonisolated struct UITestLaunchConfiguration: Equatable, Sendable {
     static let localeEnvironmentKey = "UI_TEST_LOCALE"
 
     static let supportedLocales = [
-        "en", "de", "es", "fr", "it", "ja", "ko", "pt", "zh-ch"
+        "en", "de", "es", "fr", "it", "ja", "ko", "pt", "zh-Hans"
     ]
 
     let rootURL: URL
@@ -145,8 +145,12 @@ nonisolated struct UITestLaunchConfiguration: Equatable, Sendable {
         let candidate = URL(
             fileURLWithPath: rawPath,
             isDirectory: true
-        ).standardizedFileURL
-        let temporaryRoot = temporaryDirectoryURL.standardizedFileURL
+        )
+        .standardizedFileURL
+        .resolvingSymlinksInPath()
+        let temporaryRoot = temporaryDirectoryURL
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
         guard candidate.path != temporaryRoot.path,
               candidate.path.hasPrefix(temporaryRoot.path + "/") else {
             return nil

@@ -5,7 +5,7 @@ final class UITestLaunchConfigurationTests: XCTestCase {
     private let temporaryRoot = URL(
         fileURLWithPath: "/tmp/claude-usage-ui-tests",
         isDirectory: true
-    )
+    ).resolvingSymlinksInPath()
 
     func testRequiresCompileTimeGate() {
         let result = UITestLaunchConfiguration.evaluate(
@@ -51,6 +51,48 @@ final class UITestLaunchConfigurationTests: XCTestCase {
                 environment: environment,
                 compilationEnabled: true,
                 temporaryDirectoryURL: URL(fileURLWithPath: "/tmp")
+            ),
+            .rejected(
+                "UI_TEST_ROOT must be an absolute child of the temporary directory."
+            )
+        )
+    }
+
+    func testRejectsSymlinkEscapingTemporaryDirectory() throws {
+        let temporaryDirectory = FileManager.default
+            .temporaryDirectory
+            .appendingPathComponent(
+                "ui-launch-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        try FileManager.default.createDirectory(
+            at: temporaryDirectory,
+            withIntermediateDirectories: true
+        )
+        defer {
+            try? FileManager.default.removeItem(
+                at: temporaryDirectory
+            )
+        }
+        let escapedRoot = temporaryDirectory
+            .appendingPathComponent("escaped", isDirectory: true)
+        try FileManager.default.createSymbolicLink(
+            at: escapedRoot,
+            withDestinationURL: URL(
+                fileURLWithPath: "/Users",
+                isDirectory: true
+            )
+        )
+        var environment = validEnvironment()
+        environment[UITestLaunchConfiguration.rootEnvironmentKey] =
+            escapedRoot.path
+
+        XCTAssertEqual(
+            UITestLaunchConfiguration.evaluate(
+                arguments: ["Claude Usage", "--ui-testing"],
+                environment: environment,
+                compilationEnabled: true,
+                temporaryDirectoryURL: temporaryDirectory
             ),
             .rejected(
                 "UI_TEST_ROOT must be an absolute child of the temporary directory."

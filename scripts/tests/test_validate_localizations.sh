@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPOSITORY_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 VALIDATOR="$REPOSITORY_ROOT/scripts/validate_localizations.sh"
 FIXTURES="$REPOSITORY_ROOT/scripts/fixtures/localization-validator"
-EXPECTED_LOCALES=(de en es fr it ja ko pt zh-ch)
+EXPECTED_LOCALES=(de en es fr it ja ko pt zh-Hans)
 TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/localization-validator.XXXXXX")"
 trap 'rm -rf "$TEST_ROOT"' EXIT
 
