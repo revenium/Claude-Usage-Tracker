@@ -58,6 +58,12 @@ struct Profile: Codable, Identifiable, Equatable {
     /// profile for UI compatibility, but normal profile JSON never encodes it.
     var currentUsageMigrationRetry: ProfileCurrentUsage?
 
+    /// Set before any destructive profile cleanup starts. The retained record
+    /// keeps enough identity for the user to retry deletion, while loaders
+    /// refuse to hydrate credentials or usage back into a partially deleted
+    /// profile.
+    var deletionInProgress: Bool
+
     init(
         id: UUID = UUID(),
         name: String,
@@ -81,7 +87,8 @@ struct Profile: Codable, Identifiable, Equatable {
         createdAt: Date = Date(),
         lastUsedAt: Date = Date(),
         credentialMigrationRetry: ProfileCredentialMigrationRetry = .init(),
-        currentUsageMigrationRetry: ProfileCurrentUsage? = nil
+        currentUsageMigrationRetry: ProfileCurrentUsage? = nil,
+        deletionInProgress: Bool = false
     ) {
         self.id = id
         self.name = name
@@ -106,6 +113,7 @@ struct Profile: Codable, Identifiable, Equatable {
         self.lastUsedAt = lastUsedAt
         self.credentialMigrationRetry = credentialMigrationRetry
         self.currentUsageMigrationRetry = currentUsageMigrationRetry
+        self.deletionInProgress = deletionInProgress
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -132,6 +140,7 @@ struct Profile: Codable, Identifiable, Equatable {
         case lastUsedAt
         case credentialMigrationRetry
         case currentUsageMigrationRetry
+        case deletionInProgress
     }
 
     init(from decoder: Decoder) throws {
@@ -179,6 +188,10 @@ struct Profile: Codable, Identifiable, Equatable {
         ) ?? true
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         lastUsedAt = try container.decodeIfPresent(Date.self, forKey: .lastUsedAt) ?? createdAt
+        deletionInProgress = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .deletionInProgress
+        ) ?? false
 
         var retry = try container.decodeIfPresent(
             ProfileCredentialMigrationRetry.self,
@@ -237,6 +250,9 @@ struct Profile: Codable, Identifiable, Equatable {
         try container.encode(isSelectedForDisplay, forKey: .isSelectedForDisplay)
         try container.encode(createdAt, forKey: .createdAt)
         try container.encode(lastUsedAt, forKey: .lastUsedAt)
+        if deletionInProgress {
+            try container.encode(true, forKey: .deletionInProgress)
+        }
 
         if !credentialMigrationRetry.isEmpty {
             try container.encode(credentialMigrationRetry, forKey: .credentialMigrationRetry)

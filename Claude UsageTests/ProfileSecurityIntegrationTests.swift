@@ -313,6 +313,186 @@ final class ProfileSecurityIntegrationTests: XCTestCase {
         }
     }
 
+    @MainActor
+    func testThrowingCLIProfileUpdateDoesNotDeleteUnresolvedUnrelatedSecret() throws {
+        let profileID = UUID()
+        let secrets = MockProfileSecretStore()
+        let setupStore = retain(ProfileStore(defaults: defaults, secretStore: secrets))
+        try setupStore.saveProfilesThrowing([
+            Profile(id: profileID, name: "CLI")
+        ])
+        secrets.values[locator(profileID, .claudeSessionKey)] = "UNRELATED_CLAUDE"
+        secrets.values[locator(profileID, .apiSessionKey)] = "UNRELATED_API"
+        secrets.values[locator(profileID, .cliCredentialsJSON)] = "OLD_CLI"
+        secrets.readErrors[.claudeSessionKey] = TestError.expected
+
+        let store = retain(ProfileStore(defaults: defaults, secretStore: secrets))
+        let loaded = store.loadProfiles()
+        let manager = retain(ProfileManager(profileStore: store))
+        manager.profiles = loaded
+        manager.activeProfile = loaded.first
+        var updated = try XCTUnwrap(loaded.first)
+        updated.cliCredentialsJSON = "NEW_CLI"
+        updated.hasCliAccount = true
+        updated.cliAccountSyncedAt = Date(timeIntervalSinceReferenceDate: 51)
+
+        try manager.updateProfileThrowing(updated)
+
+        XCTAssertEqual(
+            secrets.values[locator(profileID, .claudeSessionKey)],
+            "UNRELATED_CLAUDE"
+        )
+        XCTAssertEqual(
+            secrets.values[locator(profileID, .apiSessionKey)],
+            "UNRELATED_API"
+        )
+        XCTAssertEqual(
+            secrets.values[locator(profileID, .cliCredentialsJSON)],
+            "NEW_CLI"
+        )
+        XCTAssertFalse(secrets.deleted.contains(locator(profileID, .claudeSessionKey)))
+        XCTAssertFalse(secrets.deleted.contains(locator(profileID, .apiSessionKey)))
+        XCTAssertEqual(manager.activeProfile?.cliCredentialsJSON, "NEW_CLI")
+    }
+
+    @MainActor
+    func testThrowingCLIProfileUpdateSurfacesCredentialWriteFailure() throws {
+        let profileID = UUID()
+        let secrets = MockProfileSecretStore()
+        let store = retain(ProfileStore(defaults: defaults, secretStore: secrets))
+        let original = Profile(
+            id: profileID,
+            name: "CLI",
+            cliCredentialsJSON: "OLD_CLI",
+            hasCliAccount: true
+        )
+        try store.saveProfilesThrowing([original])
+        secrets.values[locator(profileID, .cliCredentialsJSON)] = "OLD_CLI"
+        let manager = retain(ProfileManager(profileStore: store))
+        manager.profiles = [original]
+        manager.activeProfile = original
+        secrets.writeErrors[.cliCredentialsJSON] = TestError.expected
+        var updated = original
+        updated.cliCredentialsJSON = "NEW_CLI"
+        updated.cliAccountSyncedAt = Date(timeIntervalSinceReferenceDate: 52)
+
+        XCTAssertThrowsError(try manager.updateProfileThrowing(updated))
+
+        XCTAssertEqual(
+            secrets.values[locator(profileID, .cliCredentialsJSON)],
+            "OLD_CLI"
+        )
+        XCTAssertEqual(manager.activeProfile?.cliCredentialsJSON, "OLD_CLI")
+        XCTAssertNil(manager.activeProfile?.cliAccountSyncedAt)
+    }
+
+    @MainActor
+    func testThrowingCLIProfileUpdateSurfacesCredentialDeletionFailure() throws {
+        let profileID = UUID()
+        let secrets = MockProfileSecretStore()
+        let store = retain(ProfileStore(defaults: defaults, secretStore: secrets))
+        let original = Profile(
+            id: profileID,
+            name: "CLI",
+            cliCredentialsJSON: "OLD_CLI",
+            hasCliAccount: true,
+            cliAccountName: "linked"
+        )
+        try store.saveProfilesThrowing([original])
+        secrets.values[locator(profileID, .cliCredentialsJSON)] = "OLD_CLI"
+        let manager = retain(ProfileManager(profileStore: store))
+        manager.profiles = [original]
+        manager.activeProfile = original
+        secrets.deleteErrors[.cliCredentialsJSON] = TestError.expected
+        var updated = original
+        updated.cliCredentialsJSON = nil
+        updated.hasCliAccount = false
+        updated.cliAccountName = nil
+
+        XCTAssertThrowsError(try manager.updateProfileThrowing(updated))
+
+        XCTAssertEqual(
+            secrets.values[locator(profileID, .cliCredentialsJSON)],
+            "OLD_CLI"
+        )
+        XCTAssertEqual(manager.activeProfile?.cliCredentialsJSON, "OLD_CLI")
+        XCTAssertEqual(manager.activeProfile?.cliAccountName, "linked")
+        XCTAssertTrue(manager.activeProfile?.hasCliAccount == true)
+    }
+
+    @MainActor
+    func testThrowingCLILinkMetadataUpdateSurfacesPersistenceFailure() throws {
+        let backing = FaultingProfileDefaults()
+        let profileID = UUID()
+        let store = retain(
+            ProfileStore(
+                defaults: backing,
+                secretStore: MockProfileSecretStore()
+            )
+        )
+        let original = Profile(id: profileID, name: "CLI")
+        try store.saveProfilesThrowing([original])
+        let manager = retain(ProfileManager(profileStore: store))
+        manager.profiles = [original]
+        manager.activeProfile = original
+        backing.corruptNextProfileWrite = true
+        var updated = original
+        updated.cliAccountName = "planned-link"
+
+        XCTAssertThrowsError(try manager.updateProfileThrowing(updated))
+
+        XCTAssertNil(manager.activeProfile?.cliAccountName)
+        XCTAssertEqual(store.loadProfiles().first?.cliAccountName, nil)
+    }
+
+    @MainActor
+    func testSessionKeyReplacementPropagatesCredentialReadFailure() throws {
+        let profileID = UUID()
+        let secrets = MockProfileSecretStore()
+        let setupStore = retain(ProfileStore(defaults: defaults, secretStore: secrets))
+        try setupStore.saveProfilesThrowing([
+            Profile(
+                id: profileID,
+                name: "Claude",
+                organizationId: "existing-org",
+                apiOrganizationId: "existing-api-org"
+            )
+        ])
+        secrets.values[locator(profileID, .claudeSessionKey)] =
+            "sk-ant-sid01-existing-session-key-value"
+        secrets.values[locator(profileID, .apiSessionKey)] = "UNRELATED_API"
+        secrets.values[locator(profileID, .cliCredentialsJSON)] = "UNRELATED_CLI"
+        secrets.readErrors[.apiSessionKey] = TestError.expected
+
+        let store = retain(ProfileStore(defaults: defaults, secretStore: secrets))
+        let loaded = store.loadProfiles()
+        let manager = retain(ProfileManager(profileStore: store))
+        manager.profiles = loaded
+        manager.activeProfile = loaded.first
+        let service = retain(ClaudeAPIService(profileManager: manager))
+
+        XCTAssertThrowsError(
+            try service.saveSessionKey(
+                "sk-ant-sid01-replacement-session-key-value"
+            )
+        )
+
+        XCTAssertEqual(
+            secrets.values[locator(profileID, .claudeSessionKey)],
+            "sk-ant-sid01-existing-session-key-value"
+        )
+        XCTAssertEqual(
+            secrets.values[locator(profileID, .apiSessionKey)],
+            "UNRELATED_API"
+        )
+        XCTAssertEqual(
+            secrets.values[locator(profileID, .cliCredentialsJSON)],
+            "UNRELATED_CLI"
+        )
+        XCTAssertFalse(secrets.deleted.contains(locator(profileID, .apiSessionKey)))
+        XCTAssertFalse(secrets.deleted.contains(locator(profileID, .cliCredentialsJSON)))
+    }
+
     func testCLIUpdateRollsBackSecretWhenMetadataPersistenceFails() throws {
         let backing = FaultingProfileDefaults()
         let profileID = UUID()

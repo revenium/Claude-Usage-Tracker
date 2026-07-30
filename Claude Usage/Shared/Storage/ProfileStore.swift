@@ -140,6 +140,24 @@ class ProfileStore {
         var needsRewrite = false
 
         for profileIndex in profiles.indices {
+            if profiles[profileIndex].deletionInProgress {
+                // A prior deletion failed after its retained marker was
+                // committed. Never let retry envelopes or surviving backing
+                // stores rehydrate data into that scrubbed identity.
+                let hadRetryData =
+                    !profiles[profileIndex].credentialMigrationRetry.isEmpty
+                    || profiles[profileIndex].currentUsageMigrationRetry != nil
+                profiles[profileIndex].credentialMigrationRetry = .init()
+                profiles[profileIndex].currentUsageMigrationRetry = nil
+                profiles[profileIndex].claudeSessionKey = nil
+                profiles[profileIndex].apiSessionKey = nil
+                profiles[profileIndex].cliCredentialsJSON = nil
+                profiles[profileIndex].claudeUsage = nil
+                profiles[profileIndex].apiUsage = nil
+                needsRewrite = needsRewrite || hadRetryData
+                continue
+            }
+
             for field in ProfileSecretField.allCases {
                 let locator = ProfileSecretLocator(
                     profileID: profiles[profileIndex].id,
@@ -361,6 +379,34 @@ class ProfileStore {
         )
     }
 
+    /// Atomically persists a CLI-only credential mutation together with its
+    /// profile metadata. Unrelated credential fields are never interpreted,
+    /// so a read failure represented as nil cannot become an accidental
+    /// deletion.
+    func saveCLIProfileUpdate(_ updatedProfile: Profile) throws {
+        var profiles = try loadProfilesWithVerifiedMigration()
+        guard let index = profiles.firstIndex(where: { $0.id == updatedProfile.id }) else {
+            throw ProfileStoreError.profileNotFound(updatedProfile.id)
+        }
+
+        var candidate = updatedProfile
+        candidate.credentialMigrationRetry = profiles[index].credentialMigrationRetry
+        candidate.currentUsageMigrationRetry = profiles[index].currentUsageMigrationRetry
+        candidate.deletionInProgress = profiles[index].deletionInProgress
+        profiles[index] = candidate
+
+        try performCredentialTransaction(
+            profileID: updatedProfile.id,
+            mutations: [
+                SecretMutation(
+                    field: .cliCredentialsJSON,
+                    value: updatedProfile.cliCredentialsJSON
+                )
+            ],
+            candidateProfiles: profiles
+        )
+    }
+
     /// Verifies removal of all app-owned profile credentials. Callers must keep
     /// the profile identity until this method and subsequent file cleanup pass.
     func deleteProfileSecrets(for profileId: UUID) throws {
@@ -370,6 +416,28 @@ class ProfileStore {
             credentialBaselines[locator] = .absent
             unresolvedLocators.remove(locator)
         }
+    }
+
+    /// Atomically retains a scrubbed deletion marker before any irreversible
+    /// cleanup. This prevents persisted migration envelopes from recreating
+    /// credentials or usage if deletion later fails and the app relaunches.
+    func beginProfileDeletion(_ profileId: UUID) throws -> Profile {
+        var profiles = try decodeStoredProfiles()
+        guard let index = profiles.firstIndex(where: { $0.id == profileId }) else {
+            throw ProfileStoreError.profileNotFound(profileId)
+        }
+
+        profiles[index].deletionInProgress = true
+        profiles[index].claudeSessionKey = nil
+        profiles[index].apiSessionKey = nil
+        profiles[index].cliCredentialsJSON = nil
+        profiles[index].credentialMigrationRetry = .init()
+        profiles[index].claudeUsage = nil
+        profiles[index].apiUsage = nil
+        profiles[index].currentUsageMigrationRetry = nil
+
+        try persistProfiles(profiles)
+        return profiles[index]
     }
 
     // MARK: - Current Usage
@@ -432,6 +500,18 @@ class ProfileStore {
 
     private func prepareForOrdinarySave(_ profile: Profile, stored: Profile?) throws -> Profile {
         var prepared = profile
+        if stored?.deletionInProgress == true || profile.deletionInProgress {
+            prepared.deletionInProgress = true
+            prepared.claudeSessionKey = nil
+            prepared.apiSessionKey = nil
+            prepared.cliCredentialsJSON = nil
+            prepared.credentialMigrationRetry = .init()
+            prepared.claudeUsage = nil
+            prepared.apiUsage = nil
+            prepared.currentUsageMigrationRetry = nil
+            return prepared
+        }
+
         prepared.credentialMigrationRetry = stored?.credentialMigrationRetry
             ?? profile.credentialMigrationRetry
         prepared.currentUsageMigrationRetry = stored?.currentUsageMigrationRetry

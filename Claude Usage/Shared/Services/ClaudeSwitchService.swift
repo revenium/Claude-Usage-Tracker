@@ -177,11 +177,13 @@ class ClaudeSwitchService {
     /// - Returns: Result with directory info and symlink count
     func linkAccount(profileName: String) throws -> LinkAccountResult {
         let dirName = sanitizeProfileName(profileName)
-        let accountDir = accountDirectoryPath(for: dirName)
 
         // Resolve directory name (reuses existing directory if present)
         let finalDirName = try resolveDirectoryName(baseName: dirName)
         let finalAccountDir = accountDirectoryPath(for: finalDirName)
+        let directoryAlreadyExisted = FileManager.default.fileExists(
+            atPath: finalAccountDir.path
+        )
 
         // Check if this is an existing directory that already has credentials
         let existingWithCreds = FileManager.default.fileExists(atPath: finalAccountDir.path)
@@ -240,7 +242,8 @@ class ClaudeSwitchService {
             directoryName: finalDirName,
             directoryPath: finalAccountDir.path,
             symlinkCount: symlinkCount,
-            skippedFiles: skippedFiles
+            skippedFiles: skippedFiles,
+            createdNewDirectory: !directoryAlreadyExisted
         )
     }
 
@@ -848,6 +851,7 @@ struct LinkAccountResult {
     let directoryPath: String
     let symlinkCount: Int
     let skippedFiles: [String]
+    let createdNewDirectory: Bool
 }
 
 struct McpSyncResult {

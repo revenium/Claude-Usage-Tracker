@@ -333,8 +333,9 @@ final class ProfileCurrentUsageIntegrationTests: XCTestCase {
         XCTAssertNil(manager.profiles[0].apiSessionKey)
         XCTAssertNil(manager.profiles[0].cliCredentialsJSON)
         XCTAssertNil(manager.activeProfile?.claudeSessionKey)
-        XCTAssertEqual(manager.profiles[0].claudeUsage, claudeUsage)
-        XCTAssertEqual(manager.profiles[0].apiUsage, apiUsage)
+        XCTAssertNil(manager.profiles[0].claudeUsage)
+        XCTAssertNil(manager.profiles[0].apiUsage)
+        XCTAssertTrue(manager.profiles[0].deletionInProgress)
         XCTAssertNotNil(usageFiles.values[deletedID])
 
         usageFiles.deleteError = nil
@@ -382,7 +383,7 @@ final class ProfileCurrentUsageIntegrationTests: XCTestCase {
         XCTAssertNil(manager.profiles[0].apiSessionKey)
         XCTAssertNil(manager.profiles[0].cliCredentialsJSON)
         XCTAssertNil(manager.activeProfile?.claudeSessionKey)
-        XCTAssertEqual(manager.profiles[0].claudeUsage, usage)
+        XCTAssertNil(manager.profiles[0].claudeUsage)
         XCTAssertEqual(usageFiles.values[deletedID]?.claudeUsage, usage)
         XCTAssertEqual(usageFiles.deleteAllCount, 0)
         for field in ProfileSecretField.allCases {
@@ -396,7 +397,7 @@ final class ProfileCurrentUsageIntegrationTests: XCTestCase {
     }
 
     @MainActor
-    func testMetadataRemovalFailureRetainsIdentityWithUsageAndSecretsScrubbed() throws {
+    func testDeletionMarkerFailureDoesNotStartDestructiveCleanup() throws {
         let deletedID = UUID()
         let retainedID = UUID()
         let usage = makeClaudeUsage(tokens: 71)
@@ -434,18 +435,121 @@ final class ProfileCurrentUsageIntegrationTests: XCTestCase {
         XCTAssertThrowsError(try manager.deleteProfile(deletedID))
 
         XCTAssertEqual(manager.profiles.map(\.id), initialProfiles.map(\.id))
-        XCTAssertNil(manager.profiles[0].claudeSessionKey)
-        XCTAssertNil(manager.profiles[0].apiSessionKey)
-        XCTAssertNil(manager.profiles[0].cliCredentialsJSON)
-        XCTAssertNil(manager.profiles[0].claudeUsage)
-        XCTAssertNil(manager.profiles[0].apiUsage)
-        XCTAssertNil(manager.activeProfile?.claudeUsage)
-        XCTAssertNil(usageFiles.values[deletedID])
+        XCTAssertEqual(manager.profiles[0].claudeSessionKey, "claude-secret")
+        XCTAssertEqual(manager.profiles[0].apiSessionKey, "api-secret")
+        XCTAssertEqual(manager.profiles[0].cliCredentialsJSON, "cli-secret")
+        XCTAssertEqual(manager.profiles[0].claudeUsage, usage)
+        XCTAssertEqual(manager.activeProfile?.claudeUsage, usage)
+        XCTAssertNotNil(usageFiles.values[deletedID])
+        XCTAssertEqual(usageFiles.deleteAllCount, 0)
+        XCTAssertTrue(history.deletedProfileIDs.isEmpty)
         let persistedData = try XCTUnwrap(backing.data(forKey: "profiles_v3"))
         XCTAssertEqual(
             try JSONDecoder().decode([Profile].self, from: persistedData).map(\.id),
             initialProfiles.map(\.id)
         )
+    }
+
+    @MainActor
+    func testPartialDeletionCannotResurrectPersistedRetryEnvelopesAfterRelaunch() throws {
+        let deletedID = UUID()
+        let retainedID = UUID()
+        let retryUsage = ProfileCurrentUsage(
+            claudeUsage: makeClaudeUsage(tokens: 93),
+            apiUsage: makeAPIUsage(spend: 93)
+        )
+        let retryProfile = Profile(
+            id: deletedID,
+            name: "Delete",
+            claudeSessionKey: "RETRY_CLAUDE_FIXTURE",
+            apiSessionKey: "RETRY_API_FIXTURE",
+            cliCredentialsJSON: "RETRY_CLI_FIXTURE",
+            claudeUsage: retryUsage.claudeUsage,
+            apiUsage: retryUsage.apiUsage,
+            credentialMigrationRetry: ProfileCredentialMigrationRetry(
+                claudeSessionKey: "RETRY_CLAUDE_FIXTURE",
+                apiSessionKey: "RETRY_API_FIXTURE",
+                cliCredentialsJSON: "RETRY_CLI_FIXTURE"
+            ),
+            currentUsageMigrationRetry: retryUsage
+        )
+        defaults.set(
+            try JSONEncoder().encode([
+                retryProfile,
+                Profile(id: retainedID, name: "Keep")
+            ]),
+            forKey: "profiles_v3"
+        )
+
+        let secrets = MockSecretStore()
+        for field in ProfileSecretField.allCases {
+            secrets.values[ProfileSecretLocator(
+                profileID: deletedID,
+                field: field
+            )] = "BACKING_\(field.rawValue)"
+        }
+        secrets.deleteErrors[.apiSessionKey] = TestFailure.expected
+        let usageFiles = MockCurrentUsageFileStore()
+        let store = retain(makeStore(usageFiles: usageFiles, secrets: secrets))
+        let history = retain(MockHistoryDeleter())
+        let manager = retain(
+            ProfileManager(profileStore: store, historyService: history)
+        )
+        manager.profiles = [retryProfile, Profile(id: retainedID, name: "Keep")]
+        manager.activeProfile = retryProfile
+
+        XCTAssertThrowsError(try manager.deleteProfile(deletedID))
+        let retained = try XCTUnwrap(
+            manager.profiles.first(where: { $0.id == deletedID })
+        )
+        XCTAssertTrue(retained.deletionInProgress)
+        XCTAssertNil(retained.claudeSessionKey)
+        XCTAssertNil(retained.apiSessionKey)
+        XCTAssertNil(retained.cliCredentialsJSON)
+        XCTAssertNil(retained.claudeUsage)
+        XCTAssertNil(retained.apiUsage)
+
+        let persisted = try persistedProfileText()
+        XCTAssertTrue(persisted.contains("\"deletionInProgress\""))
+        XCTAssertFalse(persisted.contains("credentialMigrationRetry"))
+        XCTAssertFalse(persisted.contains("currentUsageMigrationRetry"))
+        XCTAssertFalse(persisted.contains("RETRY_"))
+
+        let writesBeforeRelaunch = secrets.writeCount
+        let relaunchedStore = retain(
+            makeStore(usageFiles: usageFiles, secrets: secrets)
+        )
+        let relaunched = relaunchedStore.loadProfiles()
+        let relaunchedDeleted = try XCTUnwrap(
+            relaunched.first(where: { $0.id == deletedID })
+        )
+        XCTAssertTrue(relaunchedDeleted.deletionInProgress)
+        XCTAssertNil(relaunchedDeleted.claudeSessionKey)
+        XCTAssertNil(relaunchedDeleted.apiSessionKey)
+        XCTAssertNil(relaunchedDeleted.cliCredentialsJSON)
+        XCTAssertNil(relaunchedDeleted.claudeUsage)
+        XCTAssertNil(relaunchedDeleted.apiUsage)
+        XCTAssertEqual(secrets.writeCount, writesBeforeRelaunch)
+        XCTAssertEqual(usageFiles.saveCount, 0)
+
+        secrets.deleteErrors.removeValue(forKey: .apiSessionKey)
+        let relaunchedManager = retain(
+            ProfileManager(
+                profileStore: relaunchedStore,
+                historyService: history
+            )
+        )
+        relaunchedManager.profiles = relaunched
+        relaunchedManager.activeProfile = relaunchedDeleted
+        try relaunchedManager.deleteProfile(deletedID)
+
+        XCTAssertEqual(relaunchedManager.profiles.map(\.id), [retainedID])
+        for field in ProfileSecretField.allCases {
+            XCTAssertNil(secrets.values[ProfileSecretLocator(
+                profileID: deletedID,
+                field: field
+            )])
+        }
     }
 
     @MainActor
@@ -577,16 +681,22 @@ private final class MockCurrentUsageFileStore: ProfileCurrentUsageFileStoring {
 
 private final class MockSecretStore: ProfileSecretStore {
     var values: [ProfileSecretLocator: String] = [:]
+    var deleteErrors: [ProfileSecretField: Error] = [:]
+    var writeCount = 0
 
     func read(_ locator: ProfileSecretLocator) throws -> ProfileSecretReadResult {
         values[locator].map(ProfileSecretReadResult.value) ?? .absent
     }
 
     func write(_ value: String, to locator: ProfileSecretLocator) throws {
+        writeCount += 1
         values[locator] = value
     }
 
     func delete(_ locator: ProfileSecretLocator) throws {
+        if let error = deleteErrors[locator.field] {
+            throw error
+        }
         values.removeValue(forKey: locator)
     }
 }

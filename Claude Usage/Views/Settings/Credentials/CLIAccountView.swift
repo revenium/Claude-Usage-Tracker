@@ -901,18 +901,56 @@ struct CLIAccountView: View {
         guard let profile = profileManager.activeProfile else { return }
         linkingInProgress = true
         syncError = nil
+        var plannedLinkWasPersisted = false
+        var completedLink: LinkAccountResult?
 
         do {
-            let result = try ClaudeSwitchService.shared.linkAccount(profileName: profile.name)
-
+            let plannedDirectoryName = ClaudeSwitchService.shared.previewDirectoryName(
+                for: profile.name
+            )
             var updated = profile
-            updated.cliAccountName = result.directoryName
-            profileManager.updateProfile(updated)
+            updated.cliAccountName = plannedDirectoryName
+            try profileManager.updateProfileThrowing(updated)
+            plannedLinkWasPersisted = true
+
+            let result = try ClaudeSwitchService.shared.linkAccount(profileName: profile.name)
+            completedLink = result
+
+            if result.directoryName != plannedDirectoryName {
+                updated.cliAccountName = result.directoryName
+                try profileManager.updateProfileThrowing(updated)
+            }
 
             LoggingService.shared.log("CLIAccountView: Linked account '\(result.directoryName)' (\(result.symlinkCount) symlinks)")
         } catch {
-            syncError = error.localizedDescription
-            LoggingService.shared.logError("CLIAccountView: Link failed - \(error.localizedDescription)")
+            var recoveryFailures: [String] = []
+            if let completedLink, completedLink.createdNewDirectory {
+                do {
+                    try ClaudeSwitchService.shared.unlinkAccount(
+                        directoryName: completedLink.directoryName
+                    )
+                } catch {
+                    recoveryFailures.append(
+                        "linked directory cleanup failed: \(error.localizedDescription)"
+                    )
+                }
+            }
+            if plannedLinkWasPersisted {
+                do {
+                    try profileManager.updateProfileThrowing(profile)
+                } catch {
+                    recoveryFailures.append(
+                        "profile rollback failed: \(error.localizedDescription)"
+                    )
+                }
+            }
+            syncError = operationErrorDescription(
+                error,
+                recoveryFailures: recoveryFailures
+            )
+            LoggingService.shared.logError(
+                "CLIAccountView: Link failed: \(syncError ?? "unknown error")"
+            )
         }
 
         linkingInProgress = false
@@ -923,20 +961,45 @@ struct CLIAccountView: View {
               let accountName = profile.cliAccountName else { return }
 
         do {
-            try ClaudeSwitchService.shared.unlinkAccount(directoryName: accountName)
-
             var updated = profile
             updated.cliAccountName = nil
             updated.hasCliAccount = false
             updated.cliAccountSyncedAt = nil
             updated.cliCredentialsJSON = nil
-            profileManager.updateProfile(updated)
+            try profileManager.updateProfileThrowing(updated)
+
+            do {
+                try ClaudeSwitchService.shared.unlinkAccount(directoryName: accountName)
+            } catch {
+                // Keep the UI linked if the directory could not be removed.
+                // This compensation also restores the CLI credential through
+                // the same verified single-field transaction.
+                let unlinkError = error
+                do {
+                    try profileManager.updateProfileThrowing(profile)
+                } catch {
+                    syncError = operationErrorDescription(
+                        unlinkError,
+                        recoveryFailures: [
+                            "profile rollback failed: \(error.localizedDescription)"
+                        ]
+                    )
+                    LoggingService.shared.logError(
+                        "CLIAccountView: Unlink recovery failed: "
+                        + (syncError ?? "unknown error")
+                    )
+                    return
+                }
+                throw unlinkError
+            }
 
             cliAccountInfo = nil
             credentialCheckResult = .notFound
         } catch {
-            syncError = "Failed to remove account directory: \(error.localizedDescription)"
-            LoggingService.shared.logError("CLIAccountView: Unlink directory removal failed: \(error.localizedDescription)")
+            syncError = error.localizedDescription
+            LoggingService.shared.logError(
+                "CLIAccountView: Unlink failed: \(error.localizedDescription)"
+            )
         }
     }
 
@@ -952,8 +1015,17 @@ struct CLIAccountView: View {
                     updated.cliCredentialsJSON = json
                     updated.hasCliAccount = true
                     updated.cliAccountSyncedAt = Date()
-                    profileManager.updateProfile(updated)
-                    loadCLIAccountInfo()
+                    do {
+                        try profileManager.updateProfileThrowing(updated)
+                        loadCLIAccountInfo()
+                    } catch {
+                        syncError = error.localizedDescription
+                        LoggingService.shared.logError(
+                            "CLIAccountView: Credential persistence failed",
+                            error: error
+                        )
+                        return
+                    }
                 }
                 // Show shell integration instructions on first success
                 if !SharedDataStore.shared.hasShownCLIShellIntegration() {
@@ -974,13 +1046,23 @@ struct CLIAccountView: View {
         // Try linked account directory first, then fall back to system keychain
         if let accountName = profile.cliAccountName,
            let json = ClaudeSwitchService.shared.readLinkedAccountCredentials(directoryName: accountName) {
-            var updated = profile
-            updated.cliCredentialsJSON = json
-            updated.hasCliAccount = true
-            updated.cliAccountSyncedAt = Date()
-            profileManager.updateProfile(updated)
-            loadCLIAccountInfo()
-            LoggingService.shared.log("CLIAccountView: Re-synced from linked account directory")
+            do {
+                var updated = profile
+                updated.cliCredentialsJSON = json
+                updated.hasCliAccount = true
+                updated.cliAccountSyncedAt = Date()
+                try profileManager.updateProfileThrowing(updated)
+                loadCLIAccountInfo()
+                LoggingService.shared.log(
+                    "CLIAccountView: Re-synced from linked account directory"
+                )
+            } catch {
+                syncError = error.localizedDescription
+                LoggingService.shared.logError(
+                    "CLIAccountView: Linked credential persistence failed",
+                    error: error
+                )
+            }
         } else {
             // Fall back to system keychain (works for both linked and unlinked profiles)
             do {
@@ -990,7 +1072,7 @@ struct CLIAccountView: View {
                 if var updated = profileManager.activeProfile {
                     updated.hasCliAccount = true
                     updated.cliAccountSyncedAt = Date()
-                    profileManager.updateProfile(updated)
+                    try profileManager.updateProfileThrowing(updated)
                 }
                 loadCLIAccountInfo()
                 LoggingService.shared.log("CLIAccountView: Re-synced from system keychain")
@@ -1001,6 +1083,18 @@ struct CLIAccountView: View {
         }
 
         isSyncing = false
+    }
+
+    private func operationErrorDescription(
+        _ error: Error,
+        recoveryFailures: [String]
+    ) -> String {
+        guard !recoveryFailures.isEmpty else {
+            return error.localizedDescription
+        }
+        return error.localizedDescription
+            + " Recovery was incomplete: "
+            + recoveryFailures.joined(separator: "; ")
     }
 
     private func copyToClipboard(_ text: String) {

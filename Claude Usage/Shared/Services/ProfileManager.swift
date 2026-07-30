@@ -92,49 +92,57 @@ class ProfileManager: ObservableObject {
     }
 
     func updateProfile(_ profile: Profile) {
-        if let index = profiles.firstIndex(where: { $0.id == profile.id }) {
-            let previous = profiles[index]
-            let secretsChanged =
-                previous.claudeSessionKey != profile.claudeSessionKey
-                || previous.apiSessionKey != profile.apiSessionKey
-                || previous.cliCredentialsJSON != profile.cliCredentialsJSON
+        do {
+            try updateProfileThrowing(profile)
+        } catch {
+            LoggingService.shared.logError(
+                "ProfileManager.updateProfile: Update was not verified",
+                error: error
+            )
+        }
+    }
 
-            if secretsChanged {
-                do {
-                    try profileStore.saveProfileCredentials(
-                        profile.id,
-                        credentials: ProfileCredentials(
-                            claudeSessionKey: profile.claudeSessionKey,
-                            organizationId: profile.organizationId,
-                            apiSessionKey: profile.apiSessionKey,
-                            apiOrganizationId: profile.apiOrganizationId,
-                            apiSessionKeyExpiry: profile.apiSessionKeyExpiry,
-                            cliCredentialsJSON: profile.cliCredentialsJSON
-                        )
-                    )
-                } catch {
-                    // Do not publish an unverified credential change. The
-                    // existing in-memory profile retains enough identity for a
-                    // user-visible retry.
-                    LoggingService.shared.logError(
-                        "ProfileManager.updateProfile: Credential update was not verified",
-                        error: error
-                    )
-                    return
-                }
-            }
+    /// Credential-aware update for workflows that must not report success
+    /// unless secure storage and profile metadata have both been verified.
+    func updateProfileThrowing(_ profile: Profile) throws {
+        guard let index = profiles.firstIndex(where: { $0.id == profile.id }) else {
+            throw ProfileStoreError.profileNotFound(profile.id)
+        }
 
-            profiles[index] = profile
+        let previous = profiles[index]
+        let claudeSecretChanged = previous.claudeSessionKey != profile.claudeSessionKey
+        let apiSecretChanged = previous.apiSessionKey != profile.apiSessionKey
+        let cliSecretChanged = previous.cliCredentialsJSON != profile.cliCredentialsJSON
 
-            if activeProfile?.id == profile.id {
-                activeProfile = profile
+        if cliSecretChanged && !claudeSecretChanged && !apiSecretChanged {
+            try profileStore.saveCLIProfileUpdate(profile)
+        } else if claudeSecretChanged || apiSecretChanged || cliSecretChanged {
+            try profileStore.saveProfileCredentials(
+                profile.id,
+                credentials: ProfileCredentials(
+                    claudeSessionKey: profile.claudeSessionKey,
+                    organizationId: profile.organizationId,
+                    apiSessionKey: profile.apiSessionKey,
+                    apiOrganizationId: profile.apiOrganizationId,
+                    apiSessionKeyExpiry: profile.apiSessionKeyExpiry,
+                    cliCredentialsJSON: profile.cliCredentialsJSON
+                )
+            )
+        } else {
+            var candidate = profiles
+            candidate[index] = profile
+            try profileStore.saveProfilesThrowing(candidate)
+        }
 
-                LoggingService.shared.log("ProfileManager.updateProfile: Updated ACTIVE profile '\(profile.name)'")
-            } else {
-                LoggingService.shared.log("Updated profile: \(profile.name) (not active)")
-            }
+        profiles[index] = profile
 
-            profileStore.saveProfiles(profiles)
+        if activeProfile?.id == profile.id {
+            activeProfile = profile
+            LoggingService.shared.log(
+                "ProfileManager.updateProfile: Updated active profile"
+            )
+        } else {
+            LoggingService.shared.log("ProfileManager.updateProfile: Updated profile")
         }
     }
 
@@ -149,13 +157,20 @@ class ProfileManager: ObservableObject {
             throw ProfileStoreError.profileNotFound(id)
         }
 
-        // Keep profile identity in both memory and preferences until every
-        // profile-owned secure/file cleanup step has been verified.
+        // Atomically retain a scrubbed marker before any destructive cleanup.
+        // On failure or relaunch, identity remains for retry without allowing
+        // migration envelopes or surviving stores to rehydrate deleted data.
+        let scrubbedProfile = try profileStore.beginProfileDeletion(id)
+        if let index = profiles.firstIndex(where: { $0.id == id }) {
+            profiles[index] = scrubbedProfile
+            if activeProfile?.id == id {
+                activeProfile = scrubbedProfile
+            }
+        }
+
         try profileStore.deleteProfileSecrets(for: id)
-        scrubDeletedSecretsInMemory(for: id)
         try historyService.deleteHistoryThrowing(for: id)
         try profileStore.deleteProfileUsageData(for: id)
-        scrubDeletedUsageInMemory(for: id)
         LoggingService.shared.log("Successfully deleted usage history for profile: \(profileName)")
 
         let remainingProfiles = profiles.filter { $0.id != id }
