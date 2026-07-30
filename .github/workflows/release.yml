@@ -54,7 +54,6 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
           set -euo pipefail
 
@@ -101,8 +100,7 @@ jobs:
             CERTIFICATE_PASSWORD \
             APPLE_ID \
             APPLE_ID_PASSWORD \
-            SPARKLE_PRIVATE_KEY \
-            HOMEBREW_TAP_TOKEN; do
+            SPARKLE_PRIVATE_KEY; do
             if [[ -z ${!required_name:-} ]]; then
               echo "Required release setting is missing: $required_name" >&2
               exit 1

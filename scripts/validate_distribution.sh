@@ -87,11 +87,16 @@ rg -q 'repos/revenium/homebrew-tap/contents/Casks/claude-usage\.rb' \
     '.github/workflows/update-homebrew-cask.yml' \
     || fail 'Homebrew workflow does not target the Revenium tap'
 homebrew_workflow='.github/workflows/update-homebrew-cask.yml'
+release_workflow='.github/workflows/release.yml'
 if rg -q 'workflow_dispatch' "$homebrew_workflow"; then
     fail 'Homebrew tap token workflow must not have a manual tag-owned entry point'
 fi
 rg -q 'environment: release' "$homebrew_workflow" \
     || fail 'Homebrew publication is not protected by the release environment'
+[[ $(rg -c 'HOMEBREW_TAP_TOKEN' "$release_workflow") -eq 1 ]] \
+    || fail 'Homebrew tap token must only be passed to the isolated cask publisher'
+rg -q 'HOMEBREW_TAP_TOKEN: \$\{\{ secrets\.HOMEBREW_TAP_TOKEN \}\}' "$release_workflow" \
+    || fail 'Homebrew tap token is not scoped to the isolated cask publisher call'
 rg -q 'metadata_commit == "\$source_commit"' "$homebrew_workflow" \
     || fail 'Homebrew publication does not bind metadata to the checked-out tag commit'
 rg -q 'merge-base --is-ancestor "\$source_commit" FETCH_HEAD' "$homebrew_workflow" \
@@ -99,7 +104,6 @@ rg -q 'merge-base --is-ancestor "\$source_commit" FETCH_HEAD' "$homebrew_workflo
 rg -q 'current_sha' "$homebrew_workflow" \
     || fail 'Homebrew Contents API update lacks an optimistic blob-SHA guard'
 
-release_workflow='.github/workflows/release.yml'
 rg -q 'revenium-release-workflow:\$GITHUB_SHA' "$release_workflow" \
     || fail 'release drafts do not carry exact-commit ownership provenance'
 rg -q -- '--draft' "$release_workflow" \
