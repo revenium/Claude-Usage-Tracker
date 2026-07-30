@@ -433,6 +433,7 @@ final class BoundedProcess: @unchecked Sendable {
         UUID: CheckedContinuation<Int32?, Never>
     ] = [:]
     private var terminationStatus: Int32?
+    private var launchedProcessIdentifier: Int32?
     private lazy var stderrSink = BoundedByteSink(
         maximumBytes: limits.maximumStderrBytes
     ) { [lineBuffer] in
@@ -491,6 +492,15 @@ final class BoundedProcess: @unchecked Sendable {
 
         do {
             try process.run()
+            let identifier = process.processIdentifier
+            guard identifier > 0 else {
+                process.terminate()
+                process.waitUntilExit()
+                throw CodexTransportError.launchFailed
+            }
+            stateLock.lock()
+            launchedProcessIdentifier = identifier
+            stateLock.unlock()
         } catch {
             stateLock.lock()
             started = false
@@ -541,7 +551,7 @@ final class BoundedProcess: @unchecked Sendable {
         }
     }
 
-    func close() async {
+    func close() async throws {
         guard let wasStarted = markClosed() else { return }
 
         try? stdinPipe.fileHandleForWriting.close()
@@ -552,13 +562,22 @@ final class BoundedProcess: @unchecked Sendable {
             let status = await waitForTermination(
                 timeout: limits.terminationGracePeriod
             )
-            if status == nil, process.isRunning {
-                let identifier = process.processIdentifier
-                if identifier > 0 {
-                    _ = kill(identifier, SIGKILL)
+            if status == nil {
+                forceKillOwnedProcess()
+                guard await waitForTermination(
+                    timeout: max(limits.terminationGracePeriod, 1)
+                ) != nil else {
+                    throw CodexTransportError.timedOut(
+                        stage: .termination,
+                        method: nil,
+                        id: nil
+                    )
                 }
-                _ = await waitForTermination(timeout: nil)
             }
+            // Foundation calls the termination handler only after observing the
+            // owned child exit. waitUntilExit is then nonblocking and provides
+            // an explicit reaping barrier before cleanup can report success.
+            process.waitUntilExit()
         }
 
         stdoutPipe.fileHandleForReading.readabilityHandler = nil
@@ -584,18 +603,10 @@ final class BoundedProcess: @unchecked Sendable {
 
     private func abortBlockedIO() {
         try? stdinPipe.fileHandleForWriting.close()
-        if process.isRunning {
-            let identifier = process.processIdentifier
-            if identifier > 0 {
-                _ = kill(identifier, SIGKILL)
-            }
-        }
+        forceKillOwnedProcess()
     }
 
     private func waitForTermination(timeout: TimeInterval?) async -> Int32? {
-        if !process.isRunning {
-            return process.terminationStatus
-        }
         let token = UUID()
         return await withCheckedContinuation { continuation in
             stateLock.lock()
@@ -634,14 +645,40 @@ final class BoundedProcess: @unchecked Sendable {
         waiter?.resume(returning: nil)
     }
 
+    private func forceKillOwnedProcess() {
+        let identifier: Int32?
+        let hasTerminated: Bool
+        stateLock.lock()
+        identifier = launchedProcessIdentifier
+        hasTerminated = terminationStatus != nil
+        stateLock.unlock()
+
+        guard !hasTerminated,
+              process.isRunning,
+              let identifier,
+              identifier > 0
+        else {
+            return
+        }
+        _ = kill(identifier, SIGKILL)
+    }
+
     deinit {
         try? stdinPipe.fileHandleForWriting.close()
-        if process.isRunning {
-            let identifier = process.processIdentifier
-            if identifier > 0 {
-                _ = kill(identifier, SIGKILL)
+        forceKillOwnedProcess()
+        let needsReapingBarrier: Bool
+        stateLock.lock()
+        needsReapingBarrier =
+            launchedProcessIdentifier != nil && terminationStatus == nil
+        stateLock.unlock()
+        if needsReapingBarrier {
+            // Keep the Foundation Process alive on a utility queue until its
+            // internal waiter reaps the child. Deinitialization itself never
+            // blocks on an untrusted process.
+            let process = process
+            DispatchQueue.global(qos: .utility).async {
+                process.waitUntilExit()
             }
-            process.waitUntilExit()
         }
     }
 }

@@ -10,8 +10,10 @@ final class TransportTests: XCTestCase {
             .accountRead,
             params: .object(["refreshToken": .bool(false)])
         )
+        let identifier = try await fake.processIdentifier()
 
         XCTAssertEqual(result, .object(["ok": .bool(true)]))
+        try await fake.assertProcessExited(identifier)
     }
 
     func testFragmentedInitializeAndResponseFramesAreReassembled() async throws {
@@ -43,6 +45,7 @@ final class TransportTests: XCTestCase {
     func testInterleavedNotificationsAreRetained() async throws {
         let fake = try FakeCodexAppServer(scenario: "interleaved_notifications")
         let session = try await fake.client.openSession()
+        let identifier = try await fake.processIdentifier()
 
         let requestResult = try await session.request(.accountRateLimitsRead)
         XCTAssertEqual(
@@ -57,7 +60,8 @@ final class TransportTests: XCTestCase {
             matching: .accountUpdated
         )
         XCTAssertEqual(accountNotification.method, .accountUpdated)
-        await session.close()
+        try await session.close()
+        try await fake.assertProcessExited(identifier)
     }
 
     func testMultipleRequestsUseStrictlyIncreasingUniqueIDs() async throws {
@@ -77,7 +81,7 @@ final class TransportTests: XCTestCase {
             secondResult,
             .object(["sequence": .integer(2)])
         )
-        await session.close()
+        try await session.close()
     }
 
     func testDuplicateResponseCannotSatisfyANewerRequest() async throws {
@@ -219,6 +223,7 @@ final class TransportTests: XCTestCase {
         let task = Task {
             try await fake.client.request(.accountUsageRead)
         }
+        let identifier = try await fake.processIdentifier()
         try await Task.sleep(nanoseconds: 250_000_000)
         let began = Date()
         task.cancel()
@@ -234,6 +239,7 @@ final class TransportTests: XCTestCase {
             XCTAssertTrue(id == nil || id == 2)
         }
         XCTAssertLessThan(Date().timeIntervalSince(began), 1)
+        try await fake.assertProcessExited(identifier)
     }
 
     func testCancellationForceTerminatesAnUncooperativeProcess() async throws {
@@ -250,6 +256,7 @@ final class TransportTests: XCTestCase {
             let task = Task {
                 try await fake.client.request(.accountUsageRead)
             }
+            let identifier = try await fake.processIdentifier()
             try await Task.sleep(nanoseconds: 250_000_000)
             let began = Date()
             task.cancel()
@@ -262,6 +269,7 @@ final class TransportTests: XCTestCase {
                 }
             }
             XCTAssertLessThan(Date().timeIntervalSince(began), 1)
+            try await fake.assertProcessExited(identifier)
         }
     }
 
@@ -304,8 +312,15 @@ final class TransportTests: XCTestCase {
             "payload": .string(String(repeating: "x", count: 220 * 1_024))
         ])
         let began = Date()
+        let task = Task {
+            try await fake.client.request(
+                .accountLoginStart,
+                params: largeParams
+            )
+        }
+        let identifier = try await fake.processIdentifier()
         await XCTAssertThrowsCodexError(
-            try await fake.client.request(.accountLoginStart, params: largeParams)
+            try await task.value
         ) { error in
             guard case let .timedOut(stage, method, id) = error else {
                 return XCTFail("Unexpected error: \(error)")
@@ -315,6 +330,7 @@ final class TransportTests: XCTestCase {
             XCTAssertEqual(id, 2)
         }
         XCTAssertLessThan(Date().timeIntervalSince(began), 1)
+        try await fake.assertProcessExited(identifier)
     }
 
     func testEarlyExitIsReportedWithoutProcessOutput() async throws {

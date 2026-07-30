@@ -15,6 +15,10 @@ initialize_response() {
 
 scenario="${TEST_SCENARIO:-happy}"
 
+if [ -n "${PID_FILE:-}" ]; then
+    printf '%s\n' "$$" > "$PID_FILE"
+fi
+
 read_line || exit 10
 initialize_line="$received_line"
 initialize_id="$(extract_id "$initialize_line")"

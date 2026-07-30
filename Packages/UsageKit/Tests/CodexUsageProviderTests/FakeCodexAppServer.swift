@@ -5,6 +5,7 @@ final class FakeCodexAppServer {
     let client: CodexAppServerClient
     let directoryURL: URL
     let requestLogURL: URL
+    private let pidFileURL: URL
 
     init(
         scenario: String,
@@ -15,6 +16,7 @@ final class FakeCodexAppServer {
         let fileManager = FileManager.default
         directoryURL = fileManager.temporaryDirectory
             .appendingPathComponent("CodexUsageProviderTests-\(UUID().uuidString)")
+        pidFileURL = directoryURL.appendingPathComponent("process.pid")
         try fileManager.createDirectory(
             at: directoryURL,
             withIntermediateDirectories: false
@@ -38,6 +40,7 @@ final class FakeCodexAppServer {
         var environment = additionalEnvironment
         environment["TEST_SCENARIO"] = scenario
         environment["REQUEST_LOG"] = requestLogURL.path
+        environment["PID_FILE"] = pidFileURL.path
         let configuredCodexHomeURL = codexHomeURL ?? directoryURL
         if scenario == "environment" {
             environment["EXPECTED_CODEX_HOME"] =
@@ -70,7 +73,42 @@ final class FakeCodexAppServer {
         }
     }
 
+    func processIdentifier(
+        timeout: TimeInterval = 1
+    ) async throws -> Int32 {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if let data = try? Data(contentsOf: pidFileURL),
+               let value = String(data: data, encoding: .utf8)?
+                   .trimmingCharacters(in: .whitespacesAndNewlines),
+               let identifier = Int32(value),
+               identifier > 0
+            {
+                return identifier
+            }
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        throw FakeServerError.pidObservationTimedOut
+    }
+
+    func assertProcessExited(
+        _ identifier: Int32,
+        timeout: TimeInterval = 1
+    ) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            errno = 0
+            if kill(identifier, 0) == -1, errno == ESRCH {
+                return
+            }
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        throw FakeServerError.processStillExists(identifier)
+    }
+
     enum FakeServerError: Error {
         case fixtureMissing
+        case pidObservationTimedOut
+        case processStillExists(Int32)
     }
 }

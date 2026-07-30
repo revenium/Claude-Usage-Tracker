@@ -53,7 +53,7 @@ public struct CodexAppServerClient: Sendable {
         do {
             let session = try await openSession()
             let result = try await session.request(method, params: params)
-            await session.close()
+            try await session.close()
             return result
         } catch is CancellationError {
             throw CodexTransportError.cancelled(method: method, id: nil)
@@ -96,7 +96,7 @@ public actor CodexAppServerSession {
         do {
             try process.start()
         } catch {
-            await process.close()
+            try? await process.close()
             throw error
         }
 
@@ -118,11 +118,11 @@ public actor CodexAppServerSession {
             try await session.sendInitialized()
             return session
         } catch is CancellationError {
-            await session.close()
+            try await session.close()
             throw CodexTransportError.cancelled(method: .initialize, id: 1)
-        } catch {
-            await session.close()
-            throw error
+        } catch let operationError {
+            try await session.close()
+            throw operationError
         }
     }
 
@@ -150,11 +150,11 @@ public actor CodexAppServerSession {
             )
         } catch is CancellationError {
             let id = nextRequestID > 1 ? nextRequestID - 1 : nil
-            await close()
+            try await close()
             throw CodexTransportError.cancelled(method: method, id: id)
-        } catch {
-            await close()
-            throw error
+        } catch let operationError {
+            try await close()
+            throw operationError
         }
     }
 
@@ -200,18 +200,18 @@ public actor CodexAppServerSession {
                 }
             }
         } catch is CancellationError {
-            await close()
+            try await close()
             throw CodexTransportError.cancelled(method: method, id: nil)
-        } catch {
-            await close()
-            throw error
+        } catch let operationError {
+            try await close()
+            throw operationError
         }
     }
 
-    public func close() async {
+    public func close() async throws {
         guard !isClosed else { return }
         isClosed = true
-        await process.close()
+        try await process.close()
         notifications.removeAll()
     }
 
