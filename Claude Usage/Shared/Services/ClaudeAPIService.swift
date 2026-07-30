@@ -38,8 +38,9 @@ class ClaudeAPIService: APIServiceProtocol {
                 throw AppError.sessionKeyNotFound()
             }
 
-            LoggingService.shared.log("ClaudeAPIService.readSessionKey: Profile '\(activeProfile.name)'")
-            LoggingService.shared.log("  - claudeSessionKey: \(activeProfile.claudeSessionKey == nil ? "NIL" : "EXISTS (len: \(activeProfile.claudeSessionKey!.count))")")
+            LoggingService.shared.log(
+                "ClaudeAPIService.readSessionKey: Resolving active profile credentials"
+            )
 
             guard let key = activeProfile.claudeSessionKey else {
                 LoggingService.shared.logError("ClaudeAPIService.readSessionKey: Profile has NIL claudeSessionKey - throwing sessionKeyNotFound")

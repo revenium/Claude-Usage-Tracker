@@ -6,10 +6,10 @@
 - Linear project: `Claude Usage Desktop App Codex Support` (`8fd871e1416e`)
 - Umbrella: `PRODUCT-2276`
 - Tracking wave: W00 — complete
-- Current delivery batch: B01 — Restore deterministic baseline
-- Current phase: P01 — Restore a deterministic green app baseline
-- Active implementation worker: None
-- Next action: Commit B01 and run `$codex-ship-pr skip-review --auto-merge --linear PRODUCT-2282`
+- Current delivery batch: B02 — Safety foundations
+- Current phases: P02/P03/P04 implemented; B02 final validation and ship in progress
+- Active implementation workers: P06 orphan-process correction and P08 Codex provider/account/login contracts
+- Next action: Complete B02 semantic/security review, full Debug/Release gates, then ship and auto-merge the batch
 
 ## Repository State at Initialization
 
@@ -26,7 +26,7 @@
 - `xcodebuild -list` succeeds.
 - The app has one app target and one unit-test target.
 - The original baseline ran 103 unit tests with one parser failure.
-- P01 now runs 104 unit tests: 104 pass, 0 fail, 0 skip.
+- P01 reviewed head runs 105 unit tests: 105 pass, 0 fail, 0 skip.
 - `UsageLimitParsing` rejects explicit incompatible or malformed kinds while retaining missing-kind compatibility.
 - `SharedDataStoreTests` now use isolated, injected UserDefaults suites; 20 repeated runs pass.
 - Localization validation currently fails for every non-English catalog.
@@ -40,9 +40,9 @@
 | Wave | Description | Phases | Status |
 |---|---|---|---|
 | W00 | Linear tracking initialization | 17 child issues | Complete |
-| W01 | Green baseline | P01 | Verified; pending ship |
-| W02 | Safety foundations | P02, P03, P04 | Pending |
-| W03A | UsageKit boundary | P05 | Pending |
+| W01 | Green baseline | P01 | Complete |
+| W02 | Safety foundations | P02, P03, P04 | Implemented pending B02 ship |
+| W03A | UsageKit boundary | P05 | Implemented pending B03 ship |
 | W03B | Transport and profile model | P06, P07 | Pending |
 | W03C | Codex provider | P08 | Pending |
 | W03D | Refresh integration | P09 | Pending |
@@ -55,8 +55,8 @@
 
 | Batch | Branch | PR | CI | Review Gate | Merge | Status |
 |---|---|---|---|---|---|---|
-| B01 Baseline | `feature/codex-support-baseline` | — | Local green | Pending | — | Verified; pending ship |
-| B02 Foundations | `feature/codex-support-foundations` | — | — | — | — | Pending |
+| B01 Baseline | `feature/codex-support-baseline` | [#7](https://github.com/revenium/Claude-Usage-Tracker/pull/7) | Success | Tessie clean + Greptile 5/5 | `29c7fe1` | Merged |
+| B02 Foundations | `feature/codex-support-foundations` | — | — | — | — | In progress |
 | B03 Provider core | `feature/codex-support-provider-core` | — | — | — | — | Pending |
 | B04 UI parity | `feature/codex-support-ui-parity` | — | — | — | — | Pending |
 | B05 Release readiness | `feature/codex-support-release-readiness` | — | — | — | — | Pending |
@@ -65,17 +65,35 @@
 
 | Phase | Linear | Worker | Commit | Batch PR | Completed | Summary |
 |---|---|---|---|---|---|---|
-| P01 | PRODUCT-2282 | baseline_audit | Pending commit | Pending | Pending merge | Parser correctness, hermetic UserDefaults tests, canonical validation docs |
+| P01 | PRODUCT-2282 | baseline_audit | `1009d4f` | #7 | 2026-07-30 | Parser correctness, null compatibility, hermetic UserDefaults tests, canonical validation docs |
+| P02 | PRODUCT-2280 | profile_security_integration | `728974d` | Pending B02 | Pending merge | Verified profile-keyed Keychain storage, backward migration, explicit credential APIs, startup guard |
+| P03 | PRODUCT-2279 | profile_security_integration | `afa9f7b` | Pending B02 | Pending merge | Atomic current/history files, verified migration, transactional credentials, lifecycle cleanup, in-memory scrubbing |
+| P04 | PRODUCT-2277 | menu_reliability_audit | `5313a99` | Pending B02 | Pending merge | Context menu, stable status items, popover/window/full-screen fixes, CGImage fingerprinting, Cmd+W |
+| P05 | PRODUCT-2281 | usagekit_contracts | `00793e5` | Pending B03 | Pending merge | Foundation-only UsageCore contracts and characterized Claude adapter |
+| P06 | PRODUCT-2278 | codex_transport | `c57bba5` + corrective pending | Pending B03 | Reopened | Bounded request/login-scoped app-server JSONL transport; orphan-process cleanup proof pending |
 
 ## Verification Evidence
 
 | Date | Scope | Command/check | Result | Evidence |
 |---|---|---|---|---|
-| 2026-07-29 | P01 unit suite | `xcodebuild test ... -destination "platform=macOS"` | PASS | 104 passed, 0 failed, 0 skipped |
+| 2026-07-29 | P01 unit suite | `xcodebuild test ... -destination "platform=macOS"` | PASS | Reviewed head: 105 passed, 0 failed, 0 skipped |
 | 2026-07-29 | P01 storage isolation | `SharedDataStoreTests` repeated 20 times | PASS | Per-test UUID suites remained isolated |
 | 2026-07-29 | P01 Debug build | unsigned `xcodebuild build -configuration Debug` | PASS | `** BUILD SUCCEEDED **` |
 | 2026-07-29 | P01 Release build | unsigned `xcodebuild build -configuration Release` | PASS | `** BUILD SUCCEEDED **` |
 | 2026-07-29 | P01 diff hygiene | `git diff --check` | PASS | No whitespace errors |
+| 2026-07-30 | P04 focused reliability suite | `MenuReliabilityTests` | PASS | 5 passed, 0 failed |
+| 2026-07-30 | P04 full unit suite | unsigned `xcodebuild test` | PASS | All suites passed |
+| 2026-07-30 | P04 Debug build | unsigned `xcodebuild build -configuration Debug` | PASS | `** BUILD SUCCEEDED **` |
+| 2026-07-30 | P03 durable storage suites | `AtomicJSONFileStoreTests`, `ProfileUsageFileStoreTests`, `UsageHistoryServiceTests` | PASS | Independently rerun: 17 passed, 0 failed |
+| 2026-07-30 | P02 profile security integration | focused tests + full app suite + Release build | PASS | 12 focused and 136 full tests passed; zero failures/skips; Release build and leak scans clean |
+| 2026-07-30 | P02 hosted-test isolation | startup guard assertion + non-secret state audit | PASS with recorded incident | Future XCTest launches return before defaults/Keychain/file migration; one pre-guard launch is documented in D027 |
+| 2026-07-30 | B02 pre-integration suite | full unsigned Debug `xcodebuild test` after P02/P03 primitive/P04 integration | PASS | Independently rerun: 153 passed, 0 failed, 0 skipped |
+| 2026-07-30 | B02 focused integrated safety suite | security/current usage/file/history/menu selected tests | PASS | Independently rerun after P03 integration: 44 passed, 0 failed |
+| 2026-07-30 | B02 semantic/security review | read-only changed-code and call-site audit | FIXED | Closed non-transactional credential replacement and invisible deletion-error findings; no other definite/major issue |
+| 2026-07-30 | P05 UsageCore package | `swift test` and `swift test -c release` | PASS | Independently rerun: 13 passed in each configuration |
+| 2026-07-30 | P05 Claude adapter | focused adapter tests + full app suite + Debug build | PASS | Worker: 10 adapter tests and 120 full-app tests passed; independent package/diff/security audit passed |
+| 2026-07-30 | P06 Codex transport package | warnings-as-errors `swift test` and Release package test | PASS | Independently rerun: 31 passed in each configuration; Foundation-only and leak/diff scans clean |
+| 2026-07-30 | P06 post-test process census | exact fake-server PID/PPID/state check | FAIL — correction active | Found one PID-1-reparented CPU-running fake server after a green suite; exact fixture process terminated and P06 reopened |
 
 ## Blockers
 
@@ -96,4 +114,17 @@
 - Defined 17 work units, dependency waves, and five sequential PR batches.
 - Created the Linear project, PRODUCT-2276 umbrella, all 17 child issues, dependency relations, and links to PRODUCT-1022/PRODUCT-1237.
 - Implemented and independently verified P01 on `feature/codex-support-baseline`.
+- Shipped PR #7 through Tessie and Greptile gates; fixed the sole review finding and merged as `29c7fe1`.
+- Integrated the verified P04 menu/window reliability commit into B02.
+- Integrated the verified P02 Keychain primitive and started serialized profile migration/lifecycle wiring.
+- Completed and integrated P02 verified profile-keyed credential storage, legacy migration, explicit credential APIs, and hosted-test startup isolation.
+- Recorded one pre-guard hosted test startup: migration completion markers are set and the legacy session file is absent; no secret contents were inspected and no state was rolled back without a trustworthy prior snapshot.
+- Integrated the P03 durable history/file primitive; current usage hydration and profile lifecycle cleanup remain in the serialized integration step.
+- Completed P03 current-usage migration/hydration, exact installed-file verification, component-isolated explicit writes, throwing history/profile cleanup, failure-visible deletion, and partial-deletion runtime scrubbing.
+- Added recoverable Keychain/metadata transactions after review found that a late field or metadata failure could otherwise partially apply a complete credential update.
+- Completed and independently audited dependency-independent P05 UsageKit contracts plus the Claude characterization adapter while B02 storage work finishes.
+- Started P06 bounded Codex app-server transport after the UsageCore contracts passed independent Debug/Release package tests.
+- Completed and independently verified P06 bounded transport against the current local Codex 0.145.0 schema, including handshake ordering, process bounds, cancellation/reaping, EOF/exit races, method-specific params, environment isolation, and redaction.
+- Reopened P06 after the independent post-test process census found that a forced-termination fake server could outlive a passing suite; acceptance now requires PID-level termination proof and repeated zero-orphan censuses.
+- Started dependency-independent P08 typed account/rate-limit/usage/login provider work on the verified combined P05/P06 package boundary.
 - User authorized implementation and audited auto-merge for every delivery PR.

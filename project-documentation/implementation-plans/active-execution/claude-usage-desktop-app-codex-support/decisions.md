@@ -158,6 +158,76 @@ All decisions below were settled during planning and approved before implementat
 - Rationale: This avoids translating a moving string surface twice while preserving a final mandatory CI gate.
 - Status: RESOLVED — directed 2026-07-29
 
+### D023 — Treat Keychain read failures as unresolved
+- Context: A storage error is not evidence that a profile secret is absent.
+- Options: Convert errors to nil / Preserve unresolved state and retry
+- **Decision: Never let a Keychain read error imply deletion; ordinary profile saves are credential-neutral for nil values.**
+- Rationale: It prevents unrelated metadata or usage saves from deleting credentials during transient Keychain failures.
+- Status: RESOLVED — proceeded 2026-07-30
+
+### D024 — Preserve per-field migration fallbacks
+- Context: One credential field can fail migration after other fields have passed verified Keychain readback.
+- Options: Keep the whole plaintext profile / Keep only unresolved per-profile, per-field retry sources
+- **Decision: Scrub successful fields and retain only explicit unresolved field fallbacks until their verified migration succeeds.**
+- Rationale: This minimizes plaintext exposure without risking data loss or making the migration all-or-nothing.
+- Status: RESOLVED — proceeded 2026-07-30
+
+### D025 — Keep failed profile deletion retryable
+- Context: Removing profile identity before secure and file cleanup is verified can create undiscoverable orphaned data.
+- Options: Remove and log cleanup failures / Retain the profile and surface failure
+- **Decision: Retain the profile record unless all app-owned secure and file artifacts are verified removed.**
+- Rationale: The retained identity provides a safe recovery handle for retrying cleanup.
+- Status: RESOLVED — proceeded 2026-07-30
+
+### D026 — Use recoverable versioned usage files
+- Context: Atomic replacement alone does not cover post-install corruption, interrupted migration, or schema skew.
+- Options: One primary JSON file / Versioned envelopes with verified writes, `.bak` recovery, and quarantine
+- **Decision: Use versioned per-profile envelopes with verified temporary/install reads, backups, and corrupt-file quarantine.**
+- Rationale: Legacy sources can be scrubbed only after the installed representation is proven readable and equivalent.
+- Status: RESOLVED — proceeded 2026-07-30
+
+### D027 — Preserve a verified migration after an unguarded hosted test launch
+- Context: One hosted P02 test reached AppDelegate startup before the XCTest guard was added; migration markers are set and the legacy session file is absent, but there is no reliable pre-test snapshot.
+- Options: Infer and roll back user state / Preserve the verified destination and prevent any future hosted startup migration
+- **Decision: Preserve the migrated state, add an early hosted-XCTest guard, and document the event without reading or logging secret material.**
+- Rationale: The migration verifies profile-keyed targets before cleanup, whereas a rollback without a known prior state could destroy valid credentials.
+- Status: RESOLVED — proceeded 2026-07-30
+
+### D028 — Retain established precedence for duplicate legacy credentials
+- Context: Existing profile Keychain, legacy global Keychain, and plaintext file/UserDefaults sources may disagree during upgrade.
+- Options: Block until manually reconciled / Select the established runtime winner and clean superseded sources after verification
+- **Decision: Use profile-keyed, then global Keychain, then plaintext file/UserDefaults precedence.**
+- Rationale: This matches prior runtime behavior and allows superseded plaintext to be removed only after selected-target and source-change verification.
+- Status: RESOLVED — proceeded 2026-07-30
+
+### D029 — Keep Codex request params method-specific
+- Context: The current app-server schema requires object params for `account/read`, while rate-limit and usage reads accept only null or omitted params.
+- Options: Normalize every transport nil to `{}` / Let typed callers provide each method's schema shape
+- **Decision: Keep transport lossless and make the typed Codex provider supply required object params only for methods that declare them.**
+- Rationale: Generic empty-object normalization would make otherwise valid no-param methods schema-invalid.
+- Status: RESOLVED — proceeded 2026-07-30
+
+### D030 — Make complete credential updates recoverable transactions
+- Context: A sequence of verified Keychain mutations can fail after one field changes, or metadata persistence can fail after all fields change.
+- Options: Return failure with partial application / Snapshot and restore every prior field, marking failed rollback reads unresolved
+- **Decision: Treat complete and single-field credential updates as recoverable transactions with verified rollback.**
+- Rationale: A throwing update must not silently leave Keychain and profile metadata describing different credential sets.
+- Status: RESOLVED — proceeded 2026-07-30
+
+### D031 — Prefer a valid current-usage destination over a retry source
+- Context: The retry envelope can survive a crash after current-v1 is installed, and that file can later contain a newer refresh.
+- Options: Reapply the retry envelope / Use the valid installed file and scrub the retry source
+- **Decision: A valid current-v1 file is authoritative; write retry data only when no valid destination exists.**
+- Rationale: This makes migration idempotent without overwriting newer durable usage with stale legacy data.
+- Status: RESOLVED — proceeded 2026-07-30
+
+### D032 — Verify subprocess closure at the operating-system boundary
+- Context: P06 returned successful cancellation tests while one fake app-server remained CPU-running and reparented to PID 1.
+- Options: Rely on async task completion / Capture the launched PID and require it to disappear, then run a zero-orphan census
+- **Decision: Process-lifecycle acceptance requires exact PID disappearance and repeated before/after fixture censuses.**
+- Rationale: A bounded request is not actually bounded if its subprocess survives the owning task or session.
+- Status: RESOLVED — proceeded 2026-07-30
+
 ---
 
 ## Open Decisions
