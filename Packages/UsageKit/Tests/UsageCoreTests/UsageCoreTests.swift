@@ -257,6 +257,77 @@ final class UsageCoreTests: XCTestCase {
         XCTAssertEqual(quantity.calculatedUsedPercentage, 25)
     }
 
+    func testCurrencyCodesAreExplicitNormalizedAndCodableAcrossValueTypes() throws {
+        let usd = try UsageCurrencyCode("usd")
+        XCTAssertEqual(usd.rawValue, "USD")
+        XCTAssertThrowsError(try UsageCurrencyCode("US"))
+        XCTAssertThrowsError(try UsageCurrencyCode("12$"))
+
+        let quantity = try UsageQuantity(
+            used: 12.34,
+            limit: 50,
+            unit: .currency,
+            currencyCode: usd
+        )
+        let metric = try UsageMetric(
+            id: UsageMetricID("spend"),
+            value: 12.34,
+            unit: .currency,
+            currencyCode: usd
+        )
+        let credit = try UsageCredit(
+            id: UsageMetricID("balance"),
+            balance: 7.89,
+            unit: .currency,
+            currencyCode: usd
+        )
+
+        XCTAssertThrowsError(
+            try UsageQuantity(
+                used: 1,
+                unit: .tokens,
+                currencyCode: usd
+            )
+        )
+        XCTAssertThrowsError(
+            try UsageQuantity(used: 1, unit: .currency)
+        )
+        XCTAssertThrowsError(
+            try UsageMetric(
+                id: UsageMetricID("invalid"),
+                value: 1,
+                unit: .tokens,
+                currencyCode: usd
+            )
+        )
+        XCTAssertThrowsError(
+            try UsageMetric(
+                id: UsageMetricID("missing-code"),
+                value: 1,
+                unit: .currency
+            )
+        )
+        XCTAssertThrowsError(
+            try UsageCredit(
+                id: UsageMetricID("invalid"),
+                balance: 1,
+                unit: .count,
+                currencyCode: usd
+            )
+        )
+        XCTAssertThrowsError(
+            try UsageCredit(
+                id: UsageMetricID("missing-code"),
+                balance: 1,
+                unit: .currency
+            )
+        )
+
+        let values = CurrencyValues(quantity: quantity, metric: metric, credit: credit)
+        let data = try JSONEncoder().encode(values)
+        XCTAssertEqual(try JSONDecoder().decode(CurrencyValues.self, from: data), values)
+    }
+
     func testDecodingReappliesModelValidation() throws {
         let invalidWindow = Data(
             #"{"id":"window","usedPercentage":-1}"#.utf8
@@ -354,4 +425,10 @@ private struct StubProvider: UsageProvider {
     func fetchUsage() async throws -> UsageReport {
         report
     }
+}
+
+private struct CurrencyValues: Codable, Equatable {
+    var quantity: UsageQuantity
+    var metric: UsageMetric
+    var credit: UsageCredit
 }

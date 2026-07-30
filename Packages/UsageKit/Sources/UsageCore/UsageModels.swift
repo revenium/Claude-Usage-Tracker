@@ -45,12 +45,53 @@ public struct UsageUnit: Hashable, Sendable, Codable, CustomStringConvertible {
     public static let count = UsageUnit(unchecked: "count")
 }
 
+public struct UsageCurrencyCode: Hashable, Sendable, Codable, CustomStringConvertible {
+    public let rawValue: String
+
+    public init(_ rawValue: String) throws {
+        let normalized = rawValue.uppercased()
+        guard normalized.unicodeScalars.count == 3,
+              normalized.unicodeScalars.allSatisfy({
+                  (65...90).contains($0.value)
+              })
+        else {
+            throw UsageCoreValidationError.invalidValue(field: "currencyCode")
+        }
+        self.rawValue = normalized
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        do {
+            try self.init(container.decode(String.self))
+        } catch {
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "UsageCurrencyCode must contain three ASCII letters"
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+
+    public var description: String { rawValue }
+}
+
 public struct UsageQuantity: Codable, Equatable, Sendable {
     public var used: Double
     public var limit: Double?
     public var unit: UsageUnit
+    public var currencyCode: UsageCurrencyCode?
 
-    public init(used: Double, limit: Double? = nil, unit: UsageUnit) throws {
+    public init(
+        used: Double,
+        limit: Double? = nil,
+        unit: UsageUnit,
+        currencyCode: UsageCurrencyCode? = nil
+    ) throws {
         guard used.isFinite, used >= 0 else {
             throw UsageCoreValidationError.invalidValue(field: "used")
         }
@@ -59,10 +100,14 @@ public struct UsageQuantity: Codable, Equatable, Sendable {
                 throw UsageCoreValidationError.invalidValue(field: "limit")
             }
         }
+        if (unit == .currency) != (currencyCode != nil) {
+            throw UsageCoreValidationError.invalidValue(field: "currencyCode.unit")
+        }
 
         self.used = used
         self.limit = limit
         self.unit = unit
+        self.currencyCode = currencyCode
     }
 
     public init(from decoder: Decoder) throws {
@@ -70,7 +115,8 @@ public struct UsageQuantity: Codable, Equatable, Sendable {
         try self.init(
             used: container.decode(Double.self, forKey: .used),
             limit: container.decodeIfPresent(Double.self, forKey: .limit),
-            unit: container.decode(UsageUnit.self, forKey: .unit)
+            unit: container.decode(UsageUnit.self, forKey: .unit),
+            currencyCode: container.decodeIfPresent(UsageCurrencyCode.self, forKey: .currencyCode)
         )
     }
 
@@ -175,20 +221,26 @@ public struct UsageMetric: Codable, Equatable, Sendable, Identifiable {
     public var displayName: String?
     public var value: Double
     public var unit: UsageUnit
+    public var currencyCode: UsageCurrencyCode?
 
     public init(
         id: UsageMetricID,
         displayName: String? = nil,
         value: Double,
-        unit: UsageUnit
+        unit: UsageUnit,
+        currencyCode: UsageCurrencyCode? = nil
     ) throws {
         guard value.isFinite, value >= 0 else {
             throw UsageCoreValidationError.invalidValue(field: "usageMetric.value")
+        }
+        if (unit == .currency) != (currencyCode != nil) {
+            throw UsageCoreValidationError.invalidValue(field: "usageMetric.currencyCode.unit")
         }
         self.id = id
         self.displayName = displayName
         self.value = value
         self.unit = unit
+        self.currencyCode = currencyCode
     }
 
     public init(from decoder: Decoder) throws {
@@ -197,7 +249,8 @@ public struct UsageMetric: Codable, Equatable, Sendable, Identifiable {
             id: container.decode(UsageMetricID.self, forKey: .id),
             displayName: container.decodeIfPresent(String.self, forKey: .displayName),
             value: container.decode(Double.self, forKey: .value),
-            unit: container.decode(UsageUnit.self, forKey: .unit)
+            unit: container.decode(UsageUnit.self, forKey: .unit),
+            currencyCode: container.decodeIfPresent(UsageCurrencyCode.self, forKey: .currencyCode)
         )
     }
 }
@@ -247,6 +300,7 @@ public struct UsageCredit: Codable, Equatable, Sendable, Identifiable {
     public var displayName: String?
     public var balance: Double
     public var unit: UsageUnit
+    public var currencyCode: UsageCurrencyCode?
     public var resetsAt: Date?
 
     public init(
@@ -254,15 +308,20 @@ public struct UsageCredit: Codable, Equatable, Sendable, Identifiable {
         displayName: String? = nil,
         balance: Double,
         unit: UsageUnit,
+        currencyCode: UsageCurrencyCode? = nil,
         resetsAt: Date? = nil
     ) throws {
         guard balance.isFinite, balance >= 0 else {
             throw UsageCoreValidationError.invalidValue(field: "usageCredit.balance")
         }
+        if (unit == .currency) != (currencyCode != nil) {
+            throw UsageCoreValidationError.invalidValue(field: "usageCredit.currencyCode.unit")
+        }
         self.id = id
         self.displayName = displayName
         self.balance = balance
         self.unit = unit
+        self.currencyCode = currencyCode
         self.resetsAt = resetsAt
     }
 
@@ -273,6 +332,7 @@ public struct UsageCredit: Codable, Equatable, Sendable, Identifiable {
             displayName: container.decodeIfPresent(String.self, forKey: .displayName),
             balance: container.decode(Double.self, forKey: .balance),
             unit: container.decode(UsageUnit.self, forKey: .unit),
+            currencyCode: container.decodeIfPresent(UsageCurrencyCode.self, forKey: .currencyCode),
             resetsAt: container.decodeIfPresent(Date.self, forKey: .resetsAt)
         )
     }
