@@ -6,10 +6,10 @@
 - Linear project: `Claude Usage Desktop App Codex Support` (`8fd871e1416e`)
 - Umbrella: `PRODUCT-2276`
 - Tracking wave: W00 — complete
-- Current delivery batch: B02 — Safety foundations
-- Current phases: P02/P03/P04 implemented and fully validated; B02 ship in progress
-- Active implementation workers: P08 Codex provider/account/login contracts
-- Next action: Run `codex-ship-pr skip-review`, close review gates, and auto-merge B02
+- Current delivery batch: B03 — Provider core
+- Current phases: P05/P06/P08 integrated and verified; P07 provider-tagged profile model in progress; P09 follows serially
+- Active implementation workers: P07 profile provider model; read-only B04/B05 design audits
+- Next action: Complete P07, then implement P09 profile-keyed refresh/presentation orchestration and ship B03
 
 ## Repository State at Initialization
 
@@ -41,10 +41,10 @@
 |---|---|---|---|
 | W00 | Linear tracking initialization | 17 child issues | Complete |
 | W01 | Green baseline | P01 | Complete |
-| W02 | Safety foundations | P02, P03, P04 | Implemented pending B02 ship |
+| W02 | Safety foundations | P02, P03, P04 | Complete |
 | W03A | UsageKit boundary | P05 | Implemented pending B03 ship |
-| W03B | Transport and profile model | P06, P07 | P06 implemented; P07 pending |
-| W03C | Codex provider | P08 | In progress |
+| W03B | Transport and profile model | P06, P07 | P06 integrated; P07 in progress |
+| W03C | Codex provider | P08 | Implemented pending B03 ship |
 | W03D | Refresh integration | P09 | Pending |
 | W04 | Provider-aware UI parity | P10, P11, P12 | Pending |
 | W05A | Cross-cutting parity and distribution | P13, P14, P16 | Pending |
@@ -56,8 +56,8 @@
 | Batch | Branch | PR | CI | Review Gate | Merge | Status |
 |---|---|---|---|---|---|---|
 | B01 Baseline | `feature/codex-support-baseline` | [#7](https://github.com/revenium/Claude-Usage-Tracker/pull/7) | Success | Tessie clean + Greptile 5/5 | `29c7fe1` | Merged |
-| B02 Foundations | `feature/codex-support-foundations` | — | Local gates passed | Local semantic/security audit clean after fixes | — | Ready to ship |
-| B03 Provider core | `feature/codex-support-provider-core` | — | — | — | — | Pending |
+| B02 Foundations | `feature/codex-support-foundations` | [#8](https://github.com/revenium/Claude-Usage-Tracker/pull/8) | Equivalent exact-head gate passed | All findings fixed; reviewer limits documented | `ab70776` | Merged |
+| B03 Provider core | `feature/codex-support-provider-core` | — | UsageKit 49/49 after integration | — | — | In progress |
 | B04 UI parity | `feature/codex-support-ui-parity` | — | — | — | — | Pending |
 | B05 Release readiness | `feature/codex-support-release-readiness` | — | — | — | — | Pending |
 
@@ -66,11 +66,12 @@
 | Phase | Linear | Worker | Commit | Batch PR | Completed | Summary |
 |---|---|---|---|---|---|---|
 | P01 | PRODUCT-2282 | baseline_audit | `1009d4f` | #7 | 2026-07-30 | Parser correctness, null compatibility, hermetic UserDefaults tests, canonical validation docs |
-| P02 | PRODUCT-2280 | profile_security_integration | `728974d`, `4c9890c` | Pending B02 | Pending merge | Verified profile-keyed Keychain storage, backward migration, explicit credential APIs, startup guard, fail-closed deletion marker |
-| P03 | PRODUCT-2279 | profile_security_integration | `afa9f7b`, `153fca9`, `4c9890c` | Pending B02 | Pending merge | Atomic current/history files, verified migration, transactional credentials, recoverable cleanup, fault-injected rollback safety |
-| P04 | PRODUCT-2277 | menu_reliability_audit | `5313a99` | Pending B02 | Pending merge | Context menu, stable status items, popover/window/full-screen fixes, CGImage fingerprinting, Cmd+W |
+| P02 | PRODUCT-2280 | profile_security_integration | `747230b` final head | #8 | 2026-07-30 | Verified profile-keyed Keychain storage, backward migration, explicit credential APIs, startup guard, fail-closed deletion marker |
+| P03 | PRODUCT-2279 | profile_security_integration | `747230b` final head | #8 | 2026-07-30 | Atomic current/history files, verified migration, transactional credentials, recoverable cleanup, fault-injected rollback safety |
+| P04 | PRODUCT-2277 | menu_reliability_audit | `747230b` final head | #8 | 2026-07-30 | Context menu, stable status items, popover/window/full-screen fixes, CGImage fingerprinting, Cmd+W, captured-profile auto-switch safety |
 | P05 | PRODUCT-2281 | usagekit_contracts | `00793e5` | Pending B03 | Pending merge | Foundation-only UsageCore contracts and characterized Claude adapter |
 | P06 | PRODUCT-2278 | codex_transport | `0647f4b` | Pending B03 | Pending merge | Bounded request/login-scoped app-server JSONL transport with callback-backed termination, reaping barrier, exact PID exit proof, and zero-orphan census |
+| P08 | PRODUCT-2285 | codex_provider | `ea4c871` integrated head | Pending B03 | Pending merge | ChatGPT account/login/health/dynamic usage provider with one bounded refresh session, required-endpoint health, credit availability, UTC summaries, and process cleanup proof |
 
 ## Verification Evidence
 
@@ -101,6 +102,9 @@
 | 2026-07-30 | P06 post-test process census | exact fake-server PID/PPID/state check | FAIL — correction active | Found one PID-1-reparented CPU-running fake server after a green suite; exact fixture process terminated and P06 reopened |
 | 2026-07-30 | P06 lifecycle correction | warnings-as-errors package suite plus exact PID/reaping assertions | PASS | Corrective `0647f4b`; independent Debug 31/31; lifecycle suite repeated five cycles; exact PIDs reached ESRCH |
 | 2026-07-30 | P06 corrected process census | pre/post fixture-process census | PASS | Zero fake app-server processes before and after the independently rerun package suite |
+| 2026-07-30 | B02 final corrective head | production-shared A→B regression + full suite + Debug/Release | PASS | 1 focused and 218 full tests passed; both app executables verified at `747230b` |
+| 2026-07-30 | B02 final review/merge | all three review surfaces + independent exact-hash audit | PASS with documented reviewer limits | Six threads resolved; Tessie size ceiling and exhausted Greptile budget recorded in D37-D38; merged as `ab70776` |
+| 2026-07-30 | B03 integrated UsageKit | `swift test --package-path Packages/UsageKit` | PASS | 49 passed, 0 failed after P05/P06/P08 cherry-pick onto fresh `upstream/main` |
 
 ## Blockers
 

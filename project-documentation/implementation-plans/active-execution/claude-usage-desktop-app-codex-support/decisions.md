@@ -242,6 +242,41 @@ All decisions below were settled during planning and approved before implementat
 - Rationale: A failed attempt to stage protection for a new value must never take the currently readable value offline.
 - Status: RESOLVED — proceeded 2026-07-30
 
+### D035 — Use one app-server session per complete provider refresh
+- Context: Opening a process for each account, rate-limit, and optional usage RPC triples startup cost and overall-timeout budgets.
+- Options: One process per RPC / One initialized request-scoped process for the refresh
+- **Decision: Run the complete Codex refresh in one initialized session with one overall deadline, then close and prove the child reaped.**
+- Rationale: This preserves the no-pool boundary while making refresh snapshots coherent and truly bounded.
+- Status: RESOLVED — proceeded 2026-07-30
+
+### D036 — Require every mandatory usage endpoint for healthy status
+- Context: `account/read` can succeed while required `account/rateLimits/read` is missing or malformed, leaving every real usage refresh unusable.
+- Options: Treat identity alone as healthy / Probe identity and required rate limits together
+- **Decision: Codex health requires both account and rate-limit reads in one health-scoped session; optional usage history remains non-fatal.**
+- Rationale: A provider that cannot produce its minimum usage report must not be labeled healthy.
+- Status: RESOLVED — proceeded 2026-07-30
+
+### D037 — Keep provider kind stable while modeling an unlinked Codex profile
+- Context: Unlink and delete are separate operations, but a Codex UUID cannot retain a valid home reference after unlink or change provider kind.
+- Options: Delete/convert the profile or store an invalid path / Make the verified linked-home reference optional
+- **Decision: A profile UUID's provider kind is immutable; Codex configuration retains `linkedHome = nil` after unlink and accepts only a verified canonical home when linked.**
+- Rationale: The profile and settings survive unlink without an invalid sentinel or any Codex-owned credential mutation.
+- Status: RESOLVED — proceeded 2026-07-30
+
+### D038 — Permit a zero-profile first-run bootstrap
+- Context: Persisting an implicit Claude profile before onboarding conflicts with immutable provider kind when the user chooses Codex first.
+- Options: Privileged provider conversion / Create no profile until provider selection
+- **Decision: First-run setup may have zero profiles and creates the selected provider with a new UUID only after setup commits.**
+- Rationale: This avoids orphan placeholders, premature Claude side effects, and a provider-conversion loophole.
+- Status: RESOLVED — proceeded 2026-07-30
+
+### D039 — Publish one profile-keyed presentation snapshot
+- Context: Independent global Claude usage/loading/error fields can combine state from different profiles in a mixed-provider UI.
+- Options: Reconstruct view state from legacy globals / Publish atomic snapshots keyed by profile UUID and provider revision
+- **Decision: P09 owns profile-keyed snapshots containing identity, revision, capabilities, normalized report, refresh activity, last success, and typed failure.**
+- Rationale: Popover, settings, menus, and status items need one captured source of truth that stale work cannot partially mutate.
+- Status: RESOLVED — proceeded 2026-07-30
+
 ---
 
 ## Open Decisions
