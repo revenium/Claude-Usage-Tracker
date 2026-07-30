@@ -4,6 +4,7 @@ import Foundation
 final class FakeCodexAppServer {
     let client: CodexAppServerClient
     let directoryURL: URL
+    let requestLogURL: URL
 
     init(
         scenario: String,
@@ -18,6 +19,7 @@ final class FakeCodexAppServer {
             at: directoryURL,
             withIntermediateDirectories: false
         )
+        requestLogURL = directoryURL.appendingPathComponent("requests.jsonl")
 
         guard let fixtureURL = Bundle.module.url(
             forResource: "fake-codex-app-server",
@@ -35,6 +37,7 @@ final class FakeCodexAppServer {
 
         var environment = additionalEnvironment
         environment["TEST_SCENARIO"] = scenario
+        environment["REQUEST_LOG"] = requestLogURL.path
         let configuredCodexHomeURL = codexHomeURL ?? directoryURL
         if scenario == "environment" {
             environment["EXPECTED_CODEX_HOME"] =
@@ -55,6 +58,16 @@ final class FakeCodexAppServer {
 
     deinit {
         try? FileManager.default.removeItem(at: directoryURL)
+    }
+
+    func recordedRequests() throws -> [CodexRequestFrame] {
+        guard FileManager.default.fileExists(atPath: requestLogURL.path) else {
+            return []
+        }
+        let data = try Data(contentsOf: requestLogURL)
+        return try data.split(separator: 0x0A).map {
+            try JSONDecoder().decode(CodexRequestFrame.self, from: Data($0))
+        }
     }
 
     enum FakeServerError: Error {

@@ -64,6 +64,10 @@ read_line || exit 15
 request_line="$received_line"
 request_id="$(extract_id "$request_line")"
 
+if [ -n "${REQUEST_LOG:-}" ]; then
+    printf '%s\n' "$request_line" >> "$REQUEST_LOG"
+fi
+
 case "$scenario" in
     happy|fragmented_initialize)
         printf '{"id":%s,"result":{"ok":true}}\n' "$request_id"
@@ -166,7 +170,156 @@ case "$scenario" in
         printf '{"id":%s,"result":{"codexHomeMatches":%s,"safeFlagMatches":%s,"parentHomeAbsent":%s}}\n' \
             "$request_id" "$codex_home_matches" "$safe_flag_matches" "$parent_home_absent"
         ;;
+    provider_current)
+        case "$request_line" in
+            *'"method":"account/read"'*|*'"method":"account\/read"'*)
+                printf '{"id":%s,"result":{"account":{"type":"chatgpt","email":"person@example.com","planType":"pro","futureAccountField":{"value":1}},"requiresOpenaiAuth":true,"futureRoot":true}}\n' "$request_id"
+                ;;
+            *'"method":"account/rateLimits/read"'*|*'"method":"account\/rateLimits\/read"'*)
+                printf '{"id":%s,"result":{"rateLimits":{"limitId":"legacy","primary":{"usedPercent":99}},"rateLimitsByLimitId":{"codex":{"limitId":"codex","limitName":"Codex","planType":"pro","primary":{"usedPercent":25,"windowDurationMins":300,"resetsAt":1785380400},"secondary":{"usedPercent":40,"windowDurationMins":10080,"resetsAt":1785808800},"credits":{"hasCredits":true,"unlimited":false,"balance":"75.5"},"futureSnapshotField":true},"reviews":{"limitId":"reviews","limitName":"Code review","primary":{"usedPercent":7,"windowDurationMins":1440,"resetsAt":1785384000}}},"rateLimitResetCredits":{"availableCount":2,"credits":[{"id":"opaque-reset-id","resetType":"codexRateLimits","status":"available","grantedAt":1785000000,"expiresAt":1786000000,"title":"Reset","description":"Display only"}]},"futureRoot":{"version":2}}}\n' "$request_id"
+                ;;
+            *'"method":"account/usage/read"'*|*'"method":"account\/usage\/read"'*)
+                printf '{"id":%s,"result":{"summary":{"lifetimeTokens":1234567,"peakDailyTokens":45678,"longestRunningTurnSec":540,"currentStreakDays":8,"longestStreakDays":14,"futureMetric":1},"dailyUsageBuckets":[{"startDate":"2026-06-18","tokens":12345},{"startDate":"2026-06-19","tokens":23456}],"futureUsageField":true}}\n' "$request_id"
+                ;;
+            *) exit 30 ;;
+        esac
+        ;;
+    provider_usage_unavailable)
+        case "$request_line" in
+            *'"method":"account/read"'*|*'"method":"account\/read"'*)
+                printf '{"id":%s,"result":{"account":{"type":"chatgpt","email":null,"planType":"plus"},"requiresOpenaiAuth":true}}\n' "$request_id"
+                ;;
+            *'"method":"account/rateLimits/read"'*|*'"method":"account\/rateLimits\/read"'*)
+                printf '{"id":%s,"result":{"rateLimits":{"limitId":"codex","primary":{"usedPercent":5}}}}\n' "$request_id"
+                ;;
+            *'"method":"account/usage/read"'*|*'"method":"account\/usage\/read"'*)
+                printf '{"id":%s,"error":{"code":-32601,"message":"method unavailable secret-body"}}\n' "$request_id"
+                ;;
+            *) exit 31 ;;
+        esac
+        ;;
+    provider_usage_empty)
+        case "$request_line" in
+            *'"method":"account/read"'*|*'"method":"account\/read"'*)
+                printf '{"id":%s,"result":{"account":{"type":"chatgpt","email":null,"planType":"plus"},"requiresOpenaiAuth":true}}\n' "$request_id"
+                ;;
+            *'"method":"account/rateLimits/read"'*|*'"method":"account\/rateLimits\/read"'*)
+                printf '{"id":%s,"result":{"rateLimits":{"limitId":"codex","primary":{"usedPercent":5}}}}\n' "$request_id"
+                ;;
+            *'"method":"account/usage/read"'*|*'"method":"account\/usage\/read"'*)
+                printf '{"id":%s,"result":{"futureOnly":true}}\n' "$request_id"
+                ;;
+            *) exit 32 ;;
+        esac
+        ;;
+    provider_legacy_additive)
+        case "$request_line" in
+            *'"method":"account/read"'*|*'"method":"account\/read"'*)
+                printf '{"id":%s,"result":{"account":{"type":"chatgpt","planType":"future_plan","unknown":"ignored"},"requiresOpenaiAuth":true}}\n' "$request_id"
+                ;;
+            *'"method":"account/rateLimits/read"'*|*'"method":"account\/rateLimits\/read"'*)
+                printf '{"id":%s,"result":{"rateLimits":{"limitId":"legacy bucket","limitName":"Legacy bucket","primary":{"usedPercent":"12.5","windowDurationMins":"60","resetsAt":"1785380400"},"secondary":null,"unknown":"ignored"},"unknownRoot":42}}\n' "$request_id"
+                ;;
+            *'"method":"account/usage/read"'*|*'"method":"account\/usage\/read"'*)
+                printf '{"id":%s,"result":{"summary":{"lifetimeTokens":null,"peakDailyTokens":null},"dailyUsageBuckets":null,"unknown":"ignored"}}\n' "$request_id"
+                ;;
+            *) exit 33 ;;
+        esac
+        ;;
+    provider_lossy_dynamic)
+        case "$request_line" in
+            *'"method":"account/read"'*|*'"method":"account\/read"'*)
+                printf '{"id":%s,"result":{"account":{"type":"chatgpt","email":null,"planType":"team"},"requiresOpenaiAuth":true}}\n' "$request_id"
+                ;;
+            *'"method":"account/rateLimits/read"'*|*'"method":"account\/rateLimits\/read"'*)
+                printf '{"id":%s,"result":{"rateLimits":{"limitId":"legacy","primary":{"usedPercent":88}},"rateLimitsByLimitId":{"valid":{"limitId":"valid","primary":{"usedPercent":11}},"malformed":{"limitId":"malformed","primary":{"usedPercent":"not-a-number"}}}}}\n' "$request_id"
+                ;;
+            *'"method":"account/usage/read"'*|*'"method":"account\/usage\/read"'*)
+                printf '{"id":%s,"result":{}}\n' "$request_id"
+                ;;
+            *) exit 34 ;;
+        esac
+        ;;
+    provider_malformed_account)
+        printf '{"id":%s,"result":{"account":{"type":"chatgpt","planType":"plus"}}}\n' "$request_id"
+        ;;
+    provider_malformed_rate)
+        case "$request_line" in
+            *'"method":"account/read"'*|*'"method":"account\/read"'*)
+                printf '{"id":%s,"result":{"account":{"type":"chatgpt","email":null,"planType":"plus"},"requiresOpenaiAuth":true}}\n' "$request_id"
+                ;;
+            *'"method":"account/rateLimits/read"'*|*'"method":"account\/rateLimits\/read"'*)
+                printf '{"id":%s,"result":{"rateLimits":{"limitId":"codex","primary":{"usedPercent":"not-a-number"}}}}\n' "$request_id"
+                ;;
+            *) exit 35 ;;
+        esac
+        ;;
+    provider_api_key)
+        printf '{"id":%s,"result":{"account":{"type":"apiKey"},"requiresOpenaiAuth":true}}\n' "$request_id"
+        ;;
+    provider_bedrock)
+        printf '{"id":%s,"result":{"account":{"type":"amazonBedrock","usesCodexManagedCredentials":false},"requiresOpenaiAuth":false}}\n' "$request_id"
+        ;;
+    provider_unknown_account)
+        printf '{"id":%s,"result":{"account":{"type":"futureAuthMode","opaque":"value"},"requiresOpenaiAuth":false}}\n' "$request_id"
+        ;;
+    provider_unauthenticated)
+        printf '{"id":%s,"result":{"account":null,"requiresOpenaiAuth":true}}\n' "$request_id"
+        ;;
+    provider_no_openai_account)
+        printf '{"id":%s,"result":{"account":null,"requiresOpenaiAuth":false}}\n' "$request_id"
+        ;;
+    provider_login_browser)
+        case "$request_line" in
+            *'"method":"account/login/start"'*|*'"method":"account\/login\/start"'*)
+                printf '{"id":%s,"result":{"type":"chatgpt","loginId":"browser-login-id","authUrl":"https://chatgpt.com/login?flow=codex","future":true}}\n' "$request_id"
+                printf '{"method":"account/login/completed","params":{"loginId":"browser-login-id","success":true,"error":null,"future":true}}\n'
+                ;;
+            *) exit 36 ;;
+        esac
+        ;;
+    provider_login_device)
+        case "$request_line" in
+            *'"method":"account/login/start"'*|*'"method":"account\/login\/start"'*)
+                printf '{"id":%s,"result":{"type":"chatgptDeviceCode","loginId":"device-login-id","verificationUrl":"https://auth.openai.com/codex/device","userCode":"ABCD-1234"}}\n' "$request_id"
+                printf '{"method":"account/login/completed","params":{"loginId":"device-login-id","success":true,"error":null}}\n'
+                ;;
+            *) exit 37 ;;
+        esac
+        ;;
+    provider_login_cancel)
+        printf '{"id":%s,"result":{"type":"chatgpt","loginId":"cancel-login-id","authUrl":"https://chatgpt.com/login"}}\n' "$request_id"
+        read_line || exit 38
+        cancel_line="$received_line"
+        cancel_id="$(extract_id "$cancel_line")"
+        if [ -n "${REQUEST_LOG:-}" ]; then
+            printf '%s\n' "$cancel_line" >> "$REQUEST_LOG"
+        fi
+        case "$cancel_line" in
+            *'"method":"account/login/cancel"'*|*'"method":"account\/login\/cancel"'*)
+                printf '{"id":%s,"result":{"status":"canceled"}}\n' "$cancel_id"
+                printf '{"method":"account/login/completed","params":{"loginId":"cancel-login-id","success":false,"error":"canceled by user"}}\n'
+                ;;
+            *) exit 39 ;;
+        esac
+        ;;
+    provider_login_timeout|provider_disconnect)
+        printf '{"id":%s,"result":{"type":"chatgpt","loginId":"pending-login-id","authUrl":"https://chatgpt.com/login"}}\n' "$request_id"
+        read_line
+        if [ -n "${received_line:-}" ] && [ -n "${REQUEST_LOG:-}" ]; then
+            printf '%s\n' "$received_line" >> "$REQUEST_LOG"
+        fi
+        ;;
+    provider_login_redaction)
+        printf '{"id":%s,"result":{"type":"chatgpt","loginId":"redact-login-id","authUrl":"https://super-secret-user:super-secret-password@chatgpt.com/login?access_token=super-secret-token"}}\n' "$request_id"
+        ;;
     *)
         exit 99
         ;;
+esac
+
+# Provider fixtures model the real app-server's long-lived process. Keep the
+# protocol stream open until the request-scoped client explicitly closes it.
+case "$scenario" in
+    provider_*) read_line ;;
 esac
