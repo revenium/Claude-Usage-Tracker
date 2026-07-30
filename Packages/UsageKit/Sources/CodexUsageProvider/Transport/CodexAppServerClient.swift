@@ -131,6 +131,14 @@ public actor CodexAppServerSession {
     private var completedRequestIDs = Set<Int64>()
     private var notificationWaiters: [UUID: NotificationWaiter] = [:]
     private var notificationWaiterOrder: [UUID] = []
+    private var terminalObservers:
+        [CheckedContinuation<CodexTransportError, Never>] = []
+    private var closePausedObservers:
+        [CheckedContinuation<Void, Never>] = []
+    private var closePauseContinuation:
+        CheckedContinuation<Void, Never>?
+    private var closePauseEnabledForTesting = false
+    private var closeIsPausedForTesting = false
     private var readerTask: Task<Void, Never>?
     private var closeTask: Task<Void, Error>?
     private var terminalError: CodexTransportError?
@@ -215,12 +223,12 @@ public actor CodexAppServerSession {
     public func nextNotification(
         matching method: CodexMethod? = nil
     ) async throws -> CodexNotificationFrame {
-        try ensureOpen(method: method)
         if let index = notifications.firstIndex(where: {
             method == nil || $0.method == method
         }) {
             return notifications.remove(at: index)
         }
+        try ensureOpen(method: method)
 
         let token = UUID()
         do {
@@ -251,8 +259,37 @@ public actor CodexAppServerSession {
     }
 
     public func close() async throws {
+        try await close(preservingRoutedInput: false)
+    }
+
+    private func close(preservingRoutedInput: Bool) async throws {
+        if !preservingRoutedInput {
+            // Explicit close wins atomically: no queued frame may escape while
+            // process teardown suspends this actor.
+            isClosed = true
+            discardRoutedInput(
+                with: terminalError
+                    ?? .cancelled(method: nil, id: nil)
+            )
+        }
         if let closeTask {
-            try await closeTask.value
+            do {
+                try await closeTask.value
+            } catch {
+                if !preservingRoutedInput {
+                    discardRoutedInput(
+                        with: terminalError
+                            ?? .cancelled(method: nil, id: nil)
+                    )
+                }
+                throw error
+            }
+            if !preservingRoutedInput {
+                discardRoutedInput(
+                    with: terminalError
+                        ?? .cancelled(method: nil, id: nil)
+                )
+            }
             return
         }
         isClosed = true
@@ -263,11 +300,15 @@ public actor CodexAppServerSession {
             try await process.close()
         }
         closeTask = task
+        await pauseProcessCloseForTestingIfNeeded()
         do {
             try await task.value
         } catch let error as CodexTransportError {
             terminalError = terminalError ?? error
-            failAllWaiters(with: error)
+            finishClose(
+                preservingRoutedInput: preservingRoutedInput,
+                error: terminalError ?? error
+            )
             throw error
         } catch {
             let transportError = CodexTransportError.timedOut(
@@ -276,14 +317,16 @@ public actor CodexAppServerSession {
                 id: nil
             )
             terminalError = terminalError ?? transportError
-            failAllWaiters(with: transportError)
+            finishClose(
+                preservingRoutedInput: preservingRoutedInput,
+                error: terminalError ?? transportError
+            )
             throw transportError
         }
-        failAllWaiters(
-            with: terminalError
-                ?? .cancelled(method: nil, id: nil)
+        finishClose(
+            preservingRoutedInput: preservingRoutedInput,
+            error: terminalError ?? .cancelled(method: nil, id: nil)
         )
-        notifications.removeAll()
     }
 
     private func startReader() {
@@ -384,27 +427,62 @@ public actor CodexAppServerSession {
     private func readerFailed(_ error: CodexTransportError) async {
         guard terminalError == nil else { return }
         terminalError = error
+        let observers = terminalObservers
+        terminalObservers.removeAll()
+        observers.forEach { $0.resume(returning: error) }
         // Preserve the protocol/reader failure as the operation's result
         // before process teardown yields the actor. Otherwise a concurrent
         // timeout or cancellation can win during the termination grace
         // period and mask the already-observed terminal cause.
-        failAllWaiters(with: error)
-        try? await close()
+        failUnresolvedWaiters(with: error)
+        try? await close(preservingRoutedInput: true)
     }
 
-    private func failAllWaiters(with error: CodexTransportError) {
-        let requestContinuations = pendingRequests.values.compactMap(
-            \.continuation
-        )
-        let notificationContinuations = notificationWaiterOrder.compactMap {
-            notificationWaiters[$0]?.continuation
+    private func finishClose(
+        preservingRoutedInput: Bool,
+        error: CodexTransportError
+    ) {
+        if preservingRoutedInput {
+            failUnresolvedWaiters(with: error)
+        } else {
+            discardRoutedInput(with: error)
         }
-        pendingRequests.removeAll()
-        notificationWaiters.removeAll()
-        notificationWaiterOrder.removeAll()
+    }
+
+    private func failUnresolvedWaiters(with error: CodexTransportError) {
+        let unresolvedRequestIDs = pendingRequests.compactMap {
+            $0.value.result == nil ? $0.key : nil
+        }
+        let requestContinuations = unresolvedRequestIDs.compactMap {
+            pendingRequests[$0]?.continuation
+        }
+        unresolvedRequestIDs.forEach {
+            pendingRequests.removeValue(forKey: $0)
+        }
+        failNotificationWaiters(with: error)
         requestContinuations.forEach {
             $0.resume(throwing: error)
         }
+    }
+
+    private func discardRoutedInput(with error: CodexTransportError) {
+        let requestContinuations = pendingRequests.values.compactMap(
+            \.continuation
+        )
+        pendingRequests.removeAll()
+        failNotificationWaiters(with: error)
+        notifications.removeAll()
+        requestContinuations.forEach {
+            $0.resume(throwing: error)
+        }
+    }
+
+    private func failNotificationWaiters(with error: CodexTransportError) {
+        let notificationContinuations = notificationWaiterOrder.compactMap {
+            notificationWaiters[$0]?.continuation
+        }
+        notificationWaiters.removeAll()
+        notificationWaiterOrder.removeAll()
         notificationContinuations.forEach {
             $0.resume(throwing: error)
         }
@@ -502,11 +580,17 @@ public actor CodexAppServerSession {
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 guard var pending = pendingRequests[id] else {
-                    continuation.resume(
-                        throwing: terminalError
-                            ?? CodexTransportError.unexpectedResponse(
-                                idKind: .integer
+                    let error = terminalError
+                        ?? (isClosed
+                            ? CodexTransportError.cancelled(
+                                method: method,
+                                id: id
                             )
+                            : CodexTransportError.unexpectedResponse(
+                                idKind: .integer
+                            ))
+                    continuation.resume(
+                        throwing: error
                     )
                     return
                 }
@@ -558,16 +642,16 @@ public actor CodexAppServerSession {
     ) async throws -> CodexNotificationFrame {
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
-                if let terminalError {
-                    continuation.resume(throwing: terminalError)
-                    return
-                }
                 if let index = notifications.firstIndex(where: {
                     method == nil || $0.method == method
                 }) {
                     continuation.resume(
                         returning: notifications.remove(at: index)
                     )
+                    return
+                }
+                if let terminalError {
+                    continuation.resume(throwing: terminalError)
                     return
                 }
                 notificationWaiters[token] = NotificationWaiter(
@@ -581,6 +665,81 @@ public actor CodexAppServerSession {
                 await self.cancelNotificationWaiter(token: token)
             }
         }
+    }
+
+    func sendRequestForTesting(
+        _ method: CodexMethod,
+        params: CodexJSONValue? = nil
+    ) async throws -> Int64 {
+        try ensureOpen(method: method)
+        let id = try allocateRequestID()
+        pendingRequests[id] = PendingRequest(
+            method: method,
+            waiterToken: nil,
+            continuation: nil,
+            result: nil
+        )
+        do {
+            try await transport.send(
+                CodexRequestFrame(
+                    id: .integer(id),
+                    method: method,
+                    params: params
+                )
+            )
+            return id
+        } catch {
+            pendingRequests.removeValue(forKey: id)
+            throw error
+        }
+    }
+
+    func responseForTesting(
+        id: Int64,
+        method: CodexMethod
+    ) async throws -> CodexJSONValue {
+        try await waitForResponse(id: id, method: method)
+    }
+
+    func waitForTerminalForTesting() async -> CodexTransportError {
+        if let terminalError {
+            return terminalError
+        }
+        return await withCheckedContinuation { continuation in
+            terminalObservers.append(continuation)
+        }
+    }
+
+    func enableProcessClosePauseForTesting() {
+        closePauseEnabledForTesting = true
+    }
+
+    func waitForProcessClosePausedForTesting() async {
+        if closeIsPausedForTesting {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            closePausedObservers.append(continuation)
+        }
+    }
+
+    func releaseProcessClosePauseForTesting() {
+        closePauseEnabledForTesting = false
+        let continuation = closePauseContinuation
+        closePauseContinuation = nil
+        continuation?.resume()
+    }
+
+    private func pauseProcessCloseForTestingIfNeeded() async {
+        guard closePauseEnabledForTesting else { return }
+        closeIsPausedForTesting = true
+        let observers = closePausedObservers
+        closePausedObservers.removeAll()
+        observers.forEach { $0.resume() }
+        await withCheckedContinuation { continuation in
+            closePauseContinuation = continuation
+        }
+        closeIsPausedForTesting = false
     }
 
     private func cancelNotificationWaiter(token: UUID) {

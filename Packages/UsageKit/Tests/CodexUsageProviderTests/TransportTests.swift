@@ -828,6 +828,109 @@ final class TransportTests: XCTestCase {
         }
     }
 
+    func testCloseFailureStillReleasesHandlersAndIOResources()
+        async throws
+    {
+        let directoryURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "CodexCloseFailure-\(UUID().uuidString)"
+            )
+        try FileManager.default.createDirectory(
+            at: directoryURL,
+            withIntermediateDirectories: false
+        )
+        defer { try? FileManager.default.removeItem(at: directoryURL) }
+
+        var retainedProcesses: [BoundedProcess] = []
+        let warmup = try forcedCloseFailureProcess(
+            in: directoryURL
+        )
+        try await assertForcedCloseReleasesHandlers(warmup)
+        retainedProcesses.append(warmup)
+        let baselineDescriptorCount = openFileDescriptorCount()
+
+        for _ in 0..<12 {
+            let process = try forcedCloseFailureProcess(
+                in: directoryURL
+            )
+            try await assertForcedCloseReleasesHandlers(process)
+            retainedProcesses.append(process)
+        }
+
+        let retainedDescriptorCount = withExtendedLifetime(
+            retainedProcesses
+        ) {
+            openFileDescriptorCount()
+        }
+        XCTAssertLessThanOrEqual(
+            retainedDescriptorCount,
+            // XCTest and the concurrency runtime can briefly churn unrelated
+            // process-wide descriptors. A five-descriptor allowance remains
+            // far below the per-instance leak this regression detects.
+            baselineDescriptorCount + 5,
+            """
+            Forced-close cleanup leaked file descriptors: baseline \
+            \(baselineDescriptorCount), retained \(retainedDescriptorCount)
+            """
+        )
+    }
+
+    func testExplicitCloseDiscardsQueuedNotificationsBeforeTeardown()
+        async throws
+    {
+        let fake = try FakeCodexAppServer(
+            scenario: "queued_notification_wait_for_close",
+            limits: try CodexTransportLimits(
+                startupTimeout: 5,
+                requestTimeout: 5,
+                overallTimeout: 8,
+                terminationGracePeriod: 0.05
+            )
+        )
+        let session = try await fake.client.openSession()
+        let identifier = try await fake.processIdentifier()
+        let result = try await session.request(.accountRead)
+        XCTAssertEqual(result, .object(["ok": .bool(true)]))
+        let pendingRequestID = try await session.sendRequestForTesting(
+            .accountUsageRead
+        )
+
+        await session.enableProcessClosePauseForTesting()
+        let closeTask = Task {
+            try await session.close()
+        }
+        await session.waitForProcessClosePausedForTesting()
+
+        await XCTAssertThrowsCodexError(
+            try await session.nextNotification(
+                matching: .accountUpdated
+            )
+        ) { error in
+            XCTAssertEqual(
+                error,
+                .writeFailed(method: .accountUpdated)
+            )
+        }
+        await XCTAssertThrowsCodexError(
+            try await session.responseForTesting(
+                id: pendingRequestID,
+                method: .accountUsageRead
+            )
+        ) { error in
+            XCTAssertEqual(
+                error,
+                .cancelled(
+                    method: .accountUsageRead,
+                    id: pendingRequestID
+                )
+            )
+        }
+
+        await session.releaseProcessClosePauseForTesting()
+        try await closeTask.value
+        try await fake.assertProcessExited(identifier)
+    }
+
     func testEarlyExitIsReportedWithoutProcessOutput() async throws {
         let startup = try FakeCodexAppServer(scenario: "early_exit_startup")
         await XCTAssertThrowsCodexError(
@@ -848,6 +951,56 @@ final class TransportTests: XCTestCase {
             }
             XCTAssertEqual(status, 17)
         }
+    }
+
+    func testRoutedFramesDrainAfterTerminalInput() async throws {
+        let fake = try FakeCodexAppServer(
+            scenario: "exit_after_buffered_frames"
+        )
+        let session = try await fake.client.openSession()
+        let requestID = try await session.sendRequestForTesting(
+            .accountRead
+        )
+
+        let terminal = await session.waitForTerminalForTesting()
+        XCTAssertEqual(terminal, .processExited(status: 0))
+
+        let response = try await session.responseForTesting(
+            id: requestID,
+            method: .accountRead
+        )
+        XCTAssertEqual(
+            response,
+            .object(["buffered": .bool(true)])
+        )
+        await XCTAssertThrowsCodexError(
+            try await session.request(.accountUsageRead)
+        ) { error in
+            XCTAssertEqual(error, .processExited(status: 0))
+        }
+
+        let rateLimits = try await session.nextNotification(
+            matching: .accountRateLimitsUpdated
+        )
+        XCTAssertEqual(
+            rateLimits.params,
+            .object(["sequence": .integer(2)])
+        )
+        let account = try await session.nextNotification()
+        XCTAssertEqual(account.method, .accountUpdated)
+        XCTAssertEqual(
+            account.params,
+            .object(["sequence": .integer(1)])
+        )
+
+        await XCTAssertThrowsCodexError(
+            try await session.nextNotification(
+                matching: .accountLoginCompleted
+            )
+        ) { error in
+            XCTAssertEqual(error, .processExited(status: 0))
+        }
+        try await session.close()
     }
 
     func testStdoutEOFIsDistinctFromProcessExit() async throws {
@@ -1253,6 +1406,60 @@ final class TransportTests: XCTestCase {
                 .description
                 .contains("supersecret")
         )
+    }
+
+    private func forcedCloseFailureProcess(
+        in directoryURL: URL
+    ) throws -> BoundedProcess {
+        let configuration = try CodexProcessConfiguration(
+            executableURL: URL(fileURLWithPath: "/bin/cat"),
+            arguments: [],
+            codexHomeURL: directoryURL,
+            workingDirectoryURL: directoryURL
+        )
+        return BoundedProcess(
+            configuration: configuration,
+            limits: try CodexTransportLimits(
+                terminationGracePeriod: 0.05
+            ),
+            terminationOutcomeValidator: { _, _ in false }
+        )
+    }
+
+    private func assertForcedCloseReleasesHandlers(
+        _ process: BoundedProcess
+    ) async throws {
+        try process.start()
+        XCTAssertTrue(process.hasReadabilityHandlersForTesting())
+        XCTAssertTrue(process.hasTerminationHandlerForTesting())
+
+        do {
+            try await process.close()
+            XCTFail("Expected termination timeout")
+        } catch let error as CodexTransportError {
+            XCTAssertEqual(
+                error,
+                .timedOut(
+                    stage: .termination,
+                    method: nil,
+                    id: nil
+                )
+            )
+        }
+
+        XCTAssertFalse(process.hasReadabilityHandlersForTesting())
+        XCTAssertFalse(process.hasTerminationHandlerForTesting())
+    }
+
+    private func openFileDescriptorCount() -> Int {
+        var count = 0
+        for descriptor in 0..<getdtablesize() {
+            errno = 0
+            if fcntl(descriptor, F_GETFD) != -1 || errno != EBADF {
+                count += 1
+            }
+        }
+        return count
     }
 
     private func requestTimeoutLimits() throws -> CodexTransportLimits {

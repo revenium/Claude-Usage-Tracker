@@ -326,6 +326,27 @@ All decisions below were settled during planning and approved before implementat
 - Rationale: P10 can then own setup/settings, P11 popover content, P12 menu/status/icon surfaces, and the PM can serialize localization catalogs without overlapping edits.
 - Status: RESOLVED — proceeded 2026-07-30
 
+### D047 — Make stream teardown independent of process-wait success
+- Context: A blocked-write abort killed the owned tree, but the later close path could throw a termination timeout before removing readability handlers and closing pipe descriptors.
+- Options: Return immediately on the wait error / Preserve the wait error while making local stream cleanup unconditional
+- **Decision: Run local handler, descriptor, and termination-handler cleanup on every close exit while preserving the original bounded-wait result.**
+- Rationale: Process-lifecycle failure must not create a second resource-lifecycle failure or defer cleanup to deinitialization.
+- Status: RESOLVED — proceeded 2026-07-30
+
+### D048 — Drain routed protocol input before terminal failure
+- Context: Valid responses and notifications could be routed immediately before EOF, then removed by terminal cleanup before their consumers registered.
+- Options: Let terminal state invalidate all unconsumed input / Distinguish terminal input from explicit discard
+- **Decision: Terminal input rejects only operations requiring future bytes; completed responses and queued notifications remain consumable exactly once before the stored terminal error.**
+- Rationale: Actor scheduling must not decide whether already-accepted protocol frames are delivered.
+- Status: RESOLVED — proceeded 2026-07-30
+
+### D049 — Let explicit close win atomically
+- Context: Queue-first terminal draining could otherwise let a concurrent notification or continuation-less request escape after a caller explicitly began closing the session.
+- Options: Wait for process teardown before discarding / Mark closed and discard synchronously before the first teardown suspension
+- **Decision: Explicit close atomically rejects and discards routed input before awaiting process cleanup; a request whose send crosses that boundary receives its exact typed cancellation cause, not a protocol error.**
+- Rationale: Reader termination preserves accepted input, but caller-directed close is an intentional local discard boundary and must be deterministic.
+- Status: RESOLVED — proceeded 2026-07-30
+
 ---
 
 ## Open Decisions

@@ -186,6 +186,11 @@ case "$scenario" in
             /bin/sleep 1
         done
         ;;
+    queued_notification_wait_for_close)
+        printf '{"method":"account/updated","params":{"queued":true}}\n'
+        printf '{"id":%s,"result":{"ok":true}}\n' "$request_id"
+        while read_line; do :; done
+        ;;
     descendant_tree)
         (
             trap '' TERM
@@ -250,6 +255,12 @@ case "$scenario" in
         ;;
     early_exit_request)
         exit 17
+        ;;
+    exit_after_buffered_frames)
+        printf '{"id":%s,"result":{"buffered":true}}\n' "$request_id"
+        printf '{"method":"account/updated","params":{"sequence":1}}\n'
+        printf '{"method":"account/rateLimits/updated","params":{"sequence":2}}\n'
+        exit 0
         ;;
     stdout_eof)
         exec 1>&-

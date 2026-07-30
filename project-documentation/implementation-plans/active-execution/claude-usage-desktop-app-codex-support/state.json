@@ -223,8 +223,8 @@
           "UsageCore warnings-as-errors focused suite: 14 passed, 0 failed.",
           "Codex provider warnings-as-errors focused suite: 21 passed, 0 failed, 1 opt-in live-smoke test intentionally skipped in that invocation; the live smoke passed separately.",
           "Blocked-stdin transport regression: 1 passed in 0.405 seconds under an external 60-second timeout; post-test fake-process census empty.",
-          "Transport warnings-as-errors Debug and Release suites: 35 passed, 0 failed in each configuration; blocked-write cancellation and retained-child re-census repeated cleanly.",
-          "Full UsageKit Debug and Release suites each completed 71 total tests with 0 failures and 1 expected opt-in live-smoke skip; the first earlier Release run exposed a typed terminal-error race that was fixed before the complete exact-source reruns passed.",
+          "Transport Debug and Release suites: 38 passed, 0 failed in each configuration; blocked-write cancellation, retained-child re-census, terminal draining, explicit close, and failed-close cleanup repeated cleanly.",
+          "Full UsageKit Debug and Release suites each completed 74 total tests with 0 failures and 1 expected opt-in live-smoke skip; every exposed terminal-ordering and cleanup race was fixed before the complete exact-source reruns passed.",
           "Installed Codex 0.145.0 live account/rate-limit smoke: 1 passed, 0 failed.",
           "Optimized duplicate-response regression: 10 passed, 0 failed.",
           "ProfileProviderCoreTests: 46 passed, 0 failed.",
@@ -460,7 +460,7 @@
       "current_validation": {
         "verified": [
           "UsageCore warnings-as-errors focused suite: 14 passed, 0 failed.",
-          "Full UsageKit Debug and Release suites each completed 71 total tests with 0 failures and 1 expected opt-in live-smoke skip.",
+          "Full UsageKit Debug and Release suites each completed 74 total tests with 0 failures and 1 expected opt-in live-smoke skip.",
           "Full serial application suite: 396 passed, 0 failed, 0 skipped.",
           "Unsigned Debug, strict-concurrency, universal Release, TSan, and final safety gates passed."
         ],
@@ -505,17 +505,22 @@
         "Added concurrent out-of-order numeric and string response correlation.",
         "Added cancellation-before-launch coverage across client, session, provider fetch, and provider login.",
         "Added stable PID/start-time direct-child and descendant termination tracking, retained-child re-census after root exit, and immediate terminal-error delivery before cleanup.",
-        "Added deterministic blocked-write timeout/cancellation regressions, generated-schema provenance, synthetic-fixture policy checks, and zero-process census proof."
+        "Added deterministic blocked-write timeout/cancellation regressions, generated-schema provenance, synthetic-fixture policy checks, and zero-process census proof.",
+        "Made local stream cleanup unconditional on process-wait failure and proved descriptors stay bounded while failed-close process objects remain retained.",
+        "Separated terminal input from explicit discard so routed responses and notifications drain exactly once, explicit close wins atomically, and in-flight requests preserve a typed local cancellation cause."
       ],
       "current_validation": {
         "verified": [
           "Blocked-stdin transport regression passed 1/1 in 0.405 seconds under an external 60-second timeout.",
           "Repeated late-descendant and blocked-write cancellation regressions passed; post-test fake-process census was empty.",
-          "Transport warnings-as-errors Debug and Release suites: 35 passed, 0 failed in each configuration.",
-          "Full UsageKit Debug and Release suites each completed 71 total tests with 0 failures and 1 expected opt-in live-smoke skip.",
+          "Transport Debug and Release suites: 38 passed, 0 failed in each configuration.",
+          "Full UsageKit Debug and Release suites each completed 74 total tests with 0 failures and 1 expected opt-in live-smoke skip.",
+          "Terminal-drain and explicit-close regressions each passed 10/10 serial repetitions; retained-instance FD cleanup passed 20/20 in both Debug and Release.",
           "Optimized duplicate-response regression: 10 passed, 0 failed after correction of the typed terminal-error race exposed by the first Release run.",
           "Stable PID/start-time ownership and generated-schema fixture provenance are covered.",
-          "Transport source parse, fixture shell syntax, schema provenance JSON, and scoped diff checks passed."
+          "Unsigned Debug and strict-concurrency app integration builds passed with no new UsageKit diagnostics.",
+          "Transport source parse, fixture shell syntax, schema provenance JSON, and scoped diff checks passed.",
+          "An additional SwiftPM TSan run compiled but the test helper was blocked before execution by the host platform's TSan runtime code-sign policy."
         ],
         "pending": ["B03 ship pipeline."]
       }
@@ -613,7 +618,7 @@
       "current_validation": {
         "verified": [
           "Codex provider warnings-as-errors focused suite: 21 passed, 0 failed.",
-          "Full UsageKit Debug and Release suites each completed 71 total tests with 0 failures and 1 expected opt-in live-smoke skip.",
+          "Full UsageKit Debug and Release suites each completed 74 total tests with 0 failures and 1 expected opt-in live-smoke skip.",
           "Explicit live account/rate-limit smoke against installed Codex 0.145.0: 1 passed, 0 failed."
         ],
         "pending": [

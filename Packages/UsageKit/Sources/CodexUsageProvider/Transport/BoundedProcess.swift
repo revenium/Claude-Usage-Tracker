@@ -509,8 +509,12 @@ enum CodexOwnedProcessPolicy {
 }
 
 final class BoundedProcess: @unchecked Sendable {
+    typealias TerminationOutcomeValidator =
+        @Sendable (Int32?, Bool) -> Bool
+
     private let configuration: CodexProcessConfiguration
     private let limits: CodexTransportLimits
+    private let terminationOutcomeValidator: TerminationOutcomeValidator
     private let process = Process()
     private let stdinPipe = Pipe()
     private let stdoutPipe = Pipe()
@@ -537,9 +541,18 @@ final class BoundedProcess: @unchecked Sendable {
         lineBuffer.fail(.outputLimit(.stderr))
     }
 
-    init(configuration: CodexProcessConfiguration, limits: CodexTransportLimits) {
+    init(
+        configuration: CodexProcessConfiguration,
+        limits: CodexTransportLimits,
+        terminationOutcomeValidator: @escaping TerminationOutcomeValidator = {
+            status,
+            descendantsExited in
+            status != nil && descendantsExited
+        }
+    ) {
         self.configuration = configuration
         self.limits = limits
+        self.terminationOutcomeValidator = terminationOutcomeValidator
         lineBuffer = BoundedLineBuffer(
             maximumLineBytes: limits.maximumLineBytes,
             maximumStdoutBytes: limits.maximumStdoutBytes
@@ -709,6 +722,7 @@ final class BoundedProcess: @unchecked Sendable {
 
     func close() async throws {
         guard let wasStarted = markClosed() else { return }
+        defer { closeIOResources() }
 
         try? stdinPipe.fileHandleForWriting.close()
         if wasStarted {
@@ -727,25 +741,40 @@ final class BoundedProcess: @unchecked Sendable {
                 descendantsExited = await waitForOwnedDescendantsExit(
                     timeout: max(limits.terminationGracePeriod, 1)
                 )
-                guard status != nil, descendantsExited else {
-                    throw CodexTransportError.timedOut(
-                        stage: .termination,
-                        method: nil,
-                        id: nil
-                    )
-                }
+            }
+            guard terminationOutcomeValidator(status, descendantsExited) else {
+                throw CodexTransportError.timedOut(
+                    stage: .termination,
+                    method: nil,
+                    id: nil
+                )
             }
             // Foundation calls the termination handler only after observing the
             // owned child exit. waitUntilExit is then nonblocking and provides
             // an explicit reaping barrier before cleanup can report success.
             process.waitUntilExit()
         }
+    }
 
+    private func closeIOResources() {
         stdoutPipe.fileHandleForReading.readabilityHandler = nil
         stderrPipe.fileHandleForReading.readabilityHandler = nil
+        try? stdinPipe.fileHandleForReading.close()
+        try? stdinPipe.fileHandleForWriting.close()
         try? stdoutPipe.fileHandleForReading.close()
+        try? stdoutPipe.fileHandleForWriting.close()
         try? stderrPipe.fileHandleForReading.close()
+        try? stderrPipe.fileHandleForWriting.close()
         process.terminationHandler = nil
+    }
+
+    func hasReadabilityHandlersForTesting() -> Bool {
+        stdoutPipe.fileHandleForReading.readabilityHandler != nil
+            || stderrPipe.fileHandleForReading.readabilityHandler != nil
+    }
+
+    func hasTerminationHandlerForTesting() -> Bool {
+        process.terminationHandler != nil
     }
 
     private func markClosed() -> Bool? {
