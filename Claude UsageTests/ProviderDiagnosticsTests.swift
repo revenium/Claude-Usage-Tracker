@@ -164,6 +164,21 @@ final class ProviderDiagnosticsTests: HostedAppTestCase {
                 SensitiveDataRedactor.redactedPath
             ),
             (
+                "bare-custom-home-after-opening-parenthesis",
+                "Provider home (\(bareCustomHome))",
+                SensitiveDataRedactor.redactedPath
+            ),
+            (
+                "bare-custom-home-after-opening-bracket",
+                "Provider homes [\(bareCustomHome)]",
+                SensitiveDataRedactor.redactedPath
+            ),
+            (
+                "bare-custom-home-after-comma",
+                "Provider home,\(bareCustomHome)",
+                SensitiveDataRedactor.redactedPath
+            ),
+            (
                 "standalone-jwt",
                 "Probe returned \(jwt)",
                 SensitiveDataRedactor.redactedValue
@@ -218,6 +233,139 @@ final class ProviderDiagnosticsTests: HostedAppTestCase {
                 "token: \(jwt)"
             ).contains(jwt)
         )
+    }
+
+    func testRedactorPreservesSafeAPIRoutesWithoutIdentity() {
+        let organizationID = "org-p14-private-identity"
+        let conversationID =
+            "018f76c4-p14-private-conversation"
+
+        XCTAssertEqual(
+            SensitiveDataRedactor.redact(
+                "GET /v1/usage"
+            ),
+            "GET /v1/usage"
+        )
+        XCTAssertEqual(
+            SensitiveDataRedactor.redact(
+                "Endpoint /organizations"
+            ),
+            "Endpoint /organizations"
+        )
+        XCTAssertEqual(
+            SensitiveDataRedactor.redact(
+                "GET /organizations/\(organizationID)/usage"
+            ),
+            "GET /organizations/"
+                + SensitiveDataRedactor.redactedValue
+                + "/usage"
+        )
+        XCTAssertEqual(
+            SensitiveDataRedactor.redact(
+                "POST /chat_conversations/"
+                    + conversationID
+            ),
+            "POST /chat_conversations/"
+                + SensitiveDataRedactor.redactedValue
+        )
+        XCTAssertEqual(
+            SensitiveDataRedactor.redact(
+                "POST /organizations/"
+                    + organizationID
+                    + "/chat_conversations/"
+                    + conversationID
+                    + "/completion"
+            ),
+            "POST /organizations/"
+                + SensitiveDataRedactor.redactedValue
+                + "/chat_conversations/"
+                + SensitiveDataRedactor.redactedValue
+                + "/completion"
+        )
+        let unknownNestedRoute =
+            SensitiveDataRedactor.redact(
+                "GET /organizations/"
+                    + organizationID
+                    + "/users/p14-private-user"
+            )
+        XCTAssertEqual(
+            unknownNestedRoute,
+            "GET \(SensitiveDataRedactor.redactedPath)"
+        )
+        XCTAssertFalse(
+            unknownNestedRoute.contains("p14-private-user")
+        )
+        let unknownVersionedRoute =
+            SensitiveDataRedactor.redact(
+                "GET /v1/users/p14-private-user"
+            )
+        XCTAssertEqual(
+            unknownVersionedRoute,
+            "GET \(SensitiveDataRedactor.redactedPath)"
+        )
+        XCTAssertFalse(
+            unknownVersionedRoute.contains(
+                "p14-private-user"
+            )
+        )
+
+        let redactedURL = SensitiveDataRedactor.redact(
+            url:
+                "https://api.example.test/organizations/"
+                + organizationID
+                + "/usage?token=\(query)"
+        )
+        XCTAssertFalse(redactedURL.contains(organizationID))
+        XCTAssertTrue(redactedURL.contains("/organizations/"))
+        XCTAssertTrue(redactedURL.contains("/usage"))
+        XCTAssertEqual(
+            SensitiveDataRedactor.redact(
+                url: "file://\(bareCustomHome)"
+            ),
+            SensitiveDataRedactor.redactedPath
+        )
+    }
+
+    func testAmbiguousPIDIdentityIsNeverTraversedOrSignaled() {
+        let identity = CodexVersionProbe.ProcessIdentity(
+            processIdentifier: 41_001,
+            startSeconds: 123,
+            startMicroseconds: 456
+        )
+        XCTAssertEqual(
+            CodexVersionProbe.identityState(
+                identity,
+                observed: nil,
+                absenceConfirmed: false
+            ),
+            .unknown
+        )
+
+        var tracker = CodexVersionProbe.OwnedProcessTracker(
+            leader: 41_000,
+            descendants: [identity]
+        )
+        var traversedParents: [pid_t] = []
+        tracker.refresh(
+            identityStateProvider: { _ in .unknown },
+            directChildrenProvider: { parent in
+                traversedParents.append(parent)
+                return .available([])
+            }
+        )
+        var signaledProcesses: [pid_t] = []
+        tracker.signalDescendants(
+            SIGKILL,
+            identityStateProvider: { _ in .unknown },
+            signalSender: { processIdentifier, _ in
+                signaledProcesses.append(processIdentifier)
+            }
+        )
+
+        XCTAssertEqual(traversedParents, [41_000])
+        XCTAssertTrue(signaledProcesses.isEmpty)
+        XCTAssertFalse(tracker.identityReliable)
+        XCTAssertFalse(tracker.containmentReliable)
     }
 
     func testEveryLoggingEntryPointUsesCentralRedactionBoundary() {
@@ -1232,6 +1380,60 @@ final class ProviderDiagnosticsTests: HostedAppTestCase {
         )
         let childPID = try readPID(from: childPIDFile)
         await assertProcessExited(childPID)
+    }
+
+    func testVersionProbeLateExitIsReapedAfterForegroundTimeout()
+        async throws
+    {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let rootPIDFile =
+            root.appendingPathComponent("late-reap.pid")
+        let script =
+            root.appendingPathComponent("late-reap-version")
+        try makeExecutableScript(
+            at: script,
+            body:
+                "printf '%s\\n' \"$$\" > "
+                + shellQuoted(rootPIDFile.path)
+                + "\nprintf 'codex-cli 9.9.9\\n'"
+        )
+
+        let startedAt = Date()
+        let result = await CodexVersionProbe.readVersion(
+            script,
+            timeout: 1,
+            terminationGrace: 0.05,
+            reapTimeout: 0
+        )
+
+        XCTAssertNil(result)
+        XCTAssertLessThan(
+            Date().timeIntervalSince(startedAt),
+            0.75
+        )
+        let processIdentifier = try readPID(
+            from: rootPIDFile
+        )
+        // A zombie still answers kill(pid, 0). Reaching ESRCH therefore proves
+        // the event-driven exact-PID source eventually performed waitpid.
+        await assertProcessExited(processIdentifier)
+        var status: Int32 = 0
+        errno = 0
+        XCTAssertEqual(
+            Darwin.waitpid(
+                processIdentifier,
+                &status,
+                WNOHANG
+            ),
+            -1
+        )
+        XCTAssertEqual(errno, ECHILD)
     }
 
     func testVersionProbeContinuousWriterCannotDefeatDeadline()

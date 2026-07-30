@@ -441,16 +441,33 @@ nonisolated enum CodexVersionProbe {
         timeout: TimeInterval,
         terminationGrace: TimeInterval
     ) async -> String? {
+        await readVersion(
+            executableURL,
+            timeout: timeout,
+            terminationGrace: terminationGrace,
+            reapTimeout: max(terminationGrace, 1)
+        )
+    }
+
+    static func readVersion(
+        _ executableURL: URL,
+        timeout: TimeInterval,
+        terminationGrace: TimeInterval,
+        reapTimeout: TimeInterval
+    ) async -> String? {
         guard timeout.isFinite, timeout > 0,
               terminationGrace.isFinite,
-              terminationGrace > 0 else {
+              terminationGrace > 0,
+              reapTimeout.isFinite,
+              reapTimeout >= 0 else {
             return nil
         }
         return await Task.detached(priority: .utility) {
             runSynchronously(
                 executableURL,
                 timeout: timeout,
-                terminationGrace: terminationGrace
+                terminationGrace: terminationGrace,
+                reapTimeout: reapTimeout
             )
         }.value
     }
@@ -458,7 +475,8 @@ nonisolated enum CodexVersionProbe {
     private static func runSynchronously(
         _ executableURL: URL,
         timeout: TimeInterval,
-        terminationGrace: TimeInterval
+        terminationGrace: TimeInterval,
+        reapTimeout: TimeInterval
     ) -> String? {
         let output = CodexVersionOutputBuffer(
             limit: maximumOutputBytes
@@ -510,8 +528,13 @@ nonisolated enum CodexVersionProbe {
             processIdentifier,
             outputDescriptor: outputDescriptor,
             output: output,
-            timeout: max(terminationGrace, 1)
+            timeout: reapTimeout
         )
+        if reaping.needsLateReaper {
+            CodexVersionLateReaper.shared.register(
+                processIdentifier
+            )
+        }
         _ = drain(
             outputDescriptor,
             into: output,
@@ -700,21 +723,27 @@ nonisolated enum CodexVersionProbe {
         )
     }
 
-    private struct ProcessIdentity: Hashable {
+    struct ProcessIdentity: Hashable {
         let processIdentifier: pid_t
         let startSeconds: UInt64
         let startMicroseconds: UInt64
     }
 
-    private struct ProcessSnapshot {
+    struct ProcessSnapshot {
         let identity: ProcessIdentity
         let parentIdentifier: pid_t
         let isZombie: Bool
     }
 
-    private enum ProcessCensus {
+    enum ProcessCensus {
         case available([ProcessSnapshot])
         case unavailable
+    }
+
+    enum ProcessIdentityState: Equatable {
+        case sameLiveProcess
+        case exitedOrReused
+        case unknown
     }
 
     private enum ProcessGroupState: Equatable {
@@ -723,24 +752,64 @@ nonisolated enum CodexVersionProbe {
         case unknown
     }
 
-    private struct OwnedProcessTracker {
+    struct OwnedProcessTracker {
         let leader: pid_t
         private(set) var descendants: Set<ProcessIdentity> = []
         private(set) var censusReliable = true
+        private(set) var identityReliable = true
+
+        init(
+            leader: pid_t,
+            descendants: Set<ProcessIdentity> = []
+        ) {
+            self.leader = leader
+            self.descendants = descendants
+        }
 
         mutating func refresh() {
-            var pending = [leader]
+            refresh(
+                identityStateProvider:
+                    CodexVersionProbe.observedIdentityState,
+                directChildrenProvider:
+                    CodexVersionProbe.directChildren
+            )
+        }
+
+        mutating func refresh(
+            identityStateProvider:
+                (ProcessIdentity) -> ProcessIdentityState,
+            directChildrenProvider:
+                (pid_t) -> ProcessCensus
+        ) {
+            // Census and identity ambiguity can be transient while a
+            // descendant is exiting. Re-evaluate both on every snapshot;
+            // containment remains fail-closed if either is still unresolved
+            // at the decision boundary, without turning a later proven
+            // absence into failure. No ambiguous PID is traversed or signaled.
+            censusReliable = true
+            identityReliable = true
+            // Once the unreaped leader has exited, it cannot create another
+            // child and libproc may reject child enumeration for its zombie
+            // PID. Previously observed descendants remain identity-tracked.
+            var pending = CodexVersionProbe.hasExited(leader)
+                ? [] : [leader]
             var visited = Set<pid_t>()
-            for identity in descendants
-            where isSameLiveProcess(identity) {
-                pending.append(identity.processIdentifier)
+            for identity in descendants {
+                switch identityStateProvider(identity) {
+                case .sameLiveProcess:
+                    pending.append(identity.processIdentifier)
+                case .exitedOrReused:
+                    continue
+                case .unknown:
+                    identityReliable = false
+                }
             }
             while let parent = pending.popLast() {
                 guard visited.insert(parent).inserted else {
                     continue
                 }
                 guard case .available(let children) =
-                        directChildren(of: parent) else {
+                        directChildrenProvider(parent) else {
                     censusReliable = false
                     continue
                 }
@@ -753,19 +822,37 @@ nonisolated enum CodexVersionProbe {
             }
         }
 
-        func signalDescendants(_ signal: Int32) {
-            for identity in descendants {
-                guard let snapshot = processSnapshot(
-                    identity.processIdentifier
-                ),
-                snapshot.identity == identity,
-                !snapshot.isZombie else {
-                    continue
+        mutating func signalDescendants(_ signal: Int32) {
+            signalDescendants(
+                signal,
+                identityStateProvider:
+                    CodexVersionProbe.observedIdentityState,
+                signalSender: {
+                    _ = Darwin.kill($0, $1)
                 }
-                _ = Darwin.kill(
-                    identity.processIdentifier,
-                    signal
-                )
+            )
+        }
+
+        mutating func signalDescendants(
+            _ signal: Int32,
+            identityStateProvider:
+                (ProcessIdentity) -> ProcessIdentityState,
+            signalSender: (pid_t, Int32) -> Void
+        ) {
+            for identity in descendants {
+                switch identityStateProvider(identity) {
+                case .sameLiveProcess:
+                    signalSender(
+                        identity.processIdentifier,
+                        signal
+                    )
+                case .exitedOrReused:
+                    continue
+                case .unknown:
+                    // Existence alone cannot establish that this is still our
+                    // process. Never signal an ambiguous or reused PID.
+                    identityReliable = false
+                }
             }
         }
 
@@ -773,8 +860,27 @@ nonisolated enum CodexVersionProbe {
             censusReliable = false
         }
 
-        var hasLiveDescendants: Bool {
-            descendants.contains(where: isSameLiveProcess)
+        mutating func hasLiveDescendants() -> Bool {
+            var hasLive = false
+            for identity in descendants {
+                switch CodexVersionProbe.observedIdentityState(
+                    identity
+                ) {
+                case .sameLiveProcess:
+                    hasLive = true
+                case .exitedOrReused:
+                    continue
+                case .unknown:
+                    identityReliable = false
+                    // Preserve the wait bound and fail containment closed.
+                    hasLive = true
+                }
+            }
+            return hasLive
+        }
+
+        var containmentReliable: Bool {
+            censusReliable && identityReliable
         }
     }
 
@@ -798,7 +904,7 @@ nonisolated enum CodexVersionProbe {
             output: output,
             until: gracefulDeadline
         ) {
-            return ownedProcesses.censusReliable
+            return ownedProcesses.containmentReliable
         }
 
         _ = Darwin.kill(-processGroup, SIGKILL)
@@ -812,7 +918,7 @@ nonisolated enum CodexVersionProbe {
             output: output,
             until: killDeadline
         )
-        return exited && ownedProcesses.censusReliable
+        return exited && ownedProcesses.containmentReliable
     }
 
     private static func waitForOwnedProcessesToExit(
@@ -828,8 +934,11 @@ nonisolated enum CodexVersionProbe {
                 processGroup,
                 leader: ownedProcesses.leader
             )
+            let hasLiveDescendants =
+                ownedProcesses.hasLiveDescendants()
             if groupState == .clear,
-               !ownedProcesses.hasLiveDescendants {
+               !hasLiveDescendants,
+               ownedProcesses.containmentReliable {
                 return true
             }
             if groupState == .unknown {
@@ -855,8 +964,10 @@ nonisolated enum CodexVersionProbe {
         if groupState == .unknown {
             ownedProcesses.markCensusUnreliable()
         }
+        let hasLiveDescendants =
+            ownedProcesses.hasLiveDescendants()
         return groupState == .clear
-            && !ownedProcesses.hasLiveDescendants
+            && !hasLiveDescendants
     }
 
     private static func processGroupState(
@@ -883,6 +994,14 @@ nonisolated enum CodexVersionProbe {
                 // an empty result and some errors. Independently establish
                 // absence instead of interpreting the ambiguous value as
                 // success.
+                let fallbackState =
+                    fullProcessListGroupState(
+                        processGroup,
+                        leader: leader
+                    )
+                if fallbackState != .unknown {
+                    return fallbackState
+                }
                 errno = 0
                 if Darwin.kill(-processGroup, 0) == -1,
                    errno == ESRCH {
@@ -900,15 +1019,26 @@ nonisolated enum CodexVersionProbe {
             let count = Int(returnedCount)
             let candidates =
                 identifiers.prefix(min(count, capacity))
-            let hasLiveCandidate = candidates.contains(where: {
-                guard $0 > 0 else { return false }
-                if $0 == processGroup {
-                    return !hasExited($0)
+            var hasUnknownCandidate = false
+            for processIdentifier in candidates
+            where processIdentifier > 0 {
+                if processIdentifier == processGroup,
+                   hasExited(processIdentifier) {
+                    continue
                 }
-                return isProcessLive($0)
-            })
-            if hasLiveCandidate {
-                return .live
+                switch processGroupMemberState(
+                    processIdentifier
+                ) {
+                case .live:
+                    return .live
+                case .clear:
+                    continue
+                case .unknown:
+                    hasUnknownCandidate = true
+                }
+            }
+            if hasUnknownCandidate {
+                return .unknown
             }
             if count < capacity {
                 return .clear
@@ -917,6 +1047,100 @@ nonisolated enum CodexVersionProbe {
                 return .unknown
             }
             capacity *= 2
+        }
+        return .unknown
+    }
+
+    /// `proc_listpgrppids` can ambiguously return zero while a zombie leader
+    /// keeps kill(-pgid, 0) successful. A separately sized all-PID census plus
+    /// current group lookup resolves that state without treating signalability
+    /// as proof of stored PID identity or individual-process ownership.
+    private static func fullProcessListGroupState(
+        _ processGroup: pid_t,
+        leader: pid_t
+    ) -> ProcessGroupState {
+        let estimatedCount = proc_listallpids(nil, 0)
+        guard estimatedCount >= 0 else {
+            return .unknown
+        }
+        var capacity = max(256, Int(estimatedCount) + 64)
+        let maximumCapacity = 32_768
+        while capacity <= maximumCapacity {
+            var identifiers = [pid_t](
+                repeating: 0,
+                count: capacity
+            )
+            let returnedCount =
+                identifiers.withUnsafeMutableBytes { buffer in
+                    proc_listallpids(
+                        buffer.baseAddress,
+                        Int32(buffer.count)
+                    )
+                }
+            guard returnedCount >= 0 else {
+                return .unknown
+            }
+            if returnedCount >= capacity {
+                guard capacity < maximumCapacity else {
+                    return .unknown
+                }
+                capacity = min(capacity * 2, maximumCapacity)
+                continue
+            }
+
+            for processIdentifier
+            in identifiers.prefix(Int(returnedCount))
+            where processIdentifier > 0 {
+                errno = 0
+                let candidateGroup = getpgid(
+                    processIdentifier
+                )
+                if candidateGroup == -1 {
+                    if processIdentifier == leader,
+                       errno != ESRCH,
+                       !hasExited(leader) {
+                        return .unknown
+                    }
+                    // An unrelated inaccessible or already-changing system
+                    // PID does not corroborate membership in this group.
+                    // Owned descendants are same-user and independently
+                    // covered by stable identity tracking.
+                    continue
+                }
+                guard candidateGroup == processGroup else {
+                    continue
+                }
+                if processIdentifier == leader,
+                   hasExited(leader) {
+                    continue
+                }
+                switch processGroupMemberState(
+                    processIdentifier
+                ) {
+                case .clear:
+                    continue
+                case .live:
+                    return .live
+                case .unknown:
+                    // The process may have exited or changed groups between
+                    // getpgid(2) and proc_pidinfo(2). Re-check group
+                    // membership before failing this bounded census closed;
+                    // never promote an inaccessible snapshot to live.
+                    errno = 0
+                    let recheckedGroup = getpgid(
+                        processIdentifier
+                    )
+                    if recheckedGroup == -1,
+                       errno == ESRCH {
+                        continue
+                    }
+                    if recheckedGroup != processGroup {
+                        continue
+                    }
+                    return .unknown
+                }
+            }
+            return .clear
         }
         return .unknown
     }
@@ -952,10 +1176,28 @@ nonisolated enum CodexVersionProbe {
                 capacity = min(capacity * 2, maximumCapacity)
                 continue
             }
-            let snapshots = identifiers
-                .prefix(count)
-                .compactMap(processSnapshot)
-                .filter { $0.parentIdentifier == parent }
+            var snapshots: [ProcessSnapshot] = []
+            for processIdentifier in identifiers.prefix(count) {
+                guard processIdentifier > 0 else {
+                    continue
+                }
+                guard let snapshot = processSnapshot(
+                    processIdentifier
+                ) else {
+                    // `kill(pid, 0)` may establish absence, but success can
+                    // never confirm a stable PID/start-time identity.
+                    guard isDefinitelyAbsent(
+                        processIdentifier
+                    ) else {
+                        return .unavailable
+                    }
+                    continue
+                }
+                guard snapshot.parentIdentifier == parent else {
+                    continue
+                }
+                snapshots.append(snapshot)
+            }
             return .available(snapshots)
         }
         return .unavailable
@@ -990,31 +1232,78 @@ nonisolated enum CodexVersionProbe {
         )
     }
 
-    private static func isSameLiveProcess(
-        _ identity: ProcessIdentity
-    ) -> Bool {
-        guard let snapshot = processSnapshot(
-            identity.processIdentifier
-        ) else {
-            errno = 0
-            return Darwin.kill(
-                identity.processIdentifier,
-                0
-            ) == 0 || errno != ESRCH
+    static func identityState(
+        _ identity: ProcessIdentity,
+        observed snapshot: ProcessSnapshot?,
+        absenceConfirmed: Bool
+    ) -> ProcessIdentityState {
+        guard let snapshot else {
+            return absenceConfirmed ? .exitedOrReused : .unknown
         }
-        return snapshot.identity == identity
-            && !snapshot.isZombie
+        guard snapshot.identity == identity else {
+            return .exitedOrReused
+        }
+        return snapshot.isZombie
+            ? .exitedOrReused
+            : .sameLiveProcess
     }
 
-    private static func isProcessLive(
+    private static func observedIdentityState(
+        _ identity: ProcessIdentity
+    ) -> ProcessIdentityState {
+        let snapshot = processSnapshot(
+            identity.processIdentifier
+        )
+        return identityState(
+            identity,
+            observed: snapshot,
+            absenceConfirmed:
+                snapshot == nil
+                    && isDefinitelyAbsent(
+                        identity.processIdentifier
+                    )
+        )
+    }
+
+    private static func isDefinitelyAbsent(
         _ processIdentifier: pid_t
     ) -> Bool {
-        if let snapshot = processSnapshot(processIdentifier) {
-            return !snapshot.isZombie
-        }
         errno = 0
-        return Darwin.kill(processIdentifier, 0) == 0
-            || errno != ESRCH
+        return Darwin.kill(processIdentifier, 0) == -1
+            && errno == ESRCH
+    }
+
+    private static func processGroupMemberState(
+        _ processIdentifier: pid_t
+    ) -> ProcessGroupState {
+        if let snapshot = processSnapshot(processIdentifier) {
+            return snapshot.isZombie ? .clear : .live
+        }
+        // Full BSD info includes the stable start time used for owned PID
+        // identities, but can disappear during process teardown before the
+        // shorter status record. The latter is sufficient only for current
+        // process-group liveness and is never used to prove ownership.
+        var shortInfo = proc_bsdshortinfo()
+        let expectedSize = MemoryLayout<proc_bsdshortinfo>.size
+        let returnedSize = withUnsafeMutablePointer(
+            to: &shortInfo
+        ) {
+            proc_pidinfo(
+                processIdentifier,
+                PROC_PIDT_SHORTBSDINFO,
+                0,
+                $0,
+                Int32(expectedSize)
+            )
+        }
+        if returnedSize == expectedSize {
+            return shortInfo.pbsi_status == UInt32(SZOMB)
+                ? .clear
+                : .live
+        }
+        return isDefinitelyAbsent(processIdentifier)
+            ? .clear
+            : .unknown
     }
 
     /// Observes exit without reaping so the process-group identifier remains
@@ -1107,8 +1396,15 @@ nonisolated enum CodexVersionProbe {
         outputDescriptor: Int32,
         output: CodexVersionOutputBuffer,
         timeout: TimeInterval
-    ) -> (reaped: Bool, status: Int32) {
+    ) -> (
+        reaped: Bool,
+        status: Int32,
+        needsLateReaper: Bool
+    ) {
         var status: Int32 = 0
+        guard timeout > 0 else {
+            return (false, status, true)
+        }
         let reapDeadline = deadline(after: timeout)
         while DispatchTime.now().uptimeNanoseconds
                 < reapDeadline {
@@ -1118,10 +1414,10 @@ nonisolated enum CodexVersionProbe {
                 WNOHANG
             )
             if result == processIdentifier {
-                return (true, status)
+                return (true, status, false)
             }
             if result == -1, errno != EINTR {
-                return (false, status)
+                return (false, status, false)
             }
             _ = drain(
                 outputDescriptor,
@@ -1133,10 +1429,10 @@ nonisolated enum CodexVersionProbe {
                 until: reapDeadline
             )
         }
-        // Do not hand an unbounded wait to a background worker. The caller
-        // receives no version unless the direct child was observably reaped
-        // within this bounded path.
-        return (false, status)
+        // The foreground remains bounded and receives no version. Register an
+        // exact-PID exit source so a child that exits later is eventually
+        // reaped without occupying a worker in blocking waitpid.
+        return (false, status, true)
     }
 
     private static func deadline(
@@ -1147,6 +1443,80 @@ nonisolated enum CodexVersionProbe {
         )
         return DispatchTime.now().uptimeNanoseconds
             &+ nanoseconds
+    }
+}
+
+private nonisolated final class CodexVersionLateReaper:
+    @unchecked Sendable
+{
+    static let shared = CodexVersionLateReaper()
+
+    private let queue = DispatchQueue(
+        label: "io.revenium.claude-usage.codex-version-reaper",
+        qos: .utility
+    )
+    private let lock = NSLock()
+    private var sources: [pid_t: DispatchSourceProcess] = [:]
+
+    func register(_ processIdentifier: pid_t) {
+        guard processIdentifier > 0 else { return }
+        let source = DispatchSource.makeProcessSource(
+            identifier: processIdentifier,
+            eventMask: .exit,
+            queue: queue
+        )
+        source.setEventHandler { [weak self] in
+            self?.reapExitedProcess(processIdentifier)
+        }
+
+        lock.lock()
+        guard sources[processIdentifier] == nil else {
+            lock.unlock()
+            source.resume()
+            source.cancel()
+            return
+        }
+        sources[processIdentifier] = source
+        lock.unlock()
+        source.resume()
+    }
+
+    private func reapExitedProcess(
+        _ processIdentifier: pid_t
+    ) {
+        // Keep successful reaping and registry removal atomic with respect to
+        // registration. waitpid frees the PID for reuse; without this lock a
+        // new child could reuse it while the old source was still indexed,
+        // causing register to discard the new child's reaper.
+        lock.lock()
+        guard sources[processIdentifier] != nil else {
+            lock.unlock()
+            return
+        }
+        var status: Int32 = 0
+        let result = waitpid(
+            processIdentifier,
+            &status,
+            WNOHANG
+        )
+        if result == 0 || (result == -1 && errno == EINTR) {
+            lock.unlock()
+            // The exit event is authoritative, but retry asynchronously if a
+            // signal interrupted waitpid or delivery raced final bookkeeping.
+            queue.asyncAfter(
+                deadline: .now() + .milliseconds(1)
+            ) { [weak self] in
+                self?.reapExitedProcess(
+                    processIdentifier
+                )
+            }
+            return
+        }
+        let source = sources.removeValue(
+            forKey: processIdentifier
+        )
+        lock.unlock()
+        source?.cancel()
     }
 }
 

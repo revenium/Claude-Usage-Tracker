@@ -80,16 +80,13 @@ nonisolated enum SensitiveDataRedactor {
             with: "$1=\(redactedPath)"
         )
         result = replacingQueryComponents(in: result)
+        result = redactingSensitiveAPIRouteIdentities(in: result)
         result = replacing(
             #"(?:file://)?/[^\s"'?,;)\]}]*auth\.json\b"#,
             in: result,
             with: redactedPath
         )
-        result = replacing(
-            localPathPattern,
-            in: result,
-            with: redactedPath
-        )
+        result = replacingLocalPaths(in: result)
         return result
     }
 
@@ -108,12 +105,10 @@ nonisolated enum SensitiveDataRedactor {
                     )
         }
         components.fragment = nil
-        let sanitized = replacing(
-            localPathPattern,
-            in: components.string ?? value,
-            with: redactedPath
+        let identitySafe = redactingSensitiveAPIRouteIdentities(
+            in: components.string ?? value
         )
-        return limited(sanitized)
+        return limited(replacingLocalPaths(in: identitySafe))
     }
 
     static func redact(data: Data?) -> String? {
@@ -295,6 +290,55 @@ nonisolated enum SensitiveDataRedactor {
         return result
     }
 
+    /// Preserve diagnostically useful API route shape while removing
+    /// organization and conversation identity. Route matching is deliberately
+    /// narrow: a method-prefixed versioned route or a known identity-bearing
+    /// route is safe, while an arbitrary absolute path remains a local path.
+    private static func redactingSensitiveAPIRouteIdentities(
+        in value: String
+    ) -> String {
+        replacing(
+            #"(?i)(/(?:organizations|conversations|chat_conversations)/)([^/\s"'?&,;)\]}]+)"#,
+            in: value,
+            with: "$1\(redactedValue)"
+        )
+    }
+
+    private static func replacingLocalPaths(
+        in value: String
+    ) -> String {
+        guard let pathExpression = try? NSRegularExpression(
+            pattern: localPathPattern
+        ),
+        let routeExpression = try? NSRegularExpression(
+            pattern: safeAPIRoutePattern
+        ) else {
+            return value
+        }
+        var result = value
+        let fullRange = NSRange(value.startIndex..., in: value)
+        let safeRouteRanges = routeExpression.matches(
+            in: value,
+            range: fullRange
+        ).map(\.range)
+        let pathMatches = pathExpression.matches(
+            in: value,
+            range: fullRange
+        )
+        for match in pathMatches.reversed() {
+            let isSafeRoute = safeRouteRanges.contains {
+                NSLocationInRange(match.range.location, $0)
+                    && NSMaxRange(match.range) <= NSMaxRange($0)
+            }
+            guard !isSafeRoute,
+                  let matchRange = Range(match.range, in: result) else {
+                continue
+            }
+            result.replaceSubrange(matchRange, with: redactedPath)
+        }
+        return result
+    }
+
     private static func replacing(
         _ pattern: String,
         in value: String,
@@ -323,9 +367,13 @@ nonisolated enum SensitiveDataRedactor {
     }
 
     /// Absolute filesystem paths can reveal user or machine identity even
-    /// under uncommon/custom roots. The boundary assertion prevents matching
-    /// URL paths: a slash following a URI character is not treated as the
-    /// beginning of a local path. `file:///...` is intentionally included.
+    /// under uncommon/custom roots. Delimiters such as `(`, `[`, and `,` are
+    /// valid prose boundaries and must not suppress matching. URI characters
+    /// remain excluded so a slash inside a complete URL is not mistaken for a
+    /// local path. `file:///...` is intentionally included.
     private static let localPathPattern =
-        #"file:///[^\s"'?,;)\]}]+|(?<![A-Za-z0-9._~/?#\[\]@!$&'()*+,;%-])/(?!/)[^\s"'?,;)\]}]+"#
+        #"file:///[^\s"'?,;)\]}]+|(?<![-A-Za-z0-9._~/?#@!$&'*+;%])/(?!/)[^\s"'?,;)\]}]+"#
+
+    private static let safeAPIRoutePattern =
+        #"(?i)(?:\b(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+/v[0-9]+/usage|/organizations(?:/<redacted>/(?:usage|overage_spend_limit|overage_credit_grant|chat_conversations(?:/<redacted>/completion)?))?|/(?:conversations|chat_conversations)/<redacted>(?:/completion)?)"#
 }
