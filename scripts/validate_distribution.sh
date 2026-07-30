@@ -50,10 +50,10 @@ contains 'REVENIUM_UPDATE_CHANNEL = development;' "$project" \
     || fail 'Debug update channel is not development-isolated'
 contains 'REVENIUM_UPDATE_CHANNEL = production;' "$project" \
     || fail 'Release update channel is not production'
-[[ $(count_matches 'SPARKLE_FEED_URL = "";' "$project") -eq 2 ]] \
-    || fail 'Debug and local Release feed defaults must both be empty'
-[[ $(count_matches 'SPARKLE_PUBLIC_ED_KEY = "";' "$project") -eq 2 ]] \
-    || fail 'Debug and local Release public-key defaults must both be empty'
+[[ $(count_matches 'SPARKLE_FEED_URL = "";' "$project") -eq 3 ]] \
+    || fail 'Debug, local Release, and UI-testing feed defaults must all be empty'
+[[ $(count_matches 'SPARKLE_PUBLIC_ED_KEY = "";' "$project") -eq 3 ]] \
+    || fail 'Debug, local Release, and UI-testing public-key defaults must all be empty'
 contains "static let appGroupIdentifier = \"$expected_app_group\"" \
     'Claude Usage/Shared/Utilities/Constants.swift' \
     || fail 'legacy preference/app-group identity changed'
