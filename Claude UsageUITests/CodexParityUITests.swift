@@ -36,9 +36,13 @@ final class CodexParityUITests: XCTestCase {
 
         let home = element(app, identifier: "codex.home.path")
         XCTAssertTrue(home.waitForExistence(timeout: 5))
-        XCTAssertTrue(
-            element(app, identifier: "codex.profile.name").exists
+        let profileName = element(
+            app,
+            identifier: "codex.profile.name"
         )
+        XCTAssertTrue(profileName.exists)
+        profileName.click()
+        profileName.typeText("Codex Pro")
         home.click()
         home.typeText(try currentHome(for: app).path)
 
@@ -56,6 +60,13 @@ final class CodexParityUITests: XCTestCase {
         )
         XCTAssertTrue(complete.waitForExistence(timeout: 3))
         XCTAssertTrue(complete.isEnabled)
+        complete.click()
+        let activeProfile = element(
+            app,
+            identifier: "ui-testing.setup.active-codex-profile"
+        )
+        XCTAssertTrue(activeProfile.waitForExistence(timeout: 8))
+        XCTAssertEqual(activeProfile.label, "Codex Pro")
     }
 
     func testLinkedAccountRefreshUnlinkAndUnsupportedRecovery()

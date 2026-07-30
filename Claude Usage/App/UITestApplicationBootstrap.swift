@@ -69,11 +69,7 @@ enum UITestApplicationBootstrap {
             withIntermediateDirectories: true
         )
 
-        let suiteName =
-            "com.revenium.Claude-Usage.UITests."
-            + configuration.sessionID
-        let defaults = UserDefaults(suiteName: suiteName)
-            ?? UserDefaults.standard
+        let defaults = UITestInMemoryDefaultsStore()
         let usageStore = ProfileUsageFileStore(
             baseURL: appDataURL.appendingPathComponent(
                 "profile-data",
@@ -119,7 +115,18 @@ enum UITestApplicationBootstrap {
 
         return ProviderUICompositionRoot(
             profileManager: profileManager,
-            availability: .testing()
+            availability: .testing(),
+            setupCompletionWriter: {
+                defaults.set(
+                    true,
+                    forKey: "ui-testing.has-completed-setup"
+                )
+            },
+            setupCompletionReader: {
+                defaults.bool(
+                    forKey: "ui-testing.has-completed-setup"
+                )
+            }
         )
     }
 
@@ -158,9 +165,11 @@ enum UITestApplicationBootstrap {
         case .setup:
             return makeHostingWindow(
                 title: "Claude Usage UI Tests — Setup",
-                size: CGSize(width: 580, height: 680),
+                size: CGSize(width: 580, height: 710),
                 view: AnyView(
-                    SetupWizardView(dependencies: dependencies)
+                    UITestSetupSurface(
+                        compositionRoot: compositionRoot
+                    )
                         .accessibilityIdentifier(
                             "ui-testing.surface.setup"
                         )
@@ -316,9 +325,71 @@ private nonisolated final class UITestNoopSecretStore:
     func delete(_ locator: ProfileSecretLocator) throws {}
 }
 
+private final class UITestInMemoryDefaultsStore:
+    ProfileDefaultsStore
+{
+    private var values: [String: Any] = [:]
+
+    func data(forKey defaultName: String) -> Data? {
+        values[defaultName] as? Data
+    }
+
+    func string(forKey defaultName: String) -> String? {
+        values[defaultName] as? String
+    }
+
+    func set(_ value: Any?, forKey defaultName: String) {
+        if let value {
+            values[defaultName] = value
+        } else {
+            values.removeValue(forKey: defaultName)
+        }
+    }
+
+    func removeObject(forKey defaultName: String) {
+        values.removeValue(forKey: defaultName)
+    }
+
+    func bool(forKey defaultName: String) -> Bool {
+        values[defaultName] as? Bool ?? false
+    }
+}
+
 @MainActor
 private final class UITestHistoryService: ProfileHistoryDeleting {
     func deleteHistoryThrowing(for profileId: UUID) throws {}
+}
+
+@MainActor
+private struct UITestSetupSurface: View {
+    let compositionRoot: ProviderUICompositionRoot
+    @ObservedObject private var profileManager: ProfileManager
+
+    init(compositionRoot: ProviderUICompositionRoot) {
+        self.compositionRoot = compositionRoot
+        _profileManager = ObservedObject(
+            wrappedValue: compositionRoot.profileManager
+        )
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            SetupWizardView(
+                dependencies: compositionRoot.dependencies
+            )
+            if let activeProfile = profileManager.activeProfile,
+               activeProfile.providerID == .codex {
+                Text(activeProfile.name)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 30)
+                    .accessibilityIdentifier(
+                        "ui-testing.setup.active-codex-profile"
+                    )
+            } else {
+                Color.clear.frame(height: 30)
+            }
+        }
+    }
 }
 
 /// Popover coverage is hosted in a regular window because XCUITest cannot
