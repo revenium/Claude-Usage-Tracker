@@ -54,6 +54,33 @@ final class ProfileUsageFileStoreTests: XCTestCase {
         XCTAssertEqual(envelope.payload, Fixture(value: "second"))
     }
 
+    @MainActor
+    func testTypedCurrentUsageRoundTripAndComponentUpdate() throws {
+        let store = ProfileUsageFileStore(baseURL: try makeTemporaryRoot())
+        let profileID = UUID()
+        let claude = ClaudeUsage.empty
+        let api = APIUsage(
+            currentSpendCents: 25,
+            resetsAt: Date(timeIntervalSinceReferenceDate: 50),
+            prepaidCreditsCents: 100,
+            currency: "USD",
+            apiTokenCostCents: nil,
+            apiCostByModel: nil,
+            costBySource: nil,
+            dailyCostCents: nil
+        )
+        let initial = ProfileCurrentUsage(claudeUsage: claude)
+
+        try store.saveCurrentUsage(initial, for: profileID)
+        let updated = try store.updateCurrentUsage(for: profileID) { usage in
+            usage.apiUsage = api
+        }
+
+        XCTAssertEqual(updated.claudeUsage, claude)
+        XCTAssertEqual(updated.apiUsage, api)
+        XCTAssertEqual(try store.loadCurrentUsage(for: profileID), updated)
+    }
+
     func testValidatesProviderAndRecordKind() throws {
         let rootURL = try makeTemporaryRoot()
         let profileID = UUID()

@@ -216,6 +216,139 @@ final class ProfileSecurityIntegrationTests: XCTestCase {
         XCTAssertFalse(try persistedProfileText().contains("FIRST_API_FIXTURE"))
     }
 
+    func testCredentialReplacementRollsBackSecondAndThirdFieldFailures() throws {
+        for failedField in [ProfileSecretField.apiSessionKey, .cliCredentialsJSON] {
+            defaults.removePersistentDomain(forName: suiteName)
+            let profileID = UUID()
+            let secrets = MockProfileSecretStore()
+            let store = retain(ProfileStore(defaults: defaults, secretStore: secrets))
+            try store.saveProfilesThrowing([
+                Profile(
+                    id: profileID,
+                    name: "Before",
+                    organizationId: "old-org",
+                    apiOrganizationId: "old-api-org"
+                )
+            ])
+            for field in ProfileSecretField.allCases {
+                secrets.values[locator(profileID, field)] = "OLD_\(field.rawValue)"
+            }
+            secrets.writeErrorCounts[failedField] = 1
+
+            XCTAssertThrowsError(
+                try store.saveProfileCredentials(
+                    profileID,
+                    credentials: ProfileCredentials(
+                        claudeSessionKey: "NEW_CLAUDE",
+                        organizationId: "new-org",
+                        apiSessionKey: "NEW_API",
+                        apiOrganizationId: "new-api-org",
+                        apiSessionKeyExpiry: Date(timeIntervalSinceReferenceDate: 10),
+                        cliCredentialsJSON: "NEW_CLI"
+                    )
+                )
+            ) { error in
+                guard case ProfileStoreError.credentialTransactionFailed = error else {
+                    return XCTFail("Expected safe transaction failure, got \(error)")
+                }
+                XCTAssertFalse(error.localizedDescription.contains("NEW_"))
+                XCTAssertFalse(error.localizedDescription.contains("OLD_"))
+            }
+
+            for field in ProfileSecretField.allCases {
+                XCTAssertEqual(
+                    secrets.values[locator(profileID, field)],
+                    "OLD_\(field.rawValue)"
+                )
+            }
+            let persisted = try XCTUnwrap(store.loadProfiles().first)
+            XCTAssertEqual(persisted.organizationId, "old-org")
+            XCTAssertEqual(persisted.apiOrganizationId, "old-api-org")
+        }
+    }
+
+    func testCredentialReplacementRollsBackWhenMetadataPersistenceFails() throws {
+        let backing = FaultingProfileDefaults()
+        let profileID = UUID()
+        let secrets = MockProfileSecretStore()
+        let store = retain(ProfileStore(defaults: backing, secretStore: secrets))
+        try store.saveProfilesThrowing([
+            Profile(
+                id: profileID,
+                name: "Before",
+                organizationId: "old-org",
+                apiOrganizationId: "old-api-org"
+            )
+        ])
+        let previousProfileData = backing.data(forKey: "profiles_v3")
+        for field in ProfileSecretField.allCases {
+            secrets.values[locator(profileID, field)] = "OLD_\(field.rawValue)"
+        }
+        backing.corruptNextProfileWrite = true
+
+        XCTAssertThrowsError(
+            try store.saveProfileCredentials(
+                profileID,
+                credentials: ProfileCredentials(
+                    claudeSessionKey: "NEW_CLAUDE",
+                    organizationId: "new-org",
+                    apiSessionKey: "NEW_API",
+                    apiOrganizationId: "new-api-org",
+                    apiSessionKeyExpiry: Date(timeIntervalSinceReferenceDate: 20),
+                    cliCredentialsJSON: "NEW_CLI"
+                )
+            )
+        ) { error in
+            guard case ProfileStoreError.credentialTransactionFailed = error else {
+                return XCTFail("Expected safe transaction failure, got \(error)")
+            }
+        }
+
+        XCTAssertEqual(backing.data(forKey: "profiles_v3"), previousProfileData)
+        for field in ProfileSecretField.allCases {
+            XCTAssertEqual(
+                secrets.values[locator(profileID, field)],
+                "OLD_\(field.rawValue)"
+            )
+        }
+    }
+
+    func testCLIUpdateRollsBackSecretWhenMetadataPersistenceFails() throws {
+        let backing = FaultingProfileDefaults()
+        let profileID = UUID()
+        let oldSyncDate = Date(timeIntervalSinceReferenceDate: 30)
+        let secrets = MockProfileSecretStore()
+        let store = retain(ProfileStore(defaults: backing, secretStore: secrets))
+        try store.saveProfilesThrowing([
+            Profile(
+                id: profileID,
+                name: "CLI",
+                cliAccountSyncedAt: oldSyncDate
+            )
+        ])
+        let previousProfileData = backing.data(forKey: "profiles_v3")
+        secrets.values[locator(profileID, .cliCredentialsJSON)] = "OLD_CLI"
+        backing.corruptNextProfileWrite = true
+
+        XCTAssertThrowsError(
+            try store.saveCLIProfileCredential(
+                "NEW_CLI",
+                for: profileID,
+                syncedAt: Date(timeIntervalSinceReferenceDate: 40)
+            )
+        ) { error in
+            guard case ProfileStoreError.credentialTransactionFailed = error else {
+                return XCTFail("Expected safe transaction failure, got \(error)")
+            }
+        }
+
+        XCTAssertEqual(
+            secrets.values[locator(profileID, .cliCredentialsJSON)],
+            "OLD_CLI"
+        )
+        XCTAssertEqual(backing.data(forKey: "profiles_v3"), previousProfileData)
+    }
+
     func testFailedProfileReadbackRestoresPreviousBlob() throws {
         let backing = FaultingProfileDefaults()
         let secrets = MockProfileSecretStore()
@@ -365,6 +498,7 @@ private enum TestError: Error {
 private final class MockProfileSecretStore: ProfileSecretStore {
     var values: [ProfileSecretLocator: String] = [:]
     var writeErrors: [ProfileSecretField: Error] = [:]
+    var writeErrorCounts: [ProfileSecretField: Int] = [:]
     var readErrors: [ProfileSecretField: Error] = [:]
     var deleteErrors: [ProfileSecretField: Error] = [:]
     var deleted: Set<ProfileSecretLocator> = []
@@ -377,6 +511,10 @@ private final class MockProfileSecretStore: ProfileSecretStore {
     }
 
     func write(_ value: String, to locator: ProfileSecretLocator) throws {
+        if let count = writeErrorCounts[locator.field], count > 0 {
+            writeErrorCounts[locator.field] = count - 1
+            throw TestError.expected
+        }
         if let error = writeErrors[locator.field] {
             throw error
         }

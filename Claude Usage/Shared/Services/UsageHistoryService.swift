@@ -9,9 +9,25 @@ import Foundation
 import AppKit
 import UniformTypeIdentifiers
 
+@MainActor
+protocol ProfileHistoryDeleting: AnyObject {
+    func deleteHistoryThrowing(for profileId: UUID) throws
+}
+
+enum UsageHistoryServiceError: Error, LocalizedError {
+    case defaultsCleanupVerificationFailed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .defaultsCleanupVerificationFailed(let key):
+            return "Usage history preference \(key) still exists after deletion."
+        }
+    }
+}
+
 /// Service for managing usage history data
 @MainActor
-class UsageHistoryService {
+class UsageHistoryService: ProfileHistoryDeleting {
     static let shared = UsageHistoryService()
 
     private let defaults: UserDefaults
@@ -486,9 +502,17 @@ class UsageHistoryService {
         try fileStore.delete(for: profileId, kind: .history)
         // Clear the legacy source only after durable artifacts are gone, so a
         // filesystem failure cannot be mistaken for a successful deletion.
-        defaults.removeObject(forKey: storageKey(for: profileId))
-        defaults.removeObject(forKey: "\(lastSessionRecordTimePrefix)\(profileId.uuidString)")
-        defaults.removeObject(forKey: "\(lastWeeklyRecordTimePrefix)\(profileId.uuidString)")
+        let keys = [
+            storageKey(for: profileId),
+            "\(lastSessionRecordTimePrefix)\(profileId.uuidString)",
+            "\(lastWeeklyRecordTimePrefix)\(profileId.uuidString)"
+        ]
+        for key in keys {
+            defaults.removeObject(forKey: key)
+            guard defaults.object(forKey: key) == nil else {
+                throw UsageHistoryServiceError.defaultsCleanupVerificationFailed(key)
+            }
+        }
         LoggingService.shared.logInfo("Deleted usage history for profile \(profileId.uuidString.prefix(8))")
     }
 

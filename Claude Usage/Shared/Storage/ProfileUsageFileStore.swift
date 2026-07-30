@@ -44,6 +44,8 @@ nonisolated struct ProfileUsageFileEnvelope<Payload: Codable>: Codable {
 
 nonisolated enum ProfileUsageFileStoreError: Error, LocalizedError {
     case invalidProviderID
+    case currentUsageReadUnresolved(UUID)
+    case currentUsageWriteVerificationFailed(UUID)
     case unsupportedSchemaVersion(found: Int, supported: Int)
     case profileMismatch(expected: UUID, found: UUID)
     case providerMismatch(expected: String, found: String)
@@ -54,6 +56,10 @@ nonisolated enum ProfileUsageFileStoreError: Error, LocalizedError {
         switch self {
         case .invalidProviderID:
             return "A provider identifier is required for profile usage storage."
+        case .currentUsageReadUnresolved(let profileID):
+            return "Current usage is unresolved for profile \(profileID.uuidString.prefix(8))."
+        case .currentUsageWriteVerificationFailed(let profileID):
+            return "Current usage could not be verified for profile \(profileID)."
         case .unsupportedSchemaVersion(let found, let supported):
             return "Usage storage schema \(found) is unsupported; expected \(supported)."
         case .profileMismatch(let expected, let found):
@@ -66,6 +72,23 @@ nonisolated enum ProfileUsageFileStoreError: Error, LocalizedError {
             return "Usage storage was updated at \(updatedAt) before it was written at \(writtenAt)."
         }
     }
+}
+
+/// Narrow integration surface used by ProfileStore. Keeping the generic file
+/// store behind typed operations makes failure behavior directly testable and
+/// prevents metadata persistence from manipulating usage records.
+@MainActor
+protocol ProfileCurrentUsageFileStoring: AnyObject {
+    func loadCurrentUsage(for profileID: UUID) throws -> ProfileCurrentUsage?
+    func saveCurrentUsage(_ usage: ProfileCurrentUsage, for profileID: UUID) throws
+
+    @discardableResult
+    func updateCurrentUsage(
+        for profileID: UUID,
+        transform: (inout ProfileCurrentUsage) throws -> Void
+    ) throws -> ProfileCurrentUsage
+
+    func deleteAllData(for profileID: UUID) throws
 }
 
 /// Typed facade over AtomicJSONFileStore for per-profile provider data.
@@ -273,5 +296,72 @@ nonisolated final class ProfileUsageFileStore: @unchecked Sendable {
 
     private func profileDirectoryPath(for profileID: UUID) -> String {
         profileID.uuidString.lowercased()
+    }
+}
+
+extension ProfileUsageFileStore: ProfileCurrentUsageFileStoring {
+    private var currentUsageProviderID: String { "claude" }
+
+    func loadCurrentUsage(for profileID: UUID) throws -> ProfileCurrentUsage? {
+        let usage = try load(
+            ProfileCurrentUsage.self,
+            for: profileID,
+            providerID: currentUsageProviderID,
+            kind: .currentUsage
+        )
+        if usage == nil, try hasCurrentUsageRecoveryArtifacts(for: profileID) {
+            // AtomicJSONFileStore quarantines an unreadable primary. Its
+            // absence on a later read must not become permission to replace
+            // unresolved data with an empty payload.
+            throw ProfileUsageFileStoreError.currentUsageReadUnresolved(profileID)
+        }
+        return usage
+    }
+
+    func saveCurrentUsage(_ usage: ProfileCurrentUsage, for profileID: UUID) throws {
+        try save(
+            usage,
+            for: profileID,
+            providerID: currentUsageProviderID,
+            kind: .currentUsage
+        )
+        guard try loadCurrentUsage(for: profileID) == usage else {
+            throw ProfileUsageFileStoreError.currentUsageWriteVerificationFailed(profileID)
+        }
+    }
+
+    @discardableResult
+    func updateCurrentUsage(
+        for profileID: UUID,
+        transform: (inout ProfileCurrentUsage) throws -> Void
+    ) throws -> ProfileCurrentUsage {
+        let updated = try update(
+            ProfileCurrentUsage.self,
+            for: profileID,
+            providerID: currentUsageProviderID,
+            kind: .currentUsage,
+            initialValue: ProfileCurrentUsage(),
+            transform: transform
+        )
+        guard try loadCurrentUsage(for: profileID) == updated else {
+            throw ProfileUsageFileStoreError.currentUsageWriteVerificationFailed(profileID)
+        }
+        return updated
+    }
+
+    private func hasCurrentUsageRecoveryArtifacts(for profileID: UUID) throws -> Bool {
+        let currentURL = try fileURL(for: profileID, kind: .currentUsage)
+        let directoryURL = currentURL.deletingLastPathComponent()
+        guard FileManager.default.fileExists(atPath: directoryURL.path) else {
+            return false
+        }
+        let names = try FileManager.default.contentsOfDirectory(atPath: directoryURL.path)
+        let filename = currentURL.lastPathComponent
+        return names.contains { name in
+            name == "\(filename).bak"
+                || name.hasPrefix("\(filename).corrupt-")
+                || (name.hasPrefix(".\(filename).") && name.hasSuffix(".tmp"))
+                || (name.hasPrefix(".\(filename).bak.") && name.hasSuffix(".tmp"))
+        }
     }
 }

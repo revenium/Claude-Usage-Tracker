@@ -20,15 +20,18 @@ class ProfileManager: ObservableObject {
 
     private let profileStore: ProfileStore
     private let cliSyncService: ClaudeCodeSyncService
+    private let historyService: any ProfileHistoryDeleting
 
     private var switchingSemaphore = false
 
     init(
         profileStore: ProfileStore? = nil,
-        cliSyncService: ClaudeCodeSyncService? = nil
+        cliSyncService: ClaudeCodeSyncService? = nil,
+        historyService: (any ProfileHistoryDeleting)? = nil
     ) {
         self.profileStore = profileStore ?? .shared
         self.cliSyncService = cliSyncService ?? .shared
+        self.historyService = historyService ?? UsageHistoryService.shared
     }
 
     // MARK: - Initialization
@@ -142,15 +145,20 @@ class ProfileManager: ObservableObject {
 
         let profileName = profiles.first(where: { $0.id == id })?.name ?? "unknown"
 
-        // Secure cleanup is verified before profile identity is removed. P03
-        // can insert throwing file cleanup immediately after this boundary.
-        try profileStore.deleteProfileSecrets(for: id)
+        guard profiles.contains(where: { $0.id == id }) else {
+            throw ProfileStoreError.profileNotFound(id)
+        }
 
-        // Clean up usage history for this profile
-        UsageHistoryService.shared.deleteHistory(for: id)
+        // Keep profile identity in both memory and preferences until every
+        // profile-owned secure/file cleanup step has been verified.
+        try profileStore.deleteProfileSecrets(for: id)
+        try historyService.deleteHistoryThrowing(for: id)
+        try profileStore.deleteProfileUsageData(for: id)
         LoggingService.shared.log("Successfully deleted usage history for profile: \(profileName)")
 
-        profiles.removeAll { $0.id == id }
+        let remainingProfiles = profiles.filter { $0.id != id }
+        try profileStore.saveProfilesThrowing(remainingProfiles)
+        profiles = remainingProfiles
 
         // Switch to first profile if deleted active
         if activeProfile?.id == id {
@@ -161,7 +169,6 @@ class ProfileManager: ObservableObject {
             }
         }
 
-        profileStore.saveProfiles(profiles)
         LoggingService.shared.log("Deleted profile: \(profileName)")
     }
 
@@ -348,7 +355,8 @@ class ProfileManager: ObservableObject {
 
     /// Removes Claude.ai credentials for a profile
     func removeClaudeAICredentials(for profileId: UUID) throws {
-        // Load and clear credentials from Keychain
+        // Verify usage deletion before changing either credentials or memory.
+        try profileStore.clearClaudeUsage(for: profileId)
         var creds = try profileStore.loadProfileCredentials(profileId)
         creds.claudeSessionKey = nil
         creds.organizationId = nil
@@ -363,8 +371,6 @@ class ProfileManager: ObservableObject {
             if activeProfile?.id == profileId {
                 activeProfile = profiles[index]
             }
-
-            profileStore.saveProfiles(profiles)
         }
 
         LoggingService.shared.log("ProfileManager: Removed Claude.ai credentials for profile \(profileId)")
@@ -375,7 +381,8 @@ class ProfileManager: ObservableObject {
 
     /// Removes API Console credentials for a profile
     func removeAPICredentials(for profileId: UUID) throws {
-        // Load and clear credentials from Keychain
+        // Verify usage deletion before changing either credentials or memory.
+        try profileStore.clearAPIUsage(for: profileId)
         var creds = try profileStore.loadProfileCredentials(profileId)
         creds.apiSessionKey = nil
         creds.apiOrganizationId = nil
@@ -390,8 +397,6 @@ class ProfileManager: ObservableObject {
             if activeProfile?.id == profileId {
                 activeProfile = profiles[index]
             }
-
-            profileStore.saveProfiles(profiles)
         }
 
         LoggingService.shared.log("ProfileManager: Removed API credentials for profile \(profileId)")
@@ -409,6 +414,13 @@ class ProfileManager: ObservableObject {
             return
         }
 
+        do {
+            try profileStore.saveClaudeUsage(usage, for: profileId)
+        } catch {
+            LoggingService.shared.logStorageError("saveClaudeUsage", error: error)
+            return
+        }
+
         profiles[index].claudeUsage = usage
 
         // Update activeProfile reference if it's the same profile
@@ -416,20 +428,32 @@ class ProfileManager: ObservableObject {
             activeProfile = profiles[index]
         }
 
-        // Save to persistent storage
-        profileStore.saveProfiles(profiles)
         LoggingService.shared.log("Saved Claude usage for profile: \(profiles[index].name)")
     }
 
     /// Loads Claude usage data for a specific profile
     func loadClaudeUsage(for profileId: UUID) -> ClaudeUsage? {
-        return profiles.first(where: { $0.id == profileId })?.claudeUsage
+        do {
+            let usage = try profileStore.loadClaudeUsage(for: profileId)
+            updateClaudeUsageInMemory(usage, for: profileId)
+            return usage
+        } catch {
+            LoggingService.shared.logStorageError("loadClaudeUsage", error: error)
+            return profiles.first(where: { $0.id == profileId })?.claudeUsage
+        }
     }
 
     /// Saves API usage data for a specific profile
     func saveAPIUsage(_ usage: APIUsage, for profileId: UUID) {
         guard let index = profiles.firstIndex(where: { $0.id == profileId }) else {
             LoggingService.shared.logError("saveAPIUsage: Profile not found with ID: \(profileId)")
+            return
+        }
+
+        do {
+            try profileStore.saveAPIUsage(usage, for: profileId)
+        } catch {
+            LoggingService.shared.logStorageError("saveAPIUsage", error: error)
             return
         }
 
@@ -440,14 +464,19 @@ class ProfileManager: ObservableObject {
             activeProfile = profiles[index]
         }
 
-        // Save to persistent storage
-        profileStore.saveProfiles(profiles)
         LoggingService.shared.log("Saved API usage for profile: \(profiles[index].name)")
     }
 
     /// Loads API usage data for a specific profile
     func loadAPIUsage(for profileId: UUID) -> APIUsage? {
-        return profiles.first(where: { $0.id == profileId })?.apiUsage
+        do {
+            let usage = try profileStore.loadAPIUsage(for: profileId)
+            updateAPIUsageInMemory(usage, for: profileId)
+            return usage
+        } catch {
+            LoggingService.shared.logStorageError("loadAPIUsage", error: error)
+            return profiles.first(where: { $0.id == profileId })?.apiUsage
+        }
     }
 
     // MARK: - Profile Settings
@@ -590,6 +619,26 @@ class ProfileManager: ObservableObject {
             checkOverageLimitEnabled: true,
             notificationSettings: NotificationSettings()
         )
+    }
+
+    private func updateClaudeUsageInMemory(_ usage: ClaudeUsage?, for profileID: UUID) {
+        guard let index = profiles.firstIndex(where: { $0.id == profileID }) else {
+            return
+        }
+        profiles[index].claudeUsage = usage
+        if activeProfile?.id == profileID {
+            activeProfile = profiles[index]
+        }
+    }
+
+    private func updateAPIUsageInMemory(_ usage: APIUsage?, for profileID: UUID) {
+        guard let index = profiles.firstIndex(where: { $0.id == profileID }) else {
+            return
+        }
+        profiles[index].apiUsage = usage
+        if activeProfile?.id == profileID {
+            activeProfile = profiles[index]
+        }
     }
 
 }

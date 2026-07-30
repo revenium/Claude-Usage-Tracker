@@ -134,8 +134,17 @@ final class UsageHistoryServiceTests: XCTestCase {
         XCTAssertEqual(service.loadHistory(for: profileID).snapshots.count, 1)
         XCTAssertEqual(service.loadHistory(for: profileID).snapshots.first?.resetType, .weeklyReset)
 
+        let legacyKey = "usageHistory_\(profileID.uuidString)"
+        let sessionTimestampKey = "lastSessionRecordTime_\(profileID.uuidString)"
+        let weeklyTimestampKey = "lastWeeklyRecordTime_\(profileID.uuidString)"
+        environment.defaults.set(try JSONEncoder().encode(history), forKey: legacyKey)
+        environment.defaults.set(Date(), forKey: sessionTimestampKey)
+        environment.defaults.set(Date(), forKey: weeklyTimestampKey)
         try service.deleteHistoryThrowing(for: profileID)
         XCTAssertTrue(service.loadHistory(for: profileID).isEmpty)
+        XCTAssertNil(environment.defaults.object(forKey: legacyKey))
+        XCTAssertNil(environment.defaults.object(forKey: sessionTimestampKey))
+        XCTAssertNil(environment.defaults.object(forKey: weeklyTimestampKey))
         XCTAssertFalse(
             FileManager.default.fileExists(
                 atPath: try store.fileURL(for: profileID, kind: .history).path

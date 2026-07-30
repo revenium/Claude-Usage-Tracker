@@ -53,6 +53,11 @@ struct Profile: Codable, Identifiable, Equatable {
     /// independently and removes it after successful Keychain readback.
     var credentialMigrationRetry: ProfileCredentialMigrationRetry
 
+    /// Usage retained only while a legacy preference-blob migration has not
+    /// yet passed an exact durable file readback. Runtime usage remains on the
+    /// profile for UI compatibility, but normal profile JSON never encodes it.
+    var currentUsageMigrationRetry: ProfileCurrentUsage?
+
     init(
         id: UUID = UUID(),
         name: String,
@@ -75,7 +80,8 @@ struct Profile: Codable, Identifiable, Equatable {
         isSelectedForDisplay: Bool = true,
         createdAt: Date = Date(),
         lastUsedAt: Date = Date(),
-        credentialMigrationRetry: ProfileCredentialMigrationRetry = .init()
+        credentialMigrationRetry: ProfileCredentialMigrationRetry = .init(),
+        currentUsageMigrationRetry: ProfileCurrentUsage? = nil
     ) {
         self.id = id
         self.name = name
@@ -99,6 +105,7 @@ struct Profile: Codable, Identifiable, Equatable {
         self.createdAt = createdAt
         self.lastUsedAt = lastUsedAt
         self.credentialMigrationRetry = credentialMigrationRetry
+        self.currentUsageMigrationRetry = currentUsageMigrationRetry
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -124,6 +131,7 @@ struct Profile: Codable, Identifiable, Equatable {
         case createdAt
         case lastUsedAt
         case credentialMigrationRetry
+        case currentUsageMigrationRetry
     }
 
     init(from decoder: Decoder) throws {
@@ -137,8 +145,14 @@ struct Profile: Codable, Identifiable, Equatable {
         hasCliAccount = try container.decodeIfPresent(Bool.self, forKey: .hasCliAccount) ?? false
         cliAccountSyncedAt = try container.decodeIfPresent(Date.self, forKey: .cliAccountSyncedAt)
         cliAccountName = try container.decodeIfPresent(String.self, forKey: .cliAccountName)
-        claudeUsage = try container.decodeIfPresent(ClaudeUsage.self, forKey: .claudeUsage)
-        apiUsage = try container.decodeIfPresent(APIUsage.self, forKey: .apiUsage)
+        let legacyClaudeUsage = try container.decodeIfPresent(
+            ClaudeUsage.self,
+            forKey: .claudeUsage
+        )
+        let legacyAPIUsage = try container.decodeIfPresent(
+            APIUsage.self,
+            forKey: .apiUsage
+        )
         iconConfig = try container.decodeIfPresent(
             MenuBarIconConfiguration.self,
             forKey: .iconConfig
@@ -188,6 +202,20 @@ struct Profile: Codable, Identifiable, Equatable {
         claudeSessionKey = retry.claudeSessionKey
         apiSessionKey = retry.apiSessionKey
         cliCredentialsJSON = retry.cliCredentialsJSON
+
+        var usageRetry = try container.decodeIfPresent(
+            ProfileCurrentUsage.self,
+            forKey: .currentUsageMigrationRetry
+        )
+        if legacyClaudeUsage != nil || legacyAPIUsage != nil {
+            usageRetry = ProfileCurrentUsage(
+                claudeUsage: legacyClaudeUsage ?? usageRetry?.claudeUsage,
+                apiUsage: legacyAPIUsage ?? usageRetry?.apiUsage
+            )
+        }
+        currentUsageMigrationRetry = usageRetry?.isEmpty == false ? usageRetry : nil
+        claudeUsage = currentUsageMigrationRetry?.claudeUsage
+        apiUsage = currentUsageMigrationRetry?.apiUsage
     }
 
     func encode(to encoder: Encoder) throws {
@@ -201,8 +229,6 @@ struct Profile: Codable, Identifiable, Equatable {
         try container.encode(hasCliAccount, forKey: .hasCliAccount)
         try container.encodeIfPresent(cliAccountSyncedAt, forKey: .cliAccountSyncedAt)
         try container.encodeIfPresent(cliAccountName, forKey: .cliAccountName)
-        try container.encodeIfPresent(claudeUsage, forKey: .claudeUsage)
-        try container.encodeIfPresent(apiUsage, forKey: .apiUsage)
         try container.encode(iconConfig, forKey: .iconConfig)
         try container.encode(refreshInterval, forKey: .refreshInterval)
         try container.encode(autoStartSessionEnabled, forKey: .autoStartSessionEnabled)
@@ -214,6 +240,12 @@ struct Profile: Codable, Identifiable, Equatable {
 
         if !credentialMigrationRetry.isEmpty {
             try container.encode(credentialMigrationRetry, forKey: .credentialMigrationRetry)
+        }
+        if let currentUsageMigrationRetry, !currentUsageMigrationRetry.isEmpty {
+            try container.encode(
+                currentUsageMigrationRetry,
+                forKey: .currentUsageMigrationRetry
+            )
         }
     }
 
@@ -240,6 +272,23 @@ struct Profile: Codable, Identifiable, Equatable {
 
     var hasAnyCredentials: Bool {
         hasClaudeAI || hasAPIConsole || cliCredentialsJSON != nil
+    }
+}
+
+/// Durable current-usage payload for the existing Claude.ai and Anthropic API
+/// surfaces. Codex persists its normalized usage independently through the
+/// provider-neutral file envelope introduced for that later integration.
+struct ProfileCurrentUsage: Codable, Equatable {
+    var claudeUsage: ClaudeUsage?
+    var apiUsage: APIUsage?
+
+    init(claudeUsage: ClaudeUsage? = nil, apiUsage: APIUsage? = nil) {
+        self.claudeUsage = claudeUsage
+        self.apiUsage = apiUsage
+    }
+
+    var isEmpty: Bool {
+        claudeUsage == nil && apiUsage == nil
     }
 }
 
