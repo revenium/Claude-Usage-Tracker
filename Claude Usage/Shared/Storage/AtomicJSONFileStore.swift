@@ -63,6 +63,7 @@ nonisolated final class AtomicJSONFileStore: @unchecked Sendable {
     private let fileManager: FileManager
     private let now: () -> Date
     private let makeIdentifier: () -> String
+    private let renameOperation: ((URL, URL) throws -> Void)?
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
     private let lock = NSRecursiveLock()
@@ -71,12 +72,14 @@ nonisolated final class AtomicJSONFileStore: @unchecked Sendable {
         baseURL: URL,
         fileManager: FileManager = .default,
         now: @escaping () -> Date = Date.init,
-        makeIdentifier: @escaping () -> String = { UUID().uuidString }
+        makeIdentifier: @escaping () -> String = { UUID().uuidString },
+        renameOperation: ((URL, URL) throws -> Void)? = nil
     ) {
         self.baseURL = baseURL.standardizedFileURL
         self.fileManager = fileManager
         self.now = now
         self.makeIdentifier = makeIdentifier
+        self.renameOperation = renameOperation
 
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
@@ -133,14 +136,33 @@ nonisolated final class AtomicJSONFileStore: @unchecked Sendable {
             throw AtomicJSONFileStoreError.verifyTemporaryFileFailed(temporaryURL, underlying: error)
         }
 
+        // Backup preparation is deliberately outside the install rollback
+        // region. A failure while staging the backup must never quarantine or
+        // otherwise disturb the still-valid primary.
         do {
             try preserveValidPrimaryAsBackup(Value.self, targetURL: targetURL)
+        } catch {
+            try? fileManager.removeItem(at: temporaryURL)
+            if let typedError = error as? AtomicJSONFileStoreError {
+                throw typedError
+            }
+            throw AtomicJSONFileStoreError.installFailed(
+                backupURL(for: targetURL),
+                underlying: error
+            )
+        }
+
+        var didInstallTarget = false
+        do {
             try atomicRename(from: temporaryURL, to: targetURL)
+            didInstallTarget = true
             try setPermissions(0o600, at: targetURL)
             _ = try decode(Value.self, from: targetURL)
         } catch {
             try? fileManager.removeItem(at: temporaryURL)
-            try restoreBackupAfterFailedInstall(Value.self, targetURL: targetURL)
+            if didInstallTarget {
+                try restoreBackupAfterFailedInstall(Value.self, targetURL: targetURL)
+            }
             if let typedError = error as? AtomicJSONFileStoreError {
                 throw typedError
             }
@@ -360,6 +382,10 @@ nonisolated final class AtomicJSONFileStore: @unchecked Sendable {
     }
 
     private func atomicRename(from sourceURL: URL, to targetURL: URL) throws {
+        if let renameOperation {
+            try renameOperation(sourceURL, targetURL)
+            return
+        }
         guard Darwin.rename(sourceURL.path, targetURL.path) == 0 else {
             let code = errno
             let message = String(cString: strerror(code))

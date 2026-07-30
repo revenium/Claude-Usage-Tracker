@@ -1,8 +1,13 @@
+import Darwin
 import Foundation
 import XCTest
 @testable import Claude_Usage
 
 final class AtomicJSONFileStoreTests: XCTestCase {
+    nonisolated private enum InjectedFailure: Error {
+        case expected
+    }
+
     nonisolated private struct Fixture: Codable, Equatable {
         let value: String
     }
@@ -121,6 +126,78 @@ final class AtomicJSONFileStoreTests: XCTestCase {
             atPath: fileURL.deletingLastPathComponent().path
         )
         XCTAssertFalse(remainingNames.contains { $0.hasSuffix(".tmp") })
+    }
+
+    func testBackupPreparationFailureLeavesValidPrimaryOnline() throws {
+        let rootURL = try makeTemporaryRoot()
+        let relativePath = "profile/history.json"
+        let originalStore = AtomicJSONFileStore(baseURL: rootURL)
+        try originalStore.write(Fixture(value: "original"), to: relativePath)
+
+        var attemptedTargetInstall = false
+        let failingStore = AtomicJSONFileStore(
+            baseURL: rootURL,
+            renameOperation: { _, targetURL in
+                if targetURL.pathExtension == "bak" {
+                    throw InjectedFailure.expected
+                }
+                attemptedTargetInstall = true
+                throw InjectedFailure.expected
+            }
+        )
+
+        XCTAssertThrowsError(
+            try failingStore.write(Fixture(value: "replacement"), to: relativePath)
+        )
+        XCTAssertFalse(attemptedTargetInstall)
+        XCTAssertEqual(
+            try originalStore.read(Fixture.self, from: relativePath),
+            Fixture(value: "original")
+        )
+
+        let fileURL = try originalStore.fileURL(for: relativePath)
+        let names = try FileManager.default.contentsOfDirectory(
+            atPath: fileURL.deletingLastPathComponent().path
+        )
+        XCTAssertTrue(names.contains(fileURL.lastPathComponent))
+        XCTAssertFalse(names.contains { $0.contains(".corrupt-") })
+        XCTAssertFalse(names.contains { $0.hasSuffix(".tmp") })
+    }
+
+    func testTargetRenameFailureLeavesValidPrimaryOnline() throws {
+        let rootURL = try makeTemporaryRoot()
+        let relativePath = "profile/history.json"
+        let originalStore = AtomicJSONFileStore(baseURL: rootURL)
+        try originalStore.write(Fixture(value: "original"), to: relativePath)
+
+        let failingStore = AtomicJSONFileStore(
+            baseURL: rootURL,
+            renameOperation: { sourceURL, targetURL in
+                guard targetURL.pathExtension == "bak" else {
+                    throw InjectedFailure.expected
+                }
+                guard Darwin.rename(sourceURL.path, targetURL.path) == 0 else {
+                    throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+                }
+            }
+        )
+
+        XCTAssertThrowsError(
+            try failingStore.write(Fixture(value: "replacement"), to: relativePath)
+        )
+        XCTAssertEqual(
+            try originalStore.read(Fixture.self, from: relativePath),
+            Fixture(value: "original")
+        )
+
+        let fileURL = try originalStore.fileURL(for: relativePath)
+        let names = try FileManager.default.contentsOfDirectory(
+            atPath: fileURL.deletingLastPathComponent().path
+        )
+        XCTAssertTrue(names.contains(fileURL.lastPathComponent))
+        XCTAssertTrue(names.contains(fileURL.appendingPathExtension("bak").lastPathComponent))
+        XCTAssertFalse(names.contains { $0.contains(".corrupt-") })
+        XCTAssertFalse(names.contains { $0.hasSuffix(".tmp") })
     }
 
     func testRejectsPathsOutsideBaseDirectory() throws {
