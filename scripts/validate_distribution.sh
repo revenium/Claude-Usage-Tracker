@@ -134,6 +134,18 @@ distribution_workflows=(
     '.github/workflows/update-homebrew-cask.yml'
 )
 
+xcode_workflows=(
+    '.github/workflows/distribution-validation.yml'
+    '.github/workflows/generate-appcast.yml'
+    '.github/workflows/release.yml'
+)
+
+for workflow in "${xcode_workflows[@]}"; do
+    contains 'xcode-select -s /Applications/Xcode_26\.0\.1\.app/Contents/Developer' \
+        "$workflow" \
+        || fail "Xcode workflow is not pinned to 26.0.1: $workflow"
+done
+
 for workflow in "${distribution_workflows[@]}"; do
     ruby -e 'require "yaml"; YAML.load_file(ARGV.fetch(0))' "$workflow" \
         || fail "invalid workflow YAML: $workflow"

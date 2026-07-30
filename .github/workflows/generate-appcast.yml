@@ -39,6 +39,9 @@ jobs:
           ref: ${{ inputs.release_tag }}
           persist-credentials: false
 
+      - name: Select Xcode 26.0.1
+        run: sudo xcode-select -s /Applications/Xcode_26.0.1.app/Contents/Developer
+
       - name: Resolve pinned Sparkle tools
         run: |
           set -euo pipefail
