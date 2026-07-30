@@ -1,0 +1,6 @@
+/* A valid fixture that exercises the test-only self-value allowlist. */
+"fixture.allowed" = "fixture.allowed";
+"fixture.escaped" = "Quote: \"ok\"; path: C:\\Temp; newline:\nnext; percent: %%";
+"fixture.format" = "Account %@ has %d items";
+"fixture.plain" = "Plain value";
+"popover.normalized.fixture" = "Deferred value";

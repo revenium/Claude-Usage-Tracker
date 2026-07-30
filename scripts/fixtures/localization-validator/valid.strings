@@ -1,0 +1,6 @@
+/* A valid compact catalog with escapes and placeholder coverage. */
+"fixture.allowed" = "Allowed value";
+"fixture.escaped" = "Quote: \"ok\"; path: C:\\Temp; newline:\nnext; percent: %%";
+"fixture.format" = "Account %@ has %d items";
+"fixture.plain" = "Plain value";
+"popover.normalized.fixture" = "Deferred value";

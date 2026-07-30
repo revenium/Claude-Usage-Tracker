@@ -1,0 +1,5 @@
+"fixture.allowed" = "fixture.allowed";
+"fixture.escaped" = "fixture.escaped";
+"fixture.format" = "Account %@ has %d items";
+"fixture.plain" = "Plain value";
+"popover.normalized.fixture" = "Deferred value";

@@ -1,0 +1,5 @@
+"fixture.allowed" = "fixture.allowed";
+"fixture.escaped" = "Escaped localized value";
+"fixture.format" = "Account %d has %d items";
+"fixture.plain" = "Plain value";
+"popover.normalized.fixture" = "Deferred value";
