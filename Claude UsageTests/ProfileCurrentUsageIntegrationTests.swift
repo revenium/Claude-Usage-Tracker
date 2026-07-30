@@ -296,13 +296,25 @@ final class ProfileCurrentUsageIntegrationTests: XCTestCase {
     func testProfileDeletionFailureRetainsIdentityAndSuccessRemovesAllData() throws {
         let deletedID = UUID()
         let retainedID = UUID()
+        let claudeUsage = makeClaudeUsage(tokens: 80)
+        let apiUsage = makeAPIUsage(spend: 80)
+        let secrets = MockSecretStore()
         let usageFiles = MockCurrentUsageFileStore()
         usageFiles.values[deletedID] = ProfileCurrentUsage(
-            claudeUsage: makeClaudeUsage(tokens: 80)
+            claudeUsage: claudeUsage,
+            apiUsage: apiUsage
         )
-        let store = retain(makeStore(usageFiles: usageFiles))
+        let store = retain(makeStore(usageFiles: usageFiles, secrets: secrets))
         let initialProfiles = [
-            Profile(id: deletedID, name: "Delete"),
+            Profile(
+                id: deletedID,
+                name: "Delete",
+                claudeSessionKey: "claude-secret",
+                apiSessionKey: "api-secret",
+                cliCredentialsJSON: "cli-secret",
+                claudeUsage: claudeUsage,
+                apiUsage: apiUsage
+            ),
             Profile(id: retainedID, name: "Keep")
         ]
         try store.saveProfilesThrowing(initialProfiles)
@@ -311,12 +323,19 @@ final class ProfileCurrentUsageIntegrationTests: XCTestCase {
             ProfileManager(profileStore: store, historyService: history)
         )
         manager.profiles = initialProfiles
-        manager.activeProfile = initialProfiles[1]
+        manager.activeProfile = initialProfiles[0]
         usageFiles.deleteError = TestFailure.expected
 
         XCTAssertThrowsError(try manager.deleteProfile(deletedID))
         XCTAssertEqual(manager.profiles.map(\.id), initialProfiles.map(\.id))
         XCTAssertEqual(try persistedProfileIDs(), initialProfiles.map(\.id))
+        XCTAssertNil(manager.profiles[0].claudeSessionKey)
+        XCTAssertNil(manager.profiles[0].apiSessionKey)
+        XCTAssertNil(manager.profiles[0].cliCredentialsJSON)
+        XCTAssertNil(manager.activeProfile?.claudeSessionKey)
+        XCTAssertEqual(manager.profiles[0].claudeUsage, claudeUsage)
+        XCTAssertEqual(manager.profiles[0].apiUsage, apiUsage)
+        XCTAssertNotNil(usageFiles.values[deletedID])
 
         usageFiles.deleteError = nil
         try manager.deleteProfile(deletedID)
@@ -325,6 +344,108 @@ final class ProfileCurrentUsageIntegrationTests: XCTestCase {
         XCTAssertEqual(try persistedProfileIDs(), [retainedID])
         XCTAssertNil(usageFiles.values[deletedID])
         XCTAssertTrue(history.deletedProfileIDs.contains(deletedID))
+    }
+
+    @MainActor
+    func testHistoryDeletionFailureRetainsIdentityWithSecretsScrubbed() throws {
+        let deletedID = UUID()
+        let retainedID = UUID()
+        let usage = makeClaudeUsage(tokens: 61)
+        let secrets = MockSecretStore()
+        let usageFiles = MockCurrentUsageFileStore()
+        usageFiles.values[deletedID] = ProfileCurrentUsage(claudeUsage: usage)
+        let store = retain(makeStore(usageFiles: usageFiles, secrets: secrets))
+        let initialProfiles = [
+            Profile(
+                id: deletedID,
+                name: "Delete",
+                claudeSessionKey: "claude-secret",
+                apiSessionKey: "api-secret",
+                cliCredentialsJSON: "cli-secret",
+                claudeUsage: usage
+            ),
+            Profile(id: retainedID, name: "Keep")
+        ]
+        try store.saveProfilesThrowing(initialProfiles)
+        let history = retain(MockHistoryDeleter())
+        history.deleteError = TestFailure.expected
+        let manager = retain(
+            ProfileManager(profileStore: store, historyService: history)
+        )
+        manager.profiles = initialProfiles
+        manager.activeProfile = initialProfiles[0]
+
+        XCTAssertThrowsError(try manager.deleteProfile(deletedID))
+
+        XCTAssertEqual(manager.profiles.map(\.id), initialProfiles.map(\.id))
+        XCTAssertNil(manager.profiles[0].claudeSessionKey)
+        XCTAssertNil(manager.profiles[0].apiSessionKey)
+        XCTAssertNil(manager.profiles[0].cliCredentialsJSON)
+        XCTAssertNil(manager.activeProfile?.claudeSessionKey)
+        XCTAssertEqual(manager.profiles[0].claudeUsage, usage)
+        XCTAssertEqual(usageFiles.values[deletedID]?.claudeUsage, usage)
+        XCTAssertEqual(usageFiles.deleteAllCount, 0)
+        for field in ProfileSecretField.allCases {
+            XCTAssertNil(
+                secrets.values[ProfileSecretLocator(
+                    profileID: deletedID,
+                    field: field
+                )]
+            )
+        }
+    }
+
+    @MainActor
+    func testMetadataRemovalFailureRetainsIdentityWithUsageAndSecretsScrubbed() throws {
+        let deletedID = UUID()
+        let retainedID = UUID()
+        let usage = makeClaudeUsage(tokens: 71)
+        let backing = FaultingCurrentUsageDefaults()
+        let secrets = MockSecretStore()
+        let usageFiles = MockCurrentUsageFileStore()
+        usageFiles.values[deletedID] = ProfileCurrentUsage(claudeUsage: usage)
+        let store = retain(
+            ProfileStore(
+                defaults: backing,
+                secretStore: secrets,
+                usageFileStore: usageFiles
+            )
+        )
+        let initialProfiles = [
+            Profile(
+                id: deletedID,
+                name: "Delete",
+                claudeSessionKey: "claude-secret",
+                apiSessionKey: "api-secret",
+                cliCredentialsJSON: "cli-secret",
+                claudeUsage: usage
+            ),
+            Profile(id: retainedID, name: "Keep")
+        ]
+        try store.saveProfilesThrowing(initialProfiles)
+        let history = retain(MockHistoryDeleter())
+        let manager = retain(
+            ProfileManager(profileStore: store, historyService: history)
+        )
+        manager.profiles = initialProfiles
+        manager.activeProfile = initialProfiles[0]
+        backing.corruptNextProfileWrite = true
+
+        XCTAssertThrowsError(try manager.deleteProfile(deletedID))
+
+        XCTAssertEqual(manager.profiles.map(\.id), initialProfiles.map(\.id))
+        XCTAssertNil(manager.profiles[0].claudeSessionKey)
+        XCTAssertNil(manager.profiles[0].apiSessionKey)
+        XCTAssertNil(manager.profiles[0].cliCredentialsJSON)
+        XCTAssertNil(manager.profiles[0].claudeUsage)
+        XCTAssertNil(manager.profiles[0].apiUsage)
+        XCTAssertNil(manager.activeProfile?.claudeUsage)
+        XCTAssertNil(usageFiles.values[deletedID])
+        let persistedData = try XCTUnwrap(backing.data(forKey: "profiles_v3"))
+        XCTAssertEqual(
+            try JSONDecoder().decode([Profile].self, from: persistedData).map(\.id),
+            initialProfiles.map(\.id)
+        )
     }
 
     @MainActor
@@ -467,6 +588,32 @@ private final class MockSecretStore: ProfileSecretStore {
 
     func delete(_ locator: ProfileSecretLocator) throws {
         values.removeValue(forKey: locator)
+    }
+}
+
+private final class FaultingCurrentUsageDefaults: ProfileDefaultsStore {
+    var storage: [String: Any] = [:]
+    var corruptNextProfileWrite = false
+
+    func data(forKey defaultName: String) -> Data? {
+        storage[defaultName] as? Data
+    }
+
+    func string(forKey defaultName: String) -> String? {
+        storage[defaultName] as? String
+    }
+
+    func set(_ value: Any?, forKey defaultName: String) {
+        if corruptNextProfileWrite, defaultName == "profiles_v3" {
+            corruptNextProfileWrite = false
+            storage[defaultName] = Data("corrupt".utf8)
+        } else {
+            storage[defaultName] = value
+        }
+    }
+
+    func removeObject(forKey defaultName: String) {
+        storage.removeValue(forKey: defaultName)
     }
 }
 

@@ -152,8 +152,10 @@ class ProfileManager: ObservableObject {
         // Keep profile identity in both memory and preferences until every
         // profile-owned secure/file cleanup step has been verified.
         try profileStore.deleteProfileSecrets(for: id)
+        scrubDeletedSecretsInMemory(for: id)
         try historyService.deleteHistoryThrowing(for: id)
         try profileStore.deleteProfileUsageData(for: id)
+        scrubDeletedUsageInMemory(for: id)
         LoggingService.shared.log("Successfully deleted usage history for profile: \(profileName)")
 
         let remainingProfiles = profiles.filter { $0.id != id }
@@ -636,6 +638,31 @@ class ProfileManager: ObservableObject {
             return
         }
         profiles[index].apiUsage = usage
+        if activeProfile?.id == profileID {
+            activeProfile = profiles[index]
+        }
+    }
+
+    private func scrubDeletedSecretsInMemory(for profileID: UUID) {
+        guard let index = profiles.firstIndex(where: { $0.id == profileID }) else {
+            return
+        }
+        profiles[index].claudeSessionKey = nil
+        profiles[index].apiSessionKey = nil
+        profiles[index].cliCredentialsJSON = nil
+        profiles[index].credentialMigrationRetry = .init()
+        if activeProfile?.id == profileID {
+            activeProfile = profiles[index]
+        }
+    }
+
+    private func scrubDeletedUsageInMemory(for profileID: UUID) {
+        guard let index = profiles.firstIndex(where: { $0.id == profileID }) else {
+            return
+        }
+        profiles[index].claudeUsage = nil
+        profiles[index].apiUsage = nil
+        profiles[index].currentUsageMigrationRetry = nil
         if activeProfile?.id == profileID {
             activeProfile = profiles[index]
         }
