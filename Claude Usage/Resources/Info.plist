@@ -36,11 +36,14 @@
 	<false/>
 
 	<!-- Sparkle Update Configuration -->
+	<key>ReveniumUpdateChannel</key>
+	<string>$(REVENIUM_UPDATE_CHANNEL)</string>
+
 	<key>SUFeedURL</key>
-	<string>https://hamed-elfayome.github.io/Claude-Usage-Tracker/appcast.xml</string>
+	<string>$(SPARKLE_FEED_URL)</string>
 
 	<key>SUPublicEDKey</key>
-	<string>1ol8Exuba8opOy5R93YCQVuBw5Y6q4MgtMrgnsh8Kec=</string>
+	<string>$(SPARKLE_PUBLIC_ED_KEY)</string>
 
 	<key>SUEnableAutomaticChecks</key>
 	<true/>
@@ -49,9 +52,6 @@
 	<integer>86400</integer>
 
 	<key>SUAllowsAutomaticUpdates</key>
-	<true/>
-
-	<key>SUEnableInstallerLauncherService</key>
 	<true/>
 
 	<!-- Enable gentle reminders for background apps -->

@@ -110,8 +110,10 @@ enum Constants {
         static let critical: Double = 95.0
     }
 
-    // GitHub repository
-    static let githubRepoURL = "https://github.com/hamed-elfayome/Claude-Usage-Tracker"
+    // Revenium-owned operational endpoints. Historical creator attribution is
+    // intentionally kept in the About screen and license, but must not be
+    // used for updates, support, feedback, or distribution.
+    static let githubRepoURL = GitHub.repoURL
 
     // GitHub star prompt timing (in seconds)
     enum GitHubPromptTiming {
@@ -147,8 +149,15 @@ enum Constants {
 
     // GitHub Repository Info
     enum GitHub {
-        static let owner = "hamed-elfayome"
+        static let owner = "revenium"
         static let repo = "Claude-Usage-Tracker"
         static let repoURL = "https://github.com/\(owner)/\(repo)"
+        static let issuesURL = "\(repoURL)/issues"
+        static let newFeedbackIssueURL = "\(issuesURL)/new"
+        static let releasesURL = "\(repoURL)/releases"
+        static let securityAdvisoriesURL = "\(repoURL)/security/advisories/new"
+        static let appcastURL = "\(releasesURL)/latest/download/appcast.xml"
+        static let homebrewTapURL = "https://github.com/revenium/homebrew-tap"
+        static let supportEmailURL = "mailto:support@revenium.io"
     }
 }

@@ -1,119 +1,86 @@
 # Security Policy
 
-## Supported Versions
+## Supported versions
 
-We release security updates for the latest stable version only. Please ensure you're running the most recent version before reporting issues.
+Revenium provides security fixes for the latest stable release of Claude Usage.
+Install the current version from:
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 1.6.x   | :white_check_mark: |
-| < 1.6   | :x:                |
+- [Revenium GitHub Releases](https://github.com/revenium/Claude-Usage-Tracker/releases/latest)
+- [Revenium Homebrew tap](https://github.com/revenium/homebrew-tap)
 
-[Download the latest version](https://github.com/hamed-elfayome/Claude-Usage-Tracker/releases/latest)
+## Report a vulnerability privately
 
-## Reporting a Vulnerability
+Do not open a public issue for a suspected vulnerability.
 
-We take security seriously. If you discover a security vulnerability, please report it responsibly.
+Use the repository's
+[private security advisory form](https://github.com/revenium/Claude-Usage-Tracker/security/advisories/new).
+If GitHub advisories are unavailable, email
+[support@revenium.io](mailto:support@revenium.io) with:
 
-### How to Report
+- A description of the issue and its impact
+- Reproduction steps or a proof of concept
+- Affected versions and macOS versions
+- Any suggested mitigation
+- A safe way to contact you
 
-**Please do NOT report security vulnerabilities through public GitHub issues.**
+Revenium will acknowledge the report, investigate it, coordinate remediation,
+and credit the reporter when requested and appropriate.
 
-Instead, use GitHub's private security advisory feature:
+## Sensitive data
 
-1. Go to the [Security tab](https://github.com/hamed-elfayome/Claude-Usage-Tracker/security/advisories)
-2. Click "Report a vulnerability"
-3. Provide detailed information about the vulnerability
+Claude Usage handles account credentials and local usage state:
 
-### What to Include
+- Claude and API secrets are stored in macOS Keychain.
+- Codex authentication files are read through supported local tooling; the app
+  must not copy raw credentials into profiles, diagnostics, logs, or reports.
+- Profile metadata and usage history remain on the Mac.
+- Feedback opens a reviewable Revenium GitHub issue draft; the app does not
+  forward feedback to a third-party collection endpoint.
+- The app has no telemetry or cloud sync.
 
-To help us assess and address the issue quickly, please include:
+Never include real session keys, API keys, OAuth tokens, account identifiers,
+Sparkle private keys, Apple credentials, certificates, or diagnostic archives
+containing personal data in a public issue.
 
-- **Type of vulnerability** (e.g., credential exposure, code injection, privilege escalation)
-- **Step-by-step reproduction** instructions
-- **Affected versions** (if known)
-- **Potential impact** assessment
-- **Proof of concept** code (if applicable)
-- **Suggested fix** (if you have one)
+## Release and update security
 
-### Response Timeline
+Official releases are:
 
-- **Acknowledgment**: Within 24-48 hours
-- **Initial assessment**: Within 1 week
-- **Resolution timeline**: Depends on severity and complexity
+1. Built from a stable tag already contained in `main`
+2. Tested before packaging
+3. Signed with a configured Developer ID Application identity
+4. Submitted to Apple's notary service and stapled
+5. Assessed by Gatekeeper
+6. Archived with a SHA-256 checksum
+7. Signed with a Revenium-owned Sparkle Ed25519 key
+8. Published with metadata tying version, build, commit, URL, and checksum
+9. Distributed through the Revenium GitHub repository and Homebrew tap
 
-We'll keep you informed throughout the process and credit you in the security advisory and release notes (unless you prefer to remain anonymous).
+The production Sparkle feed is:
 
-## Security Considerations
+```text
+https://github.com/revenium/Claude-Usage-Tracker/releases/latest/download/appcast.xml
+```
 
-### Session Key Storage
+Debug and ordinary local Release builds contain no feed or Sparkle public key,
+so they cannot accidentally consume another owner's production channel.
 
-- Session keys are stored locally in `~/.claude-session-key`
-- File permissions are automatically set to `0600` (owner read/write only)
-- Keys are never transmitted except to `claude.ai` via HTTPS
-- No cloud sync or external storage
+See [RELEASING.md](RELEASING.md) for the executable verification checklist.
 
-### Application Signing
+## Verify a downloaded release
 
-- The app is currently **unsigned** (no Apple Developer certificate)
-- macOS Gatekeeper will block the app on first launch
-- Users must manually approve via System Settings → Privacy & Security
-- **This is expected behavior** for community open-source apps
+Download `Claude-Usage.zip`, `Claude-Usage.zip.sha256`, `appcast.xml`, and
+`release-metadata.json` from the same release, then run:
 
-### Network Security
+```bash
+./scripts/verify_release_artifacts.sh \
+  --require-developer-id \
+  --require-notarization \
+  Claude-Usage.zip \
+  appcast.xml \
+  Claude-Usage.zip.sha256 \
+  release-metadata.json
+```
 
-- All communication uses **HTTPS only**
-- API requests are sent exclusively to `claude.ai` endpoints
-- No telemetry, analytics, or third-party tracking
-- Session authentication via secure cookies only
-
-### Code Execution
-
-- Claude Code integration scripts are installed to `~/.claude/`
-- Script permissions are set to `755` (read/execute for all, write for owner)
-- Scripts only read the existing session key file
-- No arbitrary code execution from external sources
-
-### Sandboxing
-
-- App Sandbox is **disabled** to allow file system access
-- Required for reading `~/.claude-session-key` and writing `~/.claude/` scripts
-- Necessary trade-off for the app's core functionality
-
-## Best Practices for Users
-
-### Protect Your Session Key
-
-- Never share your session key publicly
-- Treat it like a password
-- Rotate it if you suspect compromise (extract a fresh key from claude.ai)
-- Check file permissions: `ls -la ~/.claude-session-key` should show `-rw-------`
-
-### Verify Downloads
-
-- Download only from official sources:
-  - [GitHub Releases](https://github.com/hamed-elfayome/Claude-Usage-Tracker/releases)
-  - [Homebrew Tap](https://github.com/ggfevans/homebrew-claude-usage-tracker)
-- Build from source if you prefer: `git clone` + Xcode build
-
-### Keep Updated
-
-- Security patches are released for the latest version only
-- Enable notifications for new releases on GitHub
-- Review the [CHANGELOG.md](CHANGELOG.md) for security-related updates
-
-## Security Acknowledgments
-
-We recognize and appreciate security researchers who help keep our community safe. Contributors who responsibly disclose vulnerabilities will be:
-
-- Credited in the security advisory (with permission)
-- Acknowledged in release notes
-- Listed as security contributors in the project
-
-Thank you for helping keep Claude Usage Tracker secure!
-
-## Questions?
-
-For non-security related issues, please use [GitHub Issues](https://github.com/hamed-elfayome/Claude-Usage-Tracker/issues).
-
-For general questions, see our [Contributing Guide](CONTRIBUTING.md).
+For non-security bugs, use
+[Revenium GitHub Issues](https://github.com/revenium/Claude-Usage-Tracker/issues).

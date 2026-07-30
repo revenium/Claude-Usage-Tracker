@@ -60,7 +60,7 @@ Before you begin, ensure you have the following installed:
 
 3. **Add upstream remote**
    ```bash
-   git remote add upstream https://github.com/hamed-elfayome/Claude-Usage-Tracker.git
+   git remote add upstream https://github.com/revenium/Claude-Usage-Tracker.git
    ```
 
 4. **Open in Xcode**
@@ -119,7 +119,7 @@ Claude Usage/
 ### Reporting Bugs
 
 Before submitting a bug report:
-1. Check existing [issues](https://github.com/hamed-elfayome/Claude-Usage-Tracker/issues) to avoid duplicates
+1. Check existing [issues](https://github.com/revenium/Claude-Usage-Tracker/issues) to avoid duplicates
 2. Ensure you're running the latest version
 
 **When reporting a bug, include:**
@@ -133,7 +133,7 @@ Before submitting a bug report:
 ### Suggesting Features
 
 We love feature suggestions! Please:
-1. Check existing issues and discussions first
+1. Check existing issues first
 2. Describe the problem your feature would solve
 3. Explain your proposed solution
 4. Consider alternative approaches
@@ -320,27 +320,17 @@ Use descriptive branch names with prefixes:
 
 ## Release Process
 
-Releases are automated via GitHub Actions. See [`.github/README.md`](.github/README.md) for technical details.
-
-**Quick reference:**
-
-```bash
-# 1. Bump MARKETING_VERSION in project.pbxproj
-# 2. Update CHANGELOG.md
-# 3. Commit and tag
-git commit -am "chore: bump version to X.Y.Z"
-git tag vX.Y.Z
-git push origin main --tags
-
-# 4. Workflow creates draft release with assets
-# 5. Review and publish at github.com/.../releases
-```
+Releases are credential-gated and owned by Revenium maintainers. Contributors
+should submit version or release-note changes through a pull request and must
+not publish tags. See [RELEASING.md](RELEASING.md) for the signed,
+notarized, appcast, and Homebrew release gates, and
+[`.github/CI-README.md`](.github/CI-README.md) for CI details.
 
 ## Getting Help
 
-- **Questions?** Open a [Discussion](https://github.com/hamed-elfayome/Claude-Usage-Tracker/discussions)
-- **Found a bug?** Open an [Issue](https://github.com/hamed-elfayome/Claude-Usage-Tracker/issues)
-- **Want to chat?** Reach out to maintainers
+- **Questions?** Open an [Issue](https://github.com/revenium/Claude-Usage-Tracker/issues)
+- **Found a bug?** Open an [Issue](https://github.com/revenium/Claude-Usage-Tracker/issues)
+- **Need product support?** Email [support@revenium.io](mailto:support@revenium.io)
 
 ---
 

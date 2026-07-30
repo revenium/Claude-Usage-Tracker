@@ -1,0 +1,227 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+    cat >&2 <<'EOF'
+usage: verify_release_artifacts.sh [options] <zip> <appcast> <sha256-file> <metadata-json>
+
+Options:
+  --require-developer-id   Require a Developer ID Application signature.
+  --require-notarization   Require stapler and Gatekeeper acceptance.
+EOF
+}
+
+require_developer_id=false
+require_notarization=false
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --require-developer-id)
+            require_developer_id=true
+            shift
+            ;;
+        --require-notarization)
+            require_notarization=true
+            shift
+            ;;
+        --help|-h)
+            usage
+            exit 0
+            ;;
+        --*)
+            usage
+            echo "error: unknown option: $1" >&2
+            exit 64
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
+if [[ $# -ne 4 ]]; then
+    usage
+    exit 64
+fi
+
+zip_path=$1
+appcast_path=$2
+checksum_path=$3
+metadata_path=$4
+
+for path in "$zip_path" "$appcast_path" "$checksum_path" "$metadata_path"; do
+    [[ -f $path ]] || {
+        echo "error: required artifact not found: $path" >&2
+        exit 66
+    }
+done
+
+expected_bundle_id='HamedElfayome.Claude-Usage'
+expected_feed='https://github.com/revenium/Claude-Usage-Tracker/releases/latest/download/appcast.xml'
+
+expected_sha=$(awk 'NR == 1 { print $1 }' "$checksum_path")
+actual_sha=$(shasum -a 256 "$zip_path" | awk '{ print $1 }')
+[[ $expected_sha =~ ^[0-9a-f]{64}$ ]] || {
+    echo 'error: checksum file does not begin with a valid SHA-256 value' >&2
+    exit 65
+}
+[[ $actual_sha == "$expected_sha" ]] || {
+    echo "error: ZIP checksum mismatch ($actual_sha != $expected_sha)" >&2
+    exit 65
+}
+
+work_dir=$(mktemp -d "${TMPDIR:-/tmp}/claude-usage-release-verify.XXXXXX")
+trap 'rm -rf "$work_dir"' EXIT
+ditto -x -k "$zip_path" "$work_dir/extracted"
+
+app_path="$work_dir/extracted/Claude Usage.app"
+info_plist="$app_path/Contents/Info.plist"
+[[ -d $app_path && -f $info_plist ]] || {
+    echo 'error: ZIP does not contain Claude Usage.app at its root' >&2
+    exit 65
+}
+
+if find "$work_dir/extracted" -mindepth 1 -maxdepth 1 ! -name 'Claude Usage.app' | grep -q .; then
+    echo 'error: ZIP contains files outside Claude Usage.app' >&2
+    exit 65
+fi
+
+plist_value() {
+    /usr/libexec/PlistBuddy -c "Print :$1" "$info_plist"
+}
+
+bundle_id=$(plist_value CFBundleIdentifier)
+version=$(plist_value CFBundleShortVersionString)
+build=$(plist_value CFBundleVersion)
+minimum_os=$(plist_value LSMinimumSystemVersion)
+feed_url=$(plist_value SUFeedURL)
+public_key=$(plist_value SUPublicEDKey)
+channel=$(plist_value ReveniumUpdateChannel)
+
+[[ $bundle_id == "$expected_bundle_id" ]] || {
+    echo "error: bundle identity changed: $bundle_id" >&2
+    exit 65
+}
+[[ $minimum_os == '14.0' ]] || {
+    echo "error: minimum macOS version changed: $minimum_os" >&2
+    exit 65
+}
+[[ $feed_url == "$expected_feed" ]] || {
+    echo "error: release feed is not the Revenium production feed: $feed_url" >&2
+    exit 65
+}
+[[ $channel == 'production' ]] || {
+    echo "error: release channel is not production: $channel" >&2
+    exit 65
+}
+
+printf '%s' "$public_key" | openssl base64 -d -A > "$work_dir/public-key.bin"
+[[ $(stat -f%z "$work_dir/public-key.bin") -eq 32 ]] || {
+    echo 'error: SUPublicEDKey is not a 32-byte Ed25519 public key' >&2
+    exit 65
+}
+
+executable="$app_path/Contents/MacOS/Claude Usage"
+architectures=$(lipo -archs "$executable")
+[[ " $architectures " == *' arm64 '* && " $architectures " == *' x86_64 '* ]] || {
+    echo "error: release executable is not universal: $architectures" >&2
+    exit 65
+}
+
+xpath_string() {
+    xmllint --xpath "string($1)" "$appcast_path"
+}
+
+appcast_version=$(xpath_string '//*[local-name()="item"]/*[local-name()="shortVersionString"]')
+appcast_build=$(xpath_string '//*[local-name()="item"]/*[local-name()="version"]')
+appcast_minimum_os=$(xpath_string '//*[local-name()="item"]/*[local-name()="minimumSystemVersion"]')
+enclosure_url=$(xpath_string '//*[local-name()="enclosure"]/@url')
+enclosure_length=$(xpath_string '//*[local-name()="enclosure"]/@length')
+signature=$(xpath_string '//*[local-name()="enclosure"]/@*[local-name()="edSignature"]')
+
+expected_download_url="https://github.com/revenium/Claude-Usage-Tracker/releases/download/v$version/Claude-Usage.zip"
+actual_length=$(stat -f%z "$zip_path")
+
+[[ $appcast_version == "$version" ]] || {
+    echo 'error: appcast marketing version does not match the app bundle' >&2
+    exit 65
+}
+[[ $appcast_build == "$build" ]] || {
+    echo 'error: appcast build does not match the app bundle' >&2
+    exit 65
+}
+[[ $appcast_minimum_os == "$minimum_os" ]] || {
+    echo 'error: appcast minimum OS does not match the app bundle' >&2
+    exit 65
+}
+[[ $enclosure_url == "$expected_download_url" ]] || {
+    echo "error: appcast enclosure URL is not commit/version-cohesive: $enclosure_url" >&2
+    exit 65
+}
+[[ $enclosure_length == "$actual_length" ]] || {
+    echo 'error: appcast enclosure length does not match the ZIP' >&2
+    exit 65
+}
+
+printf '%s' "$signature" | openssl base64 -d -A > "$work_dir/signature.bin"
+[[ $(stat -f%z "$work_dir/signature.bin") -eq 64 ]] || {
+    echo 'error: appcast does not contain a valid-length Ed25519 signature' >&2
+    exit 65
+}
+
+metadata_value() {
+    plutil -extract "$1" raw -o - "$metadata_path"
+}
+
+metadata_version=$(metadata_value version)
+metadata_build=$(metadata_value build)
+metadata_tag=$(metadata_value tag)
+metadata_bundle_id=$(metadata_value bundleIdentifier)
+metadata_minimum_os=$(metadata_value minimumSystemVersion)
+metadata_sha=$(metadata_value sha256)
+metadata_commit=$(metadata_value commit)
+metadata_url=$(metadata_value artifactURL)
+
+[[ $metadata_tag == "v$version" &&
+   $metadata_version == "$version" &&
+   $metadata_build == "$build" &&
+   $metadata_bundle_id == "$bundle_id" &&
+   $metadata_minimum_os == "$minimum_os" &&
+   $metadata_sha == "$actual_sha" &&
+   $metadata_url == "$expected_download_url" &&
+   $metadata_commit =~ ^[0-9a-f]{40}$ ]] || {
+    echo 'error: release metadata is not cohesive with the app, ZIP, or appcast' >&2
+    exit 65
+}
+
+codesign --verify --deep --strict --verbose=2 "$app_path"
+codesign -d --entitlements :- "$app_path" > "$work_dir/entitlements.plist" 2>/dev/null
+plutil -lint "$work_dir/entitlements.plist" >/dev/null
+
+for forbidden_entitlement in \
+    'com.apple.security.get-task-allow' \
+    'com.apple.security.cs.disable-library-validation'; do
+    if [[ $(plutil -extract "$forbidden_entitlement" raw -o - "$work_dir/entitlements.plist" 2>/dev/null || true) == 'true' ]]; then
+        echo "error: release contains forbidden entitlement: $forbidden_entitlement" >&2
+        exit 65
+    fi
+done
+
+signature_details=$(codesign -dvvv "$app_path" 2>&1)
+if $require_developer_id; then
+    rg -q '^Authority=Developer ID Application:' <<< "$signature_details" || {
+        echo 'error: app is not signed with a Developer ID Application certificate' >&2
+        exit 65
+    }
+    rg -q '^TeamIdentifier=[A-Z0-9]+$' <<< "$signature_details" || {
+        echo 'error: Developer ID signature is missing a team identifier' >&2
+        exit 65
+    }
+fi
+
+if $require_notarization; then
+    xcrun stapler validate "$app_path"
+    spctl --assess --type execute --verbose=4 "$app_path"
+fi
+
+echo "Release artifacts verified: v$version ($build), $architectures, $actual_sha"

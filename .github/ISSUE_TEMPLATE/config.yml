@@ -1,5 +1,5 @@
 blank_issues_enabled: true
 contact_links:
-  - name: Question or Discussion
-    url: https://github.com/hamed-elfayome/Claude-Usage-Tracker/discussions
-    about: For questions or general discussions, please use GitHub Discussions
+  - name: Revenium Support
+    url: https://revenium.io
+    about: For product support that is not a bug report or feature request.

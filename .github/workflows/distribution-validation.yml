@@ -1,0 +1,88 @@
+name: Distribution Validation
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/**'
+      - 'Claude Usage/Resources/Info.plist'
+      - 'Claude Usage/Claude UsageRelease.entitlements'
+      - 'Claude Usage.xcodeproj/project.pbxproj'
+      - 'Claude Usage/Shared/Services/UpdateManager.swift'
+      - 'Claude Usage/Shared/Services/GitHubService.swift'
+      - 'Claude Usage/Shared/Utilities/Constants.swift'
+      - 'Claude Usage/Views/FeedbackPromptView.swift'
+      - 'Claude Usage/Views/Settings/App/**'
+      - 'distribution/**'
+      - 'scripts/render_homebrew_cask.sh'
+      - 'scripts/validate_distribution.sh'
+      - 'scripts/validate_yaml_duplicates.rb'
+      - 'scripts/verify_release_artifacts.sh'
+      - 'README.md'
+      - 'RELEASING.md'
+      - 'SECURITY.md'
+      - 'CONTRIBUTING.md'
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/**'
+      - 'Claude Usage/Resources/Info.plist'
+      - 'Claude Usage/Claude UsageRelease.entitlements'
+      - 'Claude Usage.xcodeproj/project.pbxproj'
+      - 'Claude Usage/Shared/Services/UpdateManager.swift'
+      - 'Claude Usage/Shared/Services/GitHubService.swift'
+      - 'Claude Usage/Shared/Utilities/Constants.swift'
+      - 'Claude Usage/Views/FeedbackPromptView.swift'
+      - 'Claude Usage/Views/Settings/App/**'
+      - 'distribution/**'
+      - 'scripts/render_homebrew_cask.sh'
+      - 'scripts/validate_distribution.sh'
+      - 'scripts/validate_yaml_duplicates.rb'
+      - 'scripts/verify_release_artifacts.sh'
+      - 'README.md'
+      - 'RELEASING.md'
+      - 'SECURITY.md'
+      - 'CONTRIBUTING.md'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate release ownership and fail-closed configuration
+    runs-on: macos-15
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate distribution configuration
+        run: ./scripts/validate_distribution.sh
+
+      - name: Confirm local builds contain no production feed fallback
+        run: |
+          set -euo pipefail
+          for configuration in Debug Release; do
+            xcodebuild build \
+              -project 'Claude Usage.xcodeproj' \
+              -scheme 'Claude Usage' \
+              -configuration "$configuration" \
+              -derivedDataPath "build-$configuration" \
+              CODE_SIGN_IDENTITY='' \
+              CODE_SIGNING_REQUIRED=NO \
+              CODE_SIGNING_ALLOWED=NO
+
+            info="build-$configuration/Build/Products/$configuration/Claude Usage.app/Contents/Info.plist"
+            [[ $(defaults read "$PWD/$info" SUFeedURL) == '' ]]
+            [[ $(defaults read "$PWD/$info" SUPublicEDKey) == '' ]]
+            expected_channel=$(tr '[:upper:]' '[:lower:]' <<< "$configuration")
+            if [[ $configuration == Release ]]; then
+              expected_channel=production
+            else
+              expected_channel=development
+            fi
+            [[ $(defaults read "$PWD/$info" ReveniumUpdateChannel) == "$expected_channel" ]]
+          done

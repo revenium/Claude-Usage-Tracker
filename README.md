@@ -14,11 +14,10 @@
 
   <sub>🇬🇧 English • 🇪🇸 Español • 🇫🇷 Français • 🇩🇪 Deutsch • 🇮🇹 Italiano • 🇵🇹 Português • 🇯🇵 日本語 • 🇰🇷 한국어 • 🇨🇳 简体中文</sub>
 
-  ### [Download Latest Release (v3.0.3)](https://github.com/hamed-elfayome/Claude-Usage-Tracker/releases/latest/download/Claude-Usage.zip)
+  ### [Download Latest Release](https://github.com/revenium/Claude-Usage-Tracker/releases/latest/download/Claude-Usage.zip)
 
   <sub>macOS 14.0+ (Sonoma) | ~6 MB | Native Swift/SwiftUI | Officially Signed</sub>
 
-  <a href="https://www.buymeacoffee.com/hamedelfayome" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="40"></a>
 </div>
 
 ---
@@ -106,33 +105,33 @@ Before installing Claude Usage Tracker, ensure you have:
 #### Option 1: Homebrew (Recommended)
 
 ```bash
-brew install --cask hamed-elfayome/claude-usage/claude-usage-tracker
+brew install --cask revenium/tap/claude-usage
 ```
 
 Or tap first, then install:
 
 ```bash
-brew tap hamed-elfayome/claude-usage
-brew install --cask claude-usage-tracker
+brew tap revenium/tap
+brew install --cask claude-usage
 ```
 
 **Note**: Starting with v2.0.0, the app is officially signed with an Apple Developer certificate. No security workarounds needed!
 
 **To update**:
 ```bash
-brew upgrade --cask claude-usage-tracker
+brew upgrade --cask claude-usage
 ```
 
 Or use the built-in automatic update feature (Settings → Updates).
 
 **To uninstall**:
 ```bash
-brew uninstall --cask claude-usage-tracker
+brew uninstall --cask claude-usage
 ```
 
 #### Option 2: Direct Download
 
-**[Download Claude-Usage.zip](https://github.com/hamed-elfayome/Claude-Usage-Tracker/releases/latest/download/Claude-Usage.zip)**
+**[Download Claude-Usage.zip](https://github.com/revenium/Claude-Usage-Tracker/releases/latest/download/Claude-Usage.zip)**
 
 1. Download the `.zip` file from the link above
 2. Extract the zip file (double-click or use Archive Utility)
@@ -147,7 +146,7 @@ brew uninstall --cask claude-usage-tracker
 
 ```bash
 # Clone the repository
-git clone https://github.com/hamed-elfayome/Claude-Usage-Tracker.git
+git clone https://github.com/revenium/Claude-Usage-Tracker.git
 cd Claude-Usage-Tracker
 
 # Open in Xcode
@@ -808,7 +807,7 @@ If automatic updates aren't working:
 
 ## Contributors
 
-<img src="https://contrib.rocks/image?repo=hamed-elfayome/Claude-Usage-Tracker" alt="Contributors" height="30px" />
+<img src="https://contrib.rocks/image?repo=revenium/Claude-Usage-Tracker" alt="Contributors" height="30px" />
 
 This project is built for the community — everyone is welcome
 

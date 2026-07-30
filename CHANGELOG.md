@@ -5,6 +5,23 @@ All notable changes to Claude Usage Tracker will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Distribution
+
+- Moved active source, support, feedback, release, Sparkle, and Homebrew
+  ownership to Revenium while preserving the app name, bundle ID, preference
+  domain, Keychain compatibility, attribution, and macOS 14 minimum.
+- Replaced the inherited Pages update path with a fail-closed GitHub
+  Releases-hosted appcast. Debug and ordinary local Release builds contain no
+  production feed or signing key.
+- Added one credential-gated release unit covering tests, universal build,
+  Developer ID signing, notarization, stapling, Sparkle signing, checksum and
+  metadata cohesion, GitHub Release publication, and Revenium Homebrew cask
+  update.
+- Updated Sparkle to 2.9.4 and removed release-only library-validation and
+  non-sandboxed installer-service exceptions.
+
 ## [3.0.3] - 2026-03-10
 
 ### 6-Tier Pace System

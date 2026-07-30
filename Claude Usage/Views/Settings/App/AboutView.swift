@@ -10,6 +10,7 @@ import AppKit
 
 /// About page with app information and contributors
 struct AboutView: View {
+    @StateObject private var updateManager = UpdateManager.shared
     @State private var contributors: [Contributor] = []
     @State private var isLoadingContributors = false
     @State private var contributorsError: String?
@@ -43,7 +44,7 @@ struct AboutView: View {
 
                         // Check for Updates button
                         Button(action: {
-                            UpdateManager.shared.checkForUpdates()
+                            updateManager.checkForUpdates()
                         }) {
                             HStack(spacing: 4) {
                                 Image(systemName: "arrow.down.circle")
@@ -54,6 +55,7 @@ struct AboutView: View {
                             .foregroundColor(.blue)
                         }
                         .buttonStyle(.plain)
+                        .disabled(!updateManager.canCheckForUpdates)
                         .padding(.top, 4)
                     }
                 }
@@ -148,13 +150,13 @@ struct AboutView: View {
 
                     VStack(spacing: DesignTokens.Spacing.small) {
                         LinkButton(title: "about.star_github".localized, icon: "star.fill") {
-                            if let url = URL(string: "https://github.com/hamed-elfayome/Claude-Usage-Tracker") {
+                            if let url = URL(string: Constants.GitHub.repoURL) {
                                 NSWorkspace.shared.open(url)
                             }
                         }
 
                         LinkButton(title: "about.report_issue".localized, icon: "exclamationmark.triangle") {
-                            if let url = URL(string: "https://github.com/hamed-elfayome/Claude-Usage-Tracker/issues") {
+                            if let url = URL(string: Constants.GitHub.issuesURL) {
                                 NSWorkspace.shared.open(url)
                             }
                         }

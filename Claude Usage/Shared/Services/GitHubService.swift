@@ -21,14 +21,11 @@ struct Contributor: Codable, Identifiable {
 class GitHubService {
     static let shared = GitHubService()
 
-    private let repoOwner = "hamed-elfayome"
-    private let repoName = "Claude-Usage-Tracker"
-
     private init() {}
 
     /// Fetches contributors from the GitHub repository
     func fetchContributors() async throws -> [Contributor] {
-        let urlString = "https://api.github.com/repos/\(repoOwner)/\(repoName)/contributors"
+        let urlString = "https://api.github.com/repos/\(Constants.GitHub.owner)/\(Constants.GitHub.repo)/contributors"
 
         guard let url = URL(string: urlString) else {
             throw GitHubError.invalidURL

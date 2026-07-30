@@ -9,21 +9,6 @@
 
 import SwiftUI
 
-// ─────────────────────────────────────────────────────────────────────
-// IMPORTANT — Analytics-only endpoint (NO credentials involved)
-// ─────────────────────────────────────────────────────────────────────
-//
-// The URL below is a lightweight Cloudflare Worker that **only** records
-// anonymous, voluntary feedback submitted by the user.
-//
-// • It does NOT receive, store, or process any user credentials.
-// • It does NOT collect data automatically — only when the user clicks Submit.
-// • It is completely separate from the Claude AI / Anthropic APIs.
-//
-// Domain: claude-usage-tracker.hamedelfayome.workers.dev
-// ─────────────────────────────────────────────────────────────────────
-private let kFeedbackEndpoint = "https://claude-usage-tracker.hamedelfayome.workers.dev?type=improve"
-
 /// Role options for the feedback form
 enum FeedbackRole: String, CaseIterable {
     case developer = "Developer"
@@ -51,9 +36,7 @@ struct FeedbackPromptView: View {
     let onRemindLater: () -> Void
     let onDontAskAgain: () -> Void
 
-    @State private var name = ""
     @State private var selectedRole: FeedbackRole = .developer
-    @State private var email = ""
     @State private var message = ""
     @State private var isSubmitting = false
     @State private var showThanks = false
@@ -62,8 +45,7 @@ struct FeedbackPromptView: View {
     @State private var isHoveringRemind = false
 
     private var canSubmit: Bool {
-        !name.trimmingCharacters(in: .whitespaces).isEmpty &&
-        !email.trimmingCharacters(in: .whitespaces).isEmpty
+        !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var body: some View {
@@ -110,20 +92,6 @@ struct FeedbackPromptView: View {
 
             // Fields
             VStack(spacing: 10) {
-                // Name
-                TextField("feedback.name_placeholder".localized, text: $name)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 12))
-                    .padding(8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(Color(nsColor: .textBackgroundColor))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(Color.secondary.opacity(0.2), lineWidth: 0.5)
-                    )
-
                 // Role picker
                 HStack {
                     Text("feedback.title_label".localized)
@@ -147,20 +115,6 @@ struct FeedbackPromptView: View {
                     RoundedRectangle(cornerRadius: 6)
                         .stroke(Color.secondary.opacity(0.2), lineWidth: 0.5)
                 )
-
-                // Contact
-                TextField("feedback.contact_placeholder".localized, text: $email)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 12))
-                    .padding(8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(Color(nsColor: .textBackgroundColor))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(Color.secondary.opacity(0.2), lineWidth: 0.5)
-                    )
 
                 // Message
                 TextEditor(text: $message)
@@ -277,45 +231,41 @@ struct FeedbackPromptView: View {
         guard !isSubmitting else { return }
         isSubmitting = true
 
-        let payload: [String: String] = [
-            "name": name,
-            "role": selectedRole.rawValue,
-            "email": email,
-            "message": message
-        ]
-
-        Task {
-            do {
-                guard let url = URL(string: kFeedbackEndpoint) else { return }
-
-                var request = URLRequest(url: url)
-                request.httpMethod = "POST"
-                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                request.timeoutInterval = 15
-                request.httpBody = try JSONSerialization.data(withJSONObject: payload)
-
-                let (_, response) = try await URLSession.shared.data(for: request)
-
-                await MainActor.run {
-                    isSubmitting = false
-                    if let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            showThanks = true
-                        }
-                        onSubmit(name, selectedRole.rawValue, email, message)
-                    }
-                }
-            } catch {
-                await MainActor.run {
-                    isSubmitting = false
-                    // Still count as submitted to not annoy user
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        showThanks = true
-                    }
-                    onSubmit(name, selectedRole.rawValue, email, message)
-                }
-            }
+        guard let issueURL = feedbackIssueURL(),
+              NSWorkspace.shared.open(issueURL)
+        else {
+            isSubmitting = false
+            return
         }
+
+        isSubmitting = false
+        withAnimation(.easeInOut(duration: 0.2)) {
+            showThanks = true
+        }
+        onSubmit("", selectedRole.rawValue, "", message)
+    }
+
+    /// Opens a reviewable GitHub issue draft instead of sending form data to
+    /// a third-party collection service. The user remains in control of the
+    /// final public submission.
+    private func feedbackIssueURL() -> URL? {
+        guard var components = URLComponents(
+            string: Constants.GitHub.newFeedbackIssueURL
+        ) else {
+            return nil
+        }
+
+        let issueBody = """
+        Role: \(selectedRole.rawValue)
+
+        \(message)
+        """
+
+        components.queryItems = [
+            URLQueryItem(name: "title", value: "Desktop app feedback"),
+            URLQueryItem(name: "body", value: issueBody)
+        ]
+        return components.url
     }
 }
 

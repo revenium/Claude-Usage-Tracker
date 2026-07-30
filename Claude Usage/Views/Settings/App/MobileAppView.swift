@@ -9,27 +9,8 @@
 
 import SwiftUI
 
-// ─────────────────────────────────────────────────────────────────────
-// IMPORTANT — Analytics-only endpoint (NO credentials involved)
-// ─────────────────────────────────────────────────────────────────────
-//
-// The URL below is a lightweight Cloudflare Worker that **only** records
-// anonymous interest signals (a single POST with `?type=mobile`).
-//
-// • It does NOT receive, store, or process any user credentials.
-// • It does NOT receive any personally-identifiable information.
-// • It does NOT set cookies or return tracking identifiers.
-// • It is completely separate from the Claude AI / Anthropic APIs.
-//
-// Its sole purpose is to count how many users tap "Notify Me" so the
-// developer can gauge demand before investing in a mobile app.
-//
-// Domain: claude-usage-tracker.hamedelfayome.workers.dev
-// ─────────────────────────────────────────────────────────────────────
-private let kAnalyticsOnlyEndpoint = "https://claude-usage-tracker.hamedelfayome.workers.dev?type=mobile"
-
 /// Mobile app "coming soon" painted-door view.
-/// Collects interest via a single analytics-only POST request.
+/// Opens a reviewable feature-request draft in the Revenium repository.
 struct MobileAppView: View {
     @State private var hasNotified = UserDefaults.standard.bool(forKey: "mobileApp.notifyMe")
     @State private var isSubmitting = false
@@ -123,40 +104,35 @@ struct MobileAppView: View {
         }
     }
 
-    // MARK: - Analytics-only POST (no credentials, no PII)
-
-    /// Sends a single anonymous POST to the analytics-only endpoint.
-    /// See the comment at the top of this file for full details.
     private func submitInterest() {
         guard !isSubmitting, !hasNotified else { return }
         isSubmitting = true
 
-        Task {
-            do {
-                guard let url = URL(string: kAnalyticsOnlyEndpoint) else { return }
-
-                var request = URLRequest(url: url)
-                request.httpMethod = "POST"
-                request.timeoutInterval = 15
-
-                let (_, response) = try await URLSession.shared.data(for: request)
-
-                await MainActor.run {
-                    if let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) {
-                        hasNotified = true
-                        UserDefaults.standard.set(true, forKey: "mobileApp.notifyMe")
-                    } else {
-                        showError = true
-                    }
-                    isSubmitting = false
-                }
-            } catch {
-                await MainActor.run {
-                    showError = true
-                    isSubmitting = false
-                }
-            }
+        guard var components = URLComponents(
+            string: Constants.GitHub.newFeedbackIssueURL
+        ) else {
+            showError = true
+            isSubmitting = false
+            return
         }
+
+        components.queryItems = [
+            URLQueryItem(name: "title", value: "Interest in a mobile companion"),
+            URLQueryItem(
+                name: "body",
+                value: "I am interested in a mobile companion for Claude Usage Tracker."
+            )
+        ]
+
+        guard let url = components.url, NSWorkspace.shared.open(url) else {
+            showError = true
+            isSubmitting = false
+            return
+        }
+
+        hasNotified = true
+        UserDefaults.standard.set(true, forKey: "mobileApp.notifyMe")
+        isSubmitting = false
     }
 }
 

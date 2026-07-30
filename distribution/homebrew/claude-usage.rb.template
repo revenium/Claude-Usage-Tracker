@@ -1,0 +1,19 @@
+cask "claude-usage" do
+  version "__VERSION__"
+  sha256 "__SHA256__"
+
+  url "https://github.com/revenium/Claude-Usage-Tracker/releases/download/v#{version}/Claude-Usage.zip"
+  name "Claude Usage"
+  desc "Monitor Claude and Codex subscription usage from the menu bar"
+  homepage "https://github.com/revenium/Claude-Usage-Tracker"
+
+  livecheck do
+    url :url
+    strategy :github_latest
+  end
+
+  auto_updates true
+  depends_on macos: ">= :sonoma"
+
+  app "Claude Usage.app"
+end
