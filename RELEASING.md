@@ -48,8 +48,9 @@ maintainers and require the normal CI and distribution-validation checks on
 `main`.
 
 After the first release is proven, enable GitHub immutable releases so tags and
-assets cannot be changed after publication. The release workflow already
-refuses replacement.
+assets cannot be changed after publication. The release workflow refuses to
+replace a published or unowned release; it can safely replace only its own
+commit-provenance-marked draft after an interrupted attempt.
 
 ### 2. Create and back up a Revenium Sparkle key
 
@@ -252,8 +253,10 @@ The workflow performs, in order:
 7. Appcast generation and Ed25519 signature verification.
 8. Metadata, version, URL, length, checksum, architecture, bundle identity,
    entitlements, and notarization cohesion verification.
-9. Atomic GitHub Release publication.
-10. Revenium Homebrew cask audit and update.
+9. Provenance-owned draft creation, exact asset upload, remote re-download and
+   full cohesion verification, followed by publication.
+10. Revenium Homebrew cask audit and a single optimistic-SHA Contents API
+    update after the release commit is proven to be on `main`.
 
 ### 5. Independently verify the published unit
 

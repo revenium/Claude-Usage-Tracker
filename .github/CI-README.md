@@ -100,7 +100,10 @@ feed/key defaults.
 - `release-metadata.json` — tag, commit, version/build, identity, URL, and checksum
 
 The workflow does not use GitHub Pages, a personal release token, or a
-hard-coded Apple team/key. It refuses to replace an existing release.
+hard-coded Apple team/key. It publishes only after re-downloading and verifying
+its exact private draft asset set. An interrupted run may replace only its own
+commit-provenance-marked draft; published and unowned releases are immutable to
+the workflow.
 
 ### `generate-appcast.yml` — Published Appcast Verification
 
@@ -113,11 +116,13 @@ published artifacts.
 
 ### `update-homebrew-cask.yml` — Revenium Tap Update
 
-**Trigger:** Called by `release.yml`, or manual retry for a stable tag
+**Trigger:** Called only by a successful protected `release.yml` job; retry the
+failed reusable job from the original release run
 
 Creates/updates `Casks/claude-usage.rb` in `revenium/homebrew-tap` from the
-published artifact checksum, then runs Homebrew audit, fetch, and dry-run
-install checks before pushing.
+published artifact checksum. It verifies that release metadata names the exact
+merged tag commit, renders and audits before exposing the tap token, then uses
+one optimistic-SHA Contents API write. There is no manual tag-owned token path.
 
 ---
 

@@ -83,9 +83,31 @@ rg -q 'static let owner = "revenium"' "$constants" \
     || fail 'application repository owner is not Revenium'
 rg -q 'static let repo = "Claude-Usage-Tracker"' "$constants" \
     || fail 'application repository name is not Claude-Usage-Tracker'
-rg -q 'repository: revenium/homebrew-tap' \
+rg -q 'repos/revenium/homebrew-tap/contents/Casks/claude-usage\.rb' \
     '.github/workflows/update-homebrew-cask.yml' \
     || fail 'Homebrew workflow does not target the Revenium tap'
+homebrew_workflow='.github/workflows/update-homebrew-cask.yml'
+if rg -q 'workflow_dispatch' "$homebrew_workflow"; then
+    fail 'Homebrew tap token workflow must not have a manual tag-owned entry point'
+fi
+rg -q 'environment: release' "$homebrew_workflow" \
+    || fail 'Homebrew publication is not protected by the release environment'
+rg -q 'metadata_commit == "\$source_commit"' "$homebrew_workflow" \
+    || fail 'Homebrew publication does not bind metadata to the checked-out tag commit'
+rg -q 'merge-base --is-ancestor "\$source_commit" FETCH_HEAD' "$homebrew_workflow" \
+    || fail 'Homebrew publication does not require source containment in main'
+rg -q 'current_sha' "$homebrew_workflow" \
+    || fail 'Homebrew Contents API update lacks an optimistic blob-SHA guard'
+
+release_workflow='.github/workflows/release.yml'
+rg -q 'revenium-release-workflow:\$GITHUB_SHA' "$release_workflow" \
+    || fail 'release drafts do not carry exact-commit ownership provenance'
+rg -q -- '--draft' "$release_workflow" \
+    || fail 'release workflow does not create a private draft'
+rg -q 'verified-draft' "$release_workflow" \
+    || fail 'release workflow does not re-download its draft assets'
+rg -q -- '--draft=false' "$release_workflow" \
+    || fail 'release workflow does not explicitly publish the verified draft'
 
 distribution_workflows=(
     '.github/workflows/distribution-validation.yml'

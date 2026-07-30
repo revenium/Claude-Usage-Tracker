@@ -11,12 +11,6 @@ on:
       HOMEBREW_TAP_TOKEN:
         description: Fine-grained token with Contents write on revenium/homebrew-tap
         required: true
-  workflow_dispatch:
-    inputs:
-      release_tag:
-        description: Stable release tag to publish to Homebrew (vX.Y.Z)
-        required: true
-        type: string
 
 concurrency:
   group: homebrew-cask-${{ inputs.release_tag }}
@@ -30,6 +24,7 @@ jobs:
     name: Verify release and update Revenium tap
     runs-on: macos-15
     timeout-minutes: 20
+    environment: release
     env:
       RELEASE_TAG: ${{ inputs.release_tag }}
 
@@ -46,16 +41,9 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.release_tag }}
+          fetch-depth: 0
           path: source
           persist-credentials: false
-
-      - name: Checkout Revenium Homebrew tap
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: revenium/homebrew-tap
-          ref: main
-          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          path: homebrew-tap
 
       - name: Download and verify released artifact
         env:
@@ -74,15 +62,24 @@ jobs:
           actual_sha=$(shasum -a 256 release/Claude-Usage.zip | awk '{ print $1 }')
           metadata_sha=$(plutil -extract sha256 raw -o - release/release-metadata.json)
           metadata_tag=$(plutil -extract tag raw -o - release/release-metadata.json)
+          metadata_commit=$(plutil -extract commit raw -o - release/release-metadata.json)
           metadata_url=$(plutil -extract artifactURL raw -o - release/release-metadata.json)
           expected_url="https://github.com/revenium/Claude-Usage-Tracker/releases/download/$RELEASE_TAG/Claude-Usage.zip"
+          source_commit=$(git -C source rev-parse HEAD)
 
           [[ $actual_sha == "$expected_sha" && $actual_sha == "$metadata_sha" ]] || {
             echo 'Release ZIP, checksum, and metadata SHA-256 values do not match.' >&2
             exit 1
           }
-          [[ $metadata_tag == "$RELEASE_TAG" && $metadata_url == "$expected_url" ]] || {
-            echo 'Release metadata tag or URL is not cohesive.' >&2
+          [[ $metadata_tag == "$RELEASE_TAG" &&
+             $metadata_url == "$expected_url" &&
+             $metadata_commit == "$source_commit" ]] || {
+            echo 'Release metadata tag, commit, or URL is not cohesive.' >&2
+            exit 1
+          }
+          git -C source fetch --no-tags origin main
+          git -C source merge-base --is-ancestor "$source_commit" FETCH_HEAD || {
+            echo 'Release source is not contained in origin/main.' >&2
             exit 1
           }
 
@@ -95,8 +92,7 @@ jobs:
           ./source/scripts/render_homebrew_cask.sh \
             "$version" \
             "$RELEASE_SHA256" \
-            "$GITHUB_WORKSPACE/homebrew-tap/Casks/claude-usage.rb"
-          git -C homebrew-tap diff --check
+            "$RUNNER_TEMP/claude-usage.rb"
 
       - name: Audit cask and resolve release artifact
         run: |
@@ -104,28 +100,39 @@ jobs:
           brew tap revenium/tap
           audit_tap=$(brew --repository revenium/tap)
           mkdir -p "$audit_tap/Casks"
-          cp homebrew-tap/Casks/claude-usage.rb "$audit_tap/Casks/claude-usage.rb"
+          cp "$RUNNER_TEMP/claude-usage.rb" "$audit_tap/Casks/claude-usage.rb"
 
           brew audit --cask --strict revenium/tap/claude-usage
           brew fetch --cask --force revenium/tap/claude-usage
           brew install --cask --dry-run --require-sha revenium/tap/claude-usage
 
-      - name: Commit and push cask
-        working-directory: homebrew-tap
+      - name: Publish cask with an optimistic SHA guard
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
           set -euo pipefail
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add Casks/claude-usage.rb
+          endpoint='repos/revenium/homebrew-tap/contents/Casks/claude-usage.rb'
+          current=$(gh api "$endpoint?ref=main" 2>/dev/null || true)
+          current_sha=$(jq -r '.sha // empty' <<< "$current")
+          current_content=$(jq -r '.content // empty' <<< "$current" | tr -d '\n')
+          desired_content=$(base64 < "$RUNNER_TEMP/claude-usage.rb" | tr -d '\n')
 
-          if git diff --cached --quiet; then
+          if [[ -n $current_content && $current_content == "$desired_content" ]]; then
             echo 'Cask already matches this release.'
             exit 0
           fi
 
-          git diff --cached --check
-          git commit -m "Update claude-usage to $RELEASE_TAG"
-          git push origin HEAD:main
+          request=(
+            --method PUT
+            "$endpoint"
+            -f "message=Update claude-usage to $RELEASE_TAG"
+            -f "content=$desired_content"
+            -f 'branch=main'
+          )
+          if [[ -n $current_sha ]]; then
+            request+=(-f "sha=$current_sha")
+          fi
+          gh api "${request[@]}" --silent
 
       - name: Homebrew summary
         run: |

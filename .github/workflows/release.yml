@@ -365,26 +365,88 @@ jobs:
 
           echo "sha256=$sha256" >> "$GITHUB_OUTPUT"
 
-      - name: Publish cohesive GitHub Release
+      - name: Create or recover an owned draft release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            echo "Refusing to replace an existing release: $GITHUB_REF_NAME" >&2
-            exit 1
+          marker="<!-- revenium-release-workflow:$GITHUB_SHA -->"
+          {
+            cat release-notes.md
+            echo
+            echo "$marker"
+          } > release-notes-with-provenance.md
+
+          existing=$(gh release view "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json isDraft,tagName,body 2>/dev/null || true)
+          if [[ -n $existing ]]; then
+            existing_draft=$(jq -r '.isDraft' <<< "$existing")
+            existing_tag=$(jq -r '.tagName' <<< "$existing")
+            existing_body=$(jq -r '.body' <<< "$existing")
+            if [[ $existing_draft != true ||
+                  $existing_tag != "$GITHUB_REF_NAME" ||
+                  $existing_body != *"$marker"* ]]; then
+              echo "Refusing to replace an unowned or published release: $GITHUB_REF_NAME" >&2
+              exit 1
+            fi
+            gh release delete "$GITHUB_REF_NAME" \
+              --repo "$GITHUB_REPOSITORY" \
+              --yes
           fi
 
           gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --target "$GITHUB_SHA" \
+            --draft \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file release-notes-with-provenance.md
+
+      - name: Upload and remotely verify the complete draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release upload "$GITHUB_REF_NAME" \
             "release/$RELEASE_ASSET#Universal notarized macOS application" \
             "release/$RELEASE_ASSET.sha256#SHA-256 checksum" \
             'release/appcast.xml#Sparkle update feed' \
             'release/release-metadata.json#Release provenance metadata' \
+            --repo "$GITHUB_REPOSITORY"
+
+          asset_names=$(gh release view "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" \
-            --verify-tag \
-            --latest \
-            --title "$GITHUB_REF_NAME" \
-            --notes-file release-notes.md
+            --json isDraft,assets \
+            --jq 'select(.isDraft == true) | [.assets[].name] | sort | join("\n")')
+          expected_names=$'Claude-Usage.zip\nClaude-Usage.zip.sha256\nappcast.xml\nrelease-metadata.json'
+          [[ $asset_names == "$expected_names" ]] || {
+            echo 'Draft release does not contain the exact cohesive asset set.' >&2
+            exit 1
+          }
+
+          remote_dir="$RUNNER_TEMP/verified-draft"
+          mkdir -p "$remote_dir"
+          gh release download "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --dir "$remote_dir"
+          ./scripts/verify_release_artifacts.sh \
+            --require-developer-id \
+            --require-notarization \
+            "$remote_dir/$RELEASE_ASSET" \
+            "$remote_dir/appcast.xml" \
+            "$remote_dir/$RELEASE_ASSET.sha256" \
+            "$remote_dir/release-metadata.json"
+
+      - name: Publish the verified draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release edit "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --draft=false \
+            --latest
 
       - name: Clean signing material
         if: ${{ always() }}
