@@ -7,9 +7,9 @@
 - Umbrella: `PRODUCT-2276`
 - Tracking wave: W00 — complete
 - Current delivery batch: B03 — Provider core
-- Current phases: P05/P06/P07/P08 integrated and verified; P09 profile-keyed refresh/presentation orchestration in progress
-- Active implementation workers: P09 refresh engine; independent B03 semantic audit follows the frozen P09 commit
-- Next action: Complete and audit P09, then run the integrated B03 ship pipeline
+- Current phases: P05/P06/P07/P08/P09 integrated and locally verified
+- Active implementation workers: None; B03 is frozen at P09 commit `5f41158` for exact-hash audit and shipping
+- Next action: Complete the independent exact-hash audit, then run the integrated B03 ship pipeline
 
 ## Repository State at Initialization
 
@@ -45,7 +45,7 @@
 | W03A | UsageKit boundary | P05 | Implemented pending B03 ship |
 | W03B | Transport and profile model | P06, P07 | Implemented pending B03 ship |
 | W03C | Codex provider | P08 | Implemented pending B03 ship |
-| W03D | Refresh integration | P09 | In progress |
+| W03D | Refresh integration | P09 | Implemented pending B03 ship |
 | W04 | Provider-aware UI parity | P10, P11, P12 | Pending |
 | W05A | Cross-cutting parity and distribution | P13, P14, P16 | Pending |
 | W05B | Localization/accessibility/UI automation | P15 | Pending |
@@ -57,7 +57,7 @@
 |---|---|---|---|---|---|---|
 | B01 Baseline | `feature/codex-support-baseline` | [#7](https://github.com/revenium/Claude-Usage-Tracker/pull/7) | Success | Tessie clean + Greptile 5/5 | `29c7fe1` | Merged |
 | B02 Foundations | `feature/codex-support-foundations` | [#8](https://github.com/revenium/Claude-Usage-Tracker/pull/8) | Equivalent exact-head gate passed | All findings fixed; reviewer limits documented | `ab70776` | Merged |
-| B03 Provider core | `feature/codex-support-provider-core` | — | UsageKit 49/49 after integration | — | — | In progress |
+| B03 Provider core | `feature/codex-support-provider-core` | — | UsageKit 49/49; app 349/349; Debug + universal Release | Exact-hash audit pending | — | In progress |
 | B04 UI parity | `feature/codex-support-ui-parity` | — | — | — | — | Pending |
 | B05 Release readiness | `feature/codex-support-release-readiness` | — | — | — | — | Pending |
 
@@ -73,6 +73,7 @@
 | P06 | PRODUCT-2278 | codex_transport | `0647f4b` | Pending B03 | Pending merge | Bounded request/login-scoped app-server JSONL transport with callback-backed termination, reaping barrier, exact PID exit proof, and zero-orphan census |
 | P07 | PRODUCT-2286 | provider_profile_model | `6d07d6a` | Pending B03 | Pending merge | Strict provider-tagged profiles, canonical unique Codex homes, zero-profile provider choice, provider/revision CAS, fail-closed tombstones, verified migration, and transactional link/relink/unlink/delete recovery |
 | P08 | PRODUCT-2285 | codex_provider | `ea4c871` integrated head | Pending B03 | Pending merge | ChatGPT account/login/health/dynamic usage provider with one bounded refresh session, required-endpoint health, credit availability, UTC summaries, and process cleanup proof |
+| P09 | PRODUCT-2288 | refresh_engine | `5f41158` | Pending B03 | Pending merge | Profile-keyed provider registry/runtime, monotonic latest-wins actor, atomic durable component events, normalized presentation snapshots, terminal deletion/shutdown fences, bounded failures, and legacy Claude side-effect parity |
 
 ## Verification Evidence
 
@@ -110,6 +111,12 @@
 | 2026-07-30 | P07 full app suite | unsigned `xcodebuild test` at frozen `6d07d6a` | PASS | Independent xcresult summary: 269 passed, 0 failed, 0 skipped |
 | 2026-07-30 | P07 package/build gates | UsageKit package plus Debug and universal Release app builds | PASS | 49/49 package tests; both app configurations succeeded; diff check clean |
 | 2026-07-30 | P07 exact-hash semantic audit | provider identity, migration, Keychain isolation, rollback, tombstone lifecycle, and P09 handoff | PASS | Independent clean verdict on `6d07d6ac55e1512effd2eadef90dac89cb721321` |
+| 2026-07-30 | P09 refresh engine/runtime suite | serial `UsageRefreshEngineTests` | PASS | Frozen implementation: 76 passed, 0 failed, 0 skipped; covers arrival inversion, component ordering, cancellation quiescence, stale presentation, status ABA, deletion, and shutdown |
+| 2026-07-30 | B03 focused provider/menu/storage gate | refresh engine, registry, menu reliability, provider core, and current-usage integration suites | PASS | Independently rerun: 168 passed, 0 failed, 0 skipped before final race hardening; all affected regressions included again in the full final suite |
+| 2026-07-30 | B03 final full app suite | unsigned serial `xcodebuild test` at frozen P09 source | PASS | xcresult summary: 349 passed, 0 failed, 0 skipped |
+| 2026-07-30 | B03 package gates | `swift test` and `swift test -c release --package-path Packages/UsageKit` | PASS | 49 passed, 0 failed in each configuration; post-test fake app-server process census was empty |
+| 2026-07-30 | B03 app build gates | unsigned Debug, strict-concurrency diagnostic Debug, and universal Release | PASS | Debug executable built; universal executable contains `arm64` and `x86_64`; P09 files emit no strict-concurrency diagnostics |
+| 2026-07-30 | B03 safety scans | diff, credential pattern, `auth.json`, old refresh owner, and process scans | PASS | No whitespace or credential-pattern findings; production has zero `auth.json` references; old coordinator/executor references are absent |
 
 ## Blockers
 
@@ -149,3 +156,8 @@
 - Closed P07 review findings covering existing-v3 migration clobbering, stale revision reset, provider/Keychain boundary bypasses, durable-marker corruption, ordinary-save identity changes, deletion recovery ordering, and active-survivor transitions.
 - Independently verified frozen P07 at 269/269 full app tests, 49/49 package tests, both app builds, and a clean exact-hash semantic audit.
 - Started P09 profile-keyed provider refresh orchestration on the frozen P07 contract.
+- Completed P09 with one-running/one-latest-pending profile actors, parallel Claude core/API fetches with serialized component commits, Runtime-issued monotonic ordering, strict provider/revision/input fences, profile-keyed normalized presentation, and a production-disabled Codex gate.
+- Preserved Claude history, notifications, statusline, circuit recovery, manual feedback, and auto-switch semantics at their original single/multi-profile boundaries while removing the transitional refresh owners.
+- Closed final concurrency audits for actor/MainActor reentrancy, accepted-but-stale presentation, queued loading ownership, status A→B→A coalescing, deletion tombstones, terminal shutdown, child-process quiescence, and batch normalization.
+- Froze P09 at `5f41158167319b2e445b29139e62822786467166` after 76/76 engine tests, 349/349 full app tests, 49/49 package tests in Debug and Release, strict-concurrency diagnostics with no P09 warnings, and Debug/universal Release builds.
+- Prepared B04 dependency ownership: a short serialized bootstrap will expose the reusable fresh Codex provider factory and normalized profile snapshot projection before P10 setup/settings, P11 popover, and P12 menu/status/icon work proceed in parallel.
