@@ -89,14 +89,14 @@ struct SetupWizardView: View {
 
     /// Saves CLI credentials to the active profile and dismisses the wizard
     private func startTrackingWithCLI(credentials: String) {
-        guard let profileId = ProfileManager.shared.activeProfile?.id else {
+        guard var profile = ProfileManager.shared.activeProfile else {
             setupMode = .manualSetup
             return
         }
 
         do {
-            try ClaudeCodeSyncService.shared.syncToProfile(profileId)
-            NotificationCenter.default.post(name: .credentialsChanged, object: nil)
+            profile.cliCredentialsJSON = credentials
+            try ProfileManager.shared.updateProfileThrowing(profile)
             dismiss()
         } catch {
             LoggingService.shared.logError("Failed to sync CLI credentials: \(error)")
@@ -743,18 +743,19 @@ struct ConfirmStepSetup: View {
                 }
 
                 // Save to profile-specific Keychain using the refactored pattern
-                var creds = try ProfileStore.shared.loadProfileCredentials(profileId)
+                var creds = try ProfileManager.shared.loadCredentials(for: profileId)
                 creds.claudeSessionKey = wizardState.sessionKey
                 creds.organizationId = wizardState.selectedOrgId
-                try ProfileStore.shared.saveProfileCredentials(profileId, credentials: creds)
+                try ProfileManager.shared.saveCredentials(
+                    for: profileId,
+                    credentials: creds
+                )
 
-                // Also update the Profile model with the new credentials
+                // Save the remaining non-credential setup preference.
                 if var profile = ProfileManager.shared.activeProfile {
-                    profile.claudeSessionKey = wizardState.sessionKey
-                    profile.organizationId = wizardState.selectedOrgId
                     profile.autoStartSessionEnabled = wizardState.autoStartSessionEnabled
                     ProfileManager.shared.updateProfile(profile)
-                    LoggingService.shared.log("SetupWizard: Updated profile model with new credentials")
+                    LoggingService.shared.log("SetupWizard: Updated profile setup preferences")
                 }
 
                 // Update statusline scripts if installed
@@ -766,9 +767,6 @@ struct ConfirmStepSetup: View {
                 await MainActor.run {
                     // Reset circuit breaker on successful credential save
                     ErrorRecovery.shared.recordSuccess(for: .api)
-
-                    // Trigger immediate refresh of usage data
-                    NotificationCenter.default.post(name: .credentialsChanged, object: nil)
 
                     isSaving = false
                     dismiss()

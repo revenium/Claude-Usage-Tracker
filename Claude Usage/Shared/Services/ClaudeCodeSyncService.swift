@@ -14,8 +14,16 @@ class ClaudeCodeSyncService {
 
     /// Cached resolved keychain service name (cleared per app session)
     private var resolvedServiceName: String?
+    private let profileStore: ProfileStore
+    private let systemCredentialsReader: (() throws -> String?)?
 
-    private init() {}
+    init(
+        profileStore: ProfileStore = .shared,
+        systemCredentialsReader: (() throws -> String?)? = nil
+    ) {
+        self.profileStore = profileStore
+        self.systemCredentialsReader = systemCredentialsReader
+    }
 
     // MARK: - System Credentials Access (Fallback Chain)
 
@@ -24,6 +32,10 @@ class ClaudeCodeSyncService {
     /// 2. System Keychain (may be truncated for large payloads >2KB)
     /// 3. Regex extraction of accessToken from truncated keychain data (last resort)
     func readSystemCredentials() throws -> String? {
+        if let systemCredentialsReader {
+            return try systemCredentialsReader()
+        }
+
         // 1. Try credentials file first (most reliable)
         if let fileJSON = readCredentialsFile() {
             LoggingService.shared.log("Read credentials from .credentials.json file")
@@ -294,8 +306,14 @@ class ClaudeCodeSyncService {
             throw ClaudeCodeError.invalidJSON
         }
 
+        let previous = try profileStore
+            .loadProfileCredentials(profileId)
+            .cliCredentialsJSON
         // This explicit credential API performs a verified Keychain write.
-        try ProfileStore.shared.saveCLIProfileCredential(jsonData, for: profileId)
+        try profileStore.saveCLIProfileCredential(jsonData, for: profileId)
+        if previous != jsonData {
+            postCLIChange(profileID: profileId)
+        }
 
         LoggingService.shared.log("Synced CLI credentials to profile: \(profileId)")
     }
@@ -304,7 +322,7 @@ class ClaudeCodeSyncService {
     func applyProfileCredentials(_ profileId: UUID) throws {
         LoggingService.shared.log("🔄 Applying CLI credentials for profile: \(profileId)")
 
-        guard let jsonData = try ProfileStore.shared
+        guard let jsonData = try profileStore
             .loadProfileCredentials(profileId).cliCredentialsJSON else {
             LoggingService.shared.log("❌ No CLI credentials found for profile: \(profileId)")
             throw ClaudeCodeError.noProfileCredentials
@@ -318,7 +336,13 @@ class ClaudeCodeSyncService {
 
     /// Removes CLI credentials from profile (doesn't affect system)
     func removeFromProfile(_ profileId: UUID) throws {
-        try ProfileStore.shared.saveCLIProfileCredential(nil, for: profileId)
+        let previous = try profileStore
+            .loadProfileCredentials(profileId)
+            .cliCredentialsJSON
+        try profileStore.saveCLIProfileCredential(nil, for: profileId)
+        if previous != nil {
+            postCLIChange(profileID: profileId)
+        }
 
         LoggingService.shared.log("Removed CLI credentials from profile: \(profileId)")
     }
@@ -392,13 +416,30 @@ class ClaudeCodeSyncService {
             return
         }
 
-        try ProfileStore.shared.saveCLIProfileCredential(
+        let previous = try profileStore
+            .loadProfileCredentials(profileId)
+            .cliCredentialsJSON
+        try profileStore.saveCLIProfileCredential(
             freshJSON,
             for: profileId,
             syncedAt: Date()
         )
+        if previous != freshJSON {
+            postCLIChange(profileID: profileId)
+        }
 
         LoggingService.shared.log("✓ Re-synced CLI credentials from system and updated timestamp")
+    }
+
+    private func postCLIChange(profileID: UUID) {
+        NotificationCenter.default.post(
+            name: .credentialsChanged,
+            object: profileID,
+            userInfo: [
+                "profileID": profileID,
+                "component": "cli"
+            ]
+        )
     }
 }
 

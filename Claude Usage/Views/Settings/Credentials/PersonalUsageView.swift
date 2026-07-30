@@ -697,18 +697,13 @@ struct ConfirmStep: View {
         Task {
             do {
                 // Save to profile-specific Keychain
-                var creds = try ProfileStore.shared.loadProfileCredentials(profileId)
+                var creds = try ProfileManager.shared.loadCredentials(for: profileId)
                 creds.claudeSessionKey = wizardState.sessionKey
                 creds.organizationId = wizardState.selectedOrgId
-                try ProfileStore.shared.saveProfileCredentials(profileId, credentials: creds)
-
-                // Also update the Profile model with the new credentials
-                if var profile = ProfileManager.shared.activeProfile {
-                    profile.claudeSessionKey = wizardState.sessionKey
-                    profile.organizationId = wizardState.selectedOrgId
-                    ProfileManager.shared.updateProfile(profile)
-                    LoggingService.shared.log("PersonalUsageView: Updated profile model with new credentials")
-                }
+                try ProfileManager.shared.saveCredentials(
+                    for: profileId,
+                    credentials: creds
+                )
 
                 // Update statusline scripts if key or org changed (only if already installed)
                 let keyChanged = keyHasChanged()
@@ -720,11 +715,6 @@ struct ConfirmStep: View {
                 await MainActor.run {
                     // Reset circuit breaker on successful credential save
                     ErrorRecovery.shared.recordSuccess(for: .api)
-
-                    // Post single notification for credential change
-                    if keyChanged || orgChanged {
-                        NotificationCenter.default.post(name: .credentialsChanged, object: nil)
-                    }
 
                     // Reload credentials display
                     onSave()

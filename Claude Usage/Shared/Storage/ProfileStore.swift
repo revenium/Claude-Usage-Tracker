@@ -21,6 +21,9 @@ enum ProfileStoreError: Error, LocalizedError {
     case credentialReadUnresolved(ProfileSecretLocator)
     case credentialTransactionFailed(UUID, [ProfileSecretField])
     case credentialRollbackFailed(UUID, [ProfileSecretField], metadata: Bool)
+    case credentialUsageUnlinkFailed(UUID)
+    case credentialUsageUnlinkRollbackFailed(UUID, credentials: Bool, usage: Bool)
+    case credentialUsageUnlinkMarkerVerificationFailed
     case profileWriteVerificationFailed
     case profileRestoreVerificationFailed
 
@@ -41,6 +44,19 @@ enum ProfileStoreError: Error, LocalizedError {
                 : fieldNames
             return "Credential rollback is unresolved for profile \(profileID.uuidString.prefix(8)); "
                 + "secure fields: \(secureDescription), metadata: \(metadata ? "unresolved" : "restored")."
+        case .credentialUsageUnlinkFailed(let profileID):
+            return "Credential unlink failed safely for profile \(profileID.uuidString.prefix(8))."
+        case .credentialUsageUnlinkRollbackFailed(
+            let profileID,
+            let credentials,
+            let usage
+        ):
+            return "Credential unlink rollback is unresolved for profile "
+                + "\(profileID.uuidString.prefix(8)); credentials: "
+                + "\(credentials ? "unresolved" : "restored"), usage: "
+                + "\(usage ? "unresolved" : "restored")."
+        case .credentialUsageUnlinkMarkerVerificationFailed:
+            return "Credential unlink recovery state could not be verified."
         case .profileWriteVerificationFailed:
             return "The profile record could not be verified after writing."
         case .profileRestoreVerificationFailed:
@@ -66,6 +82,8 @@ class ProfileStore {
         static let activeProfileId = "activeProfileId"
         static let displayMode = "profileDisplayMode"
         static let multiProfileConfig = "multiProfileDisplayConfig"
+        static let pendingCredentialUsageUnlinks =
+            "profileCredentialUsageUnlinks_v1"
     }
 
     init(
@@ -95,6 +113,9 @@ class ProfileStore {
     }
 
     func saveProfilesThrowing(_ profiles: [Profile]) throws {
+        // A durable unlink marker is authoritative. Complete or surface its
+        // recovery before an ordinary save can replay a stored target retry.
+        try recoverPendingCredentialUsageUnlinks()
         let storedProfiles = try decodeStoredProfiles()
         let storedByID = Dictionary(uniqueKeysWithValues: storedProfiles.map { ($0.id, $0) })
         var prepared: [Profile] = []
@@ -120,9 +141,12 @@ class ProfileStore {
             // look like a first launch. The previous bytes were restored, so
             // return their backward-compatible decode and retry next load.
             do {
-                return try decodeStoredProfiles()
+                return try decodeStoredProfilesMaskingPendingUnlinks()
             } catch {
-                LoggingService.shared.logStorageError("decodeRestoredProfiles", error: error)
+                LoggingService.shared.logStorageError(
+                    "decodeMaskedRestoredProfiles",
+                    error: error
+                )
                 return []
             }
         }
@@ -131,6 +155,7 @@ class ProfileStore {
     /// Loads, hydrates, and verifies any per-field plaintext migration rewrite.
     /// Migration coordinators use the throwing form before marking completion.
     func loadProfilesWithVerifiedMigration() throws -> [Profile] {
+        try recoverPendingCredentialUsageUnlinks()
         var profiles = try decodeStoredProfiles()
         guard !profiles.isEmpty else {
             LoggingService.shared.log("ProfileStore: No profiles found in storage")
@@ -339,6 +364,51 @@ class ProfileStore {
         )
     }
 
+    /// Persists the complete incoming profile metadata and credential set as
+    /// one recoverable transaction. Runtime usage and internal migration state
+    /// remain owned by their dedicated stores.
+    func saveProfileUpdate(_ updatedProfile: Profile) throws {
+        var profiles = try loadProfilesWithVerifiedMigration()
+        guard let index = profiles.firstIndex(where: { $0.id == updatedProfile.id }) else {
+            throw ProfileStoreError.profileNotFound(updatedProfile.id)
+        }
+
+        var candidate = updatedProfile
+        candidate.credentialMigrationRetry = profiles[index].credentialMigrationRetry
+        candidate.currentUsageMigrationRetry = profiles[index].currentUsageMigrationRetry
+        candidate.deletionInProgress = profiles[index].deletionInProgress
+        let credentialMutations = [
+            SecretMutation(
+                field: .claudeSessionKey,
+                value: updatedProfile.claudeSessionKey
+            ),
+            SecretMutation(
+                field: .apiSessionKey,
+                value: updatedProfile.apiSessionKey
+            ),
+            SecretMutation(
+                field: .cliCredentialsJSON,
+                value: updatedProfile.cliCredentialsJSON
+            )
+        ]
+        // This API replaces the complete credential set. Clear stale retry
+        // values in the candidate that is committed only after all secure
+        // mutations succeed; transaction rollback retains the stored retries.
+        for mutation in credentialMutations {
+            candidate.credentialMigrationRetry.setValue(
+                nil,
+                for: mutation.field
+            )
+        }
+        profiles[index] = candidate
+
+        try performCredentialTransaction(
+            profileID: updatedProfile.id,
+            mutations: credentialMutations,
+            candidateProfiles: profiles
+        )
+    }
+
     func loadProfileCredentials(_ profileId: UUID) throws -> ProfileCredentials {
         let profiles = try loadProfilesWithVerifiedMigration()
         guard let profile = profiles.first(where: { $0.id == profileId }) else {
@@ -353,6 +423,40 @@ class ProfileStore {
             apiOrganizationId: profile.apiOrganizationId,
             apiSessionKeyExpiry: profile.apiSessionKeyExpiry,
             cliCredentialsJSON: profile.cliCredentialsJSON
+        )
+    }
+
+    /// Removes only the Claude.ai credential pair and its usage component.
+    /// A non-secret durable intent lets relaunch recovery finish coherently if
+    /// the immediate rollback path cannot restore the prior linked state.
+    func unlinkClaudeAI(for profileID: UUID) throws {
+        try performCredentialUsageUnlink(
+            profileID: profileID,
+            component: .claude,
+            updateCredentials: { credentials in
+                credentials.claudeSessionKey = nil
+                credentials.organizationId = nil
+            },
+            clearUsage: { usage in
+                usage.claudeUsage = nil
+            }
+        )
+    }
+
+    /// Removes only the API Console credential pair and its usage component.
+    /// The same verified rollback contract as Claude.ai unlink applies.
+    func unlinkAPIConsole(for profileID: UUID) throws {
+        try performCredentialUsageUnlink(
+            profileID: profileID,
+            component: .api,
+            updateCredentials: { credentials in
+                credentials.apiSessionKey = nil
+                credentials.apiOrganizationId = nil
+                credentials.apiSessionKeyExpiry = nil
+            },
+            clearUsage: { usage in
+                usage.apiUsage = nil
+            }
         )
     }
 
@@ -393,6 +497,13 @@ class ProfileStore {
         candidate.credentialMigrationRetry = profiles[index].credentialMigrationRetry
         candidate.currentUsageMigrationRetry = profiles[index].currentUsageMigrationRetry
         candidate.deletionInProgress = profiles[index].deletionInProgress
+        // The explicit CLI mutation supersedes only its stale retry value.
+        // This candidate is committed after the secure write succeeds, while
+        // transaction rollback retains the previously persisted envelope.
+        candidate.credentialMigrationRetry.setValue(
+            nil,
+            for: .cliCredentialsJSON
+        )
         profiles[index] = candidate
 
         try performCredentialTransaction(
@@ -496,6 +607,53 @@ class ProfileStore {
             return []
         }
         return try JSONDecoder().decode([Profile].self, from: data)
+    }
+
+    /// A pending unlink remains authoritative even when its recovery write
+    /// fails. Return a fail-closed runtime projection without changing either
+    /// the stored retry material or durable marker needed by a later recovery.
+    private func decodeStoredProfilesMaskingPendingUnlinks() throws
+        -> [Profile] {
+        var profiles = try decodeStoredProfiles()
+
+        for marker in try loadPendingCredentialUsageUnlinks() {
+            guard let index = profiles.firstIndex(where: {
+                $0.id == marker.profileID
+            }) else {
+                continue
+            }
+            let field: ProfileSecretField =
+                marker.component == .claude
+                    ? .claudeSessionKey
+                    : .apiSessionKey
+            profiles[index].setSecretValue(nil, for: field)
+            profiles[index].credentialMigrationRetry.setValue(
+                nil,
+                for: field
+            )
+
+            if marker.component == .claude {
+                profiles[index].organizationId = nil
+                profiles[index].claudeUsage = nil
+            } else {
+                profiles[index].apiOrganizationId = nil
+                profiles[index].apiSessionKeyExpiry = nil
+                profiles[index].apiUsage = nil
+            }
+
+            if var usageRetry =
+                profiles[index].currentUsageMigrationRetry {
+                if marker.component == .claude {
+                    usageRetry.claudeUsage = nil
+                } else {
+                    usageRetry.apiUsage = nil
+                }
+                profiles[index].currentUsageMigrationRetry =
+                    usageRetry.isEmpty ? nil : usageRetry
+            }
+        }
+
+        return profiles
     }
 
     private func prepareForOrdinarySave(_ profile: Profile, stored: Profile?) throws -> Profile {
@@ -702,6 +860,263 @@ class ProfileStore {
         }
     }
 
+    private func performCredentialUsageUnlink(
+        profileID: UUID,
+        component: PendingCredentialUsageUnlink.Component,
+        updateCredentials: (inout ProfileCredentials) -> Void,
+        clearUsage: (inout ProfileCurrentUsage) -> Void
+    ) throws {
+        let targetField: ProfileSecretField =
+            component == .claude ? .claudeSessionKey : .apiSessionKey
+        let previousCredentials = try loadProfileCredentials(profileID)
+        let previousUsage = try loadCurrentUsageResolvingMigration(for: profileID)
+        var unlinkedCredentials = previousCredentials
+        updateCredentials(&unlinkedCredentials)
+        var profiles = try loadProfilesWithVerifiedMigration()
+        guard let index = profiles.firstIndex(where: { $0.id == profileID }) else {
+            throw ProfileStoreError.profileNotFound(profileID)
+        }
+        if component == .claude {
+            profiles[index].claudeSessionKey =
+                unlinkedCredentials.claudeSessionKey
+            profiles[index].organizationId =
+                unlinkedCredentials.organizationId
+        } else {
+            profiles[index].apiSessionKey =
+                unlinkedCredentials.apiSessionKey
+            profiles[index].apiOrganizationId =
+                unlinkedCredentials.apiOrganizationId
+            profiles[index].apiSessionKeyExpiry =
+                unlinkedCredentials.apiSessionKeyExpiry
+        }
+        profiles[index].credentialMigrationRetry.setValue(
+            nil,
+            for: targetField
+        )
+        let marker = PendingCredentialUsageUnlink(
+            profileID: profileID,
+            component: component
+        )
+        try persistPendingCredentialUsageUnlink(marker)
+
+        do {
+            _ = try usageFileStore.updateCurrentUsage(for: profileID) { usage in
+                clearUsage(&usage)
+            }
+            unresolvedUsageProfileIDs.remove(profileID)
+            try performCredentialTransaction(
+                profileID: profileID,
+                mutations: component == .claude
+                    ? [
+                        SecretMutation(
+                            field: .claudeSessionKey,
+                            value: unlinkedCredentials.claudeSessionKey
+                        )
+                    ]
+                    : [
+                        SecretMutation(
+                            field: .apiSessionKey,
+                            value: unlinkedCredentials.apiSessionKey
+                        )
+                    ],
+                candidateProfiles: profiles
+            )
+            try removePendingCredentialUsageUnlink(for: profileID)
+        } catch {
+            do {
+                let resolution = try recoverPendingCredentialUsageUnlink(
+                    marker,
+                    rollbackCredentials: previousCredentials,
+                    rollbackUsage: previousUsage
+                )
+                if resolution == .unlinked {
+                    // The original rollback was not possible, but recovery
+                    // completed the unlink coherently and durably.
+                    return
+                }
+            } catch {
+                throw ProfileStoreError.credentialUsageUnlinkRollbackFailed(
+                    profileID,
+                    credentials: true,
+                    usage: true
+                )
+            }
+            throw ProfileStoreError.credentialUsageUnlinkFailed(profileID)
+        }
+    }
+
+    private func recoverPendingCredentialUsageUnlinks() throws {
+        for marker in try loadPendingCredentialUsageUnlinks() {
+            _ = try recoverPendingCredentialUsageUnlink(
+                marker,
+                rollbackCredentials: nil,
+                rollbackUsage: nil
+            )
+        }
+    }
+
+    private func recoverPendingCredentialUsageUnlink(
+        _ marker: PendingCredentialUsageUnlink,
+        rollbackCredentials: ProfileCredentials?,
+        rollbackUsage: ProfileCurrentUsage?
+    ) throws -> CredentialUsageUnlinkResolution {
+        let field: ProfileSecretField =
+            marker.component == .claude ? .claudeSessionKey : .apiSessionKey
+        let locator = ProfileSecretLocator(
+            profileID: marker.profileID,
+            field: field
+        )
+        let secretState: ProfileSecretReadResult
+        do {
+            secretState = try secretStore.read(locator)
+            credentialBaselines[locator] = secretState
+            unresolvedLocators.remove(locator)
+        } catch {
+            credentialBaselines.removeValue(forKey: locator)
+            unresolvedLocators.insert(locator)
+            throw ProfileStoreError.credentialReadUnresolved(locator)
+        }
+
+        var profiles = try decodeStoredProfiles()
+        guard let index = profiles.firstIndex(where: {
+            $0.id == marker.profileID
+        }) else {
+            throw ProfileStoreError.profileNotFound(marker.profileID)
+        }
+        let resolution: CredentialUsageUnlinkResolution
+
+        if case .value(let value) = secretState,
+           let rollbackCredentials,
+           let rollbackUsage {
+            profiles[index].setSecretValue(value, for: field)
+            if marker.component == .claude {
+                profiles[index].organizationId =
+                    rollbackCredentials.organizationId
+            } else {
+                profiles[index].apiOrganizationId =
+                    rollbackCredentials.apiOrganizationId
+                profiles[index].apiSessionKeyExpiry =
+                    rollbackCredentials.apiSessionKeyExpiry
+            }
+            try usageFileStore.saveCurrentUsage(
+                rollbackUsage,
+                for: marker.profileID
+            )
+            resolution = .linked
+        } else {
+            // A persisted marker is explicit user unlink intent. If the
+            // in-process prior-state snapshot is unavailable (relaunch), or
+            // secure rollback already left the field absent, complete forward.
+            if case .value = secretState {
+                try replaceSecret(
+                    nil,
+                    field: field,
+                    profileID: marker.profileID
+                )
+            }
+            profiles[index].setSecretValue(nil, for: field)
+            if marker.component == .claude {
+                profiles[index].organizationId = nil
+            } else {
+                profiles[index].apiOrganizationId = nil
+                profiles[index].apiSessionKeyExpiry = nil
+            }
+            // Forward completion is authoritative for this component. Remove
+            // only its retry plaintext so the loader cannot replay the
+            // unlinked secret; unrelated recovery envelopes remain intact.
+            profiles[index].credentialMigrationRetry.setValue(
+                nil,
+                for: field
+            )
+            if var usageRetry =
+                profiles[index].currentUsageMigrationRetry {
+                if marker.component == .claude {
+                    usageRetry.claudeUsage = nil
+                } else {
+                    usageRetry.apiUsage = nil
+                }
+                profiles[index].currentUsageMigrationRetry =
+                    usageRetry.isEmpty ? nil : usageRetry
+            }
+            var usage = try usageFileStore.loadCurrentUsage(
+                for: marker.profileID
+            ) ?? ProfileCurrentUsage()
+            if marker.component == .claude {
+                usage.claudeUsage = nil
+            } else {
+                usage.apiUsage = nil
+            }
+            try usageFileStore.saveCurrentUsage(
+                usage,
+                for: marker.profileID
+            )
+            resolution = .unlinked
+        }
+
+        try persistProfiles(profiles)
+        unresolvedUsageProfileIDs.remove(marker.profileID)
+        try removePendingCredentialUsageUnlink(for: marker.profileID)
+        return resolution
+    }
+
+    private func loadPendingCredentialUsageUnlinks() throws
+        -> [PendingCredentialUsageUnlink] {
+        guard let data = defaults.data(
+            forKey: Keys.pendingCredentialUsageUnlinks
+        ) else {
+            return []
+        }
+        return try JSONDecoder().decode(
+            [PendingCredentialUsageUnlink].self,
+            from: data
+        )
+    }
+
+    private func persistPendingCredentialUsageUnlink(
+        _ marker: PendingCredentialUsageUnlink
+    ) throws {
+        var markers = try loadPendingCredentialUsageUnlinks()
+        markers.removeAll { $0.profileID == marker.profileID }
+        markers.append(marker)
+        try persistPendingCredentialUsageUnlinks(markers)
+    }
+
+    private func removePendingCredentialUsageUnlink(
+        for profileID: UUID
+    ) throws {
+        var markers = try loadPendingCredentialUsageUnlinks()
+        markers.removeAll { $0.profileID == profileID }
+        try persistPendingCredentialUsageUnlinks(markers)
+    }
+
+    private func persistPendingCredentialUsageUnlinks(
+        _ markers: [PendingCredentialUsageUnlink]
+    ) throws {
+        let data = try JSONEncoder().encode(markers)
+        if markers.isEmpty {
+            defaults.removeObject(
+                forKey: Keys.pendingCredentialUsageUnlinks
+            )
+            guard defaults.data(
+                forKey: Keys.pendingCredentialUsageUnlinks
+            ) == nil else {
+                throw ProfileStoreError
+                    .credentialUsageUnlinkMarkerVerificationFailed
+            }
+        } else {
+            defaults.set(
+                data,
+                forKey: Keys.pendingCredentialUsageUnlinks
+            )
+            guard defaults.data(
+                forKey: Keys.pendingCredentialUsageUnlinks
+            ) == data else {
+                throw ProfileStoreError
+                    .credentialUsageUnlinkMarkerVerificationFailed
+            }
+        }
+    }
+
     private func restoreSecret(
         _ state: ProfileSecretReadResult,
         at locator: ProfileSecretLocator
@@ -758,6 +1173,21 @@ class ProfileStore {
 private struct SecretMutation {
     let field: ProfileSecretField
     let value: String?
+}
+
+private struct PendingCredentialUsageUnlink: Codable {
+    enum Component: String, Codable {
+        case claude
+        case api
+    }
+
+    let profileID: UUID
+    let component: Component
+}
+
+private enum CredentialUsageUnlinkResolution {
+    case linked
+    case unlinked
 }
 
 private extension ProfileSecretReadResult {

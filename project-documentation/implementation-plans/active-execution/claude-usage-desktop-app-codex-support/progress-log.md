@@ -44,7 +44,7 @@
 | W02 | Safety foundations | P02, P03, P04 | Implemented pending B02 ship |
 | W03A | UsageKit boundary | P05 | Implemented pending B03 ship |
 | W03B | Transport and profile model | P06, P07 | P06 implemented; P07 pending |
-| W03C | Codex provider | P08 | Pending |
+| W03C | Codex provider | P08 | In progress |
 | W03D | Refresh integration | P09 | Pending |
 | W04 | Provider-aware UI parity | P10, P11, P12 | Pending |
 | W05A | Cross-cutting parity and distribution | P13, P14, P16 | Pending |

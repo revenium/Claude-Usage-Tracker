@@ -179,7 +179,10 @@ final class AutoStartSessionService {
 
         // Save usage to profile
         await MainActor.run {
-            profileManager.saveClaudeUsage(usage, for: profile.id)
+            _ = profileManager.saveClaudeUsage(
+                usage,
+                for: profile.id
+            )
         }
 
         return usage

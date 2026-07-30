@@ -682,20 +682,14 @@ struct APIConfirmStep: View {
         Task {
             do {
                 // Save to profile-specific Keychain
-                var creds = try ProfileStore.shared.loadProfileCredentials(profileId)
+                var creds = try ProfileManager.shared.loadCredentials(for: profileId)
                 creds.apiSessionKey = wizardState.apiSessionKey
                 creds.apiOrganizationId = wizardState.selectedOrgId
                 creds.apiSessionKeyExpiry = wizardState.sessionKeyExpiryDate
-                try ProfileStore.shared.saveProfileCredentials(profileId, credentials: creds)
-
-                // Also update the Profile model with the new credentials
-                if var profile = ProfileManager.shared.activeProfile {
-                    profile.apiSessionKey = wizardState.apiSessionKey
-                    profile.apiOrganizationId = wizardState.selectedOrgId
-                    profile.apiSessionKeyExpiry = wizardState.sessionKeyExpiryDate
-                    ProfileManager.shared.updateProfile(profile)
-                    LoggingService.shared.log("APIBillingView: Updated profile model with new credentials")
-                }
+                try ProfileManager.shared.saveCredentials(
+                    for: profileId,
+                    credentials: creds
+                )
 
                 // Schedule expiry notification if we have an expiry date
                 if let expiryDate = wizardState.sessionKeyExpiryDate {
@@ -705,14 +699,6 @@ struct APIConfirmStep: View {
                 await MainActor.run {
                     // Reset circuit breaker on successful credential save
                     ErrorRecovery.shared.recordSuccess(for: .api)
-
-                    // Determine which notification to send
-                    let keyChanged = apiKeyHasChanged()
-                    let orgChanged = wizardState.selectedOrgId != wizardState.originalOrgId
-                    if keyChanged || orgChanged {
-                        // Post notification to trigger refresh only if credentials actually changed
-                        NotificationCenter.default.post(name: .credentialsChanged, object: nil)
-                    }
 
                     // Reload credentials display
                     onSave()

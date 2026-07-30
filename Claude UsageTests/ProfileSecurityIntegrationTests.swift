@@ -1,13 +1,7 @@
 import XCTest
 @testable import Claude_Usage
 
-final class ProfileSecurityIntegrationTests: XCTestCase {
-    // The app target uses main-actor default isolation. On the current macOS
-    // XCTest runtime, releasing injected actor-isolated app services from the
-    // Objective-C test thunk triggers a runtime allocator bug. Production uses
-    // process-lifetime singletons; mirror that lifetime for injected services.
-    private static var processLifetimeServices: [AnyObject] = []
-
+final class ProfileSecurityIntegrationTests: HostedAppTestCase {
     private var defaults: UserDefaults!
     private var suiteName: String!
 
@@ -216,6 +210,197 @@ final class ProfileSecurityIntegrationTests: XCTestCase {
         XCTAssertFalse(try persistedProfileText().contains("FIRST_API_FIXTURE"))
     }
 
+    @MainActor
+    func testCredentialAndMetadataUpdatePersistsCompleteIncomingProfile() throws {
+        let profileID = UUID()
+        let secrets = MockProfileSecretStore()
+        let store = retain(ProfileStore(defaults: defaults, secretStore: secrets))
+        let original = Profile(
+            id: profileID,
+            name: "Before",
+            claudeSessionKey: "OLD_CLAUDE",
+            organizationId: "old-org",
+            refreshInterval: 30,
+            autoStartSessionEnabled: false
+        )
+        try store.saveProfilesThrowing([original])
+        secrets.values[locator(profileID, .claudeSessionKey)] = "OLD_CLAUDE"
+        let manager = retain(ProfileManager(profileStore: store))
+        manager.profiles = [original]
+        manager.activeProfile = original
+        var updated = original
+        updated.name = "After"
+        updated.claudeSessionKey = "NEW_CLAUDE"
+        updated.organizationId = "new-org"
+        updated.refreshInterval = 75
+        updated.autoStartSessionEnabled = true
+
+        try manager.updateProfileThrowing(updated)
+
+        let relaunchedStore = retain(
+            ProfileStore(defaults: defaults, secretStore: secrets)
+        )
+        let reloaded = try XCTUnwrap(
+            relaunchedStore.loadProfiles().first(where: { $0.id == profileID })
+        )
+        XCTAssertEqual(reloaded.name, "After")
+        XCTAssertEqual(reloaded.claudeSessionKey, "NEW_CLAUDE")
+        XCTAssertEqual(reloaded.organizationId, "new-org")
+        XCTAssertEqual(reloaded.refreshInterval, 75)
+        XCTAssertTrue(reloaded.autoStartSessionEnabled)
+        XCTAssertFalse(try persistedProfileText().contains("NEW_CLAUDE"))
+    }
+
+    @MainActor
+    func testCompleteProfileUpdateSupersedesStaleCredentialRetry() throws {
+        let profileID = UUID()
+        var retry = ProfileCredentialMigrationRetry()
+        retry.setValue("OLD_RETRY", for: .claudeSessionKey)
+        defaults.set(
+            try JSONEncoder().encode([
+                Profile(
+                    id: profileID,
+                    name: "Before",
+                    organizationId: "old-org",
+                    credentialMigrationRetry: retry
+                )
+            ]),
+            forKey: "profiles_v3"
+        )
+        let secrets = MockProfileSecretStore()
+        // The initial retry replay fails once. The explicit complete-set
+        // transaction that follows must make NEW authoritative.
+        secrets.writeErrorCounts[.claudeSessionKey] = 1
+        let store = retain(
+            ProfileStore(
+                defaults: defaults,
+                secretStore: secrets
+            )
+        )
+        try store.saveProfileUpdate(
+            Profile(
+                id: profileID,
+                name: "After",
+                claudeSessionKey: "NEW_EXPLICIT",
+                organizationId: "new-org"
+            )
+        )
+
+        XCTAssertEqual(
+            secrets.values[
+                locator(profileID, .claudeSessionKey)
+            ],
+            "NEW_EXPLICIT"
+        )
+        let relaunched = retain(
+            ProfileStore(
+                defaults: defaults,
+                secretStore: secrets
+            )
+        )
+        let reloaded = try XCTUnwrap(
+            relaunched.loadProfilesWithVerifiedMigration().first
+        )
+
+        XCTAssertEqual(reloaded.claudeSessionKey, "NEW_EXPLICIT")
+        XCTAssertEqual(reloaded.organizationId, "new-org")
+        let persisted = try persistedProfileText()
+        XCTAssertFalse(persisted.contains("OLD_RETRY"))
+        XCTAssertFalse(persisted.contains("NEW_EXPLICIT"))
+        XCTAssertFalse(persisted.contains("credentialMigrationRetry"))
+    }
+
+    @MainActor
+    func testCLIProfileUpdateSupersedesOnlyStaleCLIRetry() throws {
+        let profileID = UUID()
+        var retry = ProfileCredentialMigrationRetry()
+        retry.setValue("OLD_CLI_RETRY", for: .cliCredentialsJSON)
+        retry.setValue(
+            "UNRELATED_CLAUDE_RETRY",
+            for: .claudeSessionKey
+        )
+        retry.setValue(
+            "UNRELATED_API_RETRY",
+            for: .apiSessionKey
+        )
+        defaults.set(
+            try JSONEncoder().encode([
+                Profile(
+                    id: profileID,
+                    name: "CLI retry",
+                    credentialMigrationRetry: retry
+                )
+            ]),
+            forKey: "profiles_v3"
+        )
+        let secrets = MockProfileSecretStore()
+        secrets.writeErrors[.claudeSessionKey] = TestError.expected
+        secrets.writeErrors[.apiSessionKey] = TestError.expected
+        // The old CLI retry replay fails once. The explicit NEW transaction
+        // then succeeds and must remove only the stale CLI retry.
+        secrets.writeErrorCounts[.cliCredentialsJSON] = 1
+        let store = retain(
+            ProfileStore(
+                defaults: defaults,
+                secretStore: secrets
+            )
+        )
+
+        try store.saveCLIProfileUpdate(
+            Profile(
+                id: profileID,
+                name: "CLI updated",
+                cliCredentialsJSON: "NEW_CLI_EXPLICIT"
+            )
+        )
+
+        XCTAssertEqual(
+            secrets.values[
+                locator(profileID, .cliCredentialsJSON)
+            ],
+            "NEW_CLI_EXPLICIT"
+        )
+        let persistedAfterUpdate = try persistedProfileText()
+        XCTAssertFalse(persistedAfterUpdate.contains("OLD_CLI_RETRY"))
+        XCTAssertFalse(
+            persistedAfterUpdate.contains("NEW_CLI_EXPLICIT")
+        )
+        XCTAssertTrue(
+            persistedAfterUpdate.contains(
+                "UNRELATED_CLAUDE_RETRY"
+            )
+        )
+        XCTAssertTrue(
+            persistedAfterUpdate.contains("UNRELATED_API_RETRY")
+        )
+
+        let relaunched = retain(
+            ProfileStore(
+                defaults: defaults,
+                secretStore: secrets
+            )
+        )
+        let reloaded = try XCTUnwrap(
+            relaunched.loadProfilesWithVerifiedMigration().first
+        )
+
+        XCTAssertEqual(
+            reloaded.cliCredentialsJSON,
+            "NEW_CLI_EXPLICIT"
+        )
+        XCTAssertEqual(
+            reloaded.credentialMigrationRetry.claudeSessionKey,
+            "UNRELATED_CLAUDE_RETRY"
+        )
+        XCTAssertEqual(
+            reloaded.credentialMigrationRetry.apiSessionKey,
+            "UNRELATED_API_RETRY"
+        )
+        XCTAssertNil(
+            reloaded.credentialMigrationRetry.cliCredentialsJSON
+        )
+    }
+
     func testCredentialReplacementRollsBackSecondAndThirdFieldFailures() throws {
         for failedField in [ProfileSecretField.apiSessionKey, .cliCredentialsJSON] {
             defaults.removePersistentDomain(forName: suiteName)
@@ -376,8 +561,11 @@ final class ProfileSecurityIntegrationTests: XCTestCase {
         updated.cliCredentialsJSON = "NEW_CLI"
         updated.cliAccountSyncedAt = Date(timeIntervalSinceReferenceDate: 52)
 
-        XCTAssertThrowsError(try manager.updateProfileThrowing(updated))
+        let notifications = try credentialChanges {
+            XCTAssertThrowsError(try manager.updateProfileThrowing(updated))
+        }
 
+        XCTAssertTrue(notifications.isEmpty)
         XCTAssertEqual(
             secrets.values[locator(profileID, .cliCredentialsJSON)],
             "OLD_CLI"
@@ -409,8 +597,11 @@ final class ProfileSecurityIntegrationTests: XCTestCase {
         updated.hasCliAccount = false
         updated.cliAccountName = nil
 
-        XCTAssertThrowsError(try manager.updateProfileThrowing(updated))
+        let notifications = try credentialChanges {
+            XCTAssertThrowsError(try manager.updateProfileThrowing(updated))
+        }
 
+        XCTAssertTrue(notifications.isEmpty)
         XCTAssertEqual(
             secrets.values[locator(profileID, .cliCredentialsJSON)],
             "OLD_CLI"
@@ -446,6 +637,337 @@ final class ProfileSecurityIntegrationTests: XCTestCase {
     }
 
     @MainActor
+    func testProfileManagerInvalidatesEveryChangedRequestInputExactlyOnce() throws {
+        let profileID = UUID()
+        let secrets = MockProfileSecretStore()
+        let store = retain(ProfileStore(defaults: defaults, secretStore: secrets))
+        let original = Profile(
+            id: profileID,
+            name: "Requests",
+            claudeSessionKey: "CLAUDE",
+            organizationId: "claude-org",
+            apiSessionKey: "API",
+            apiOrganizationId: "api-org",
+            cliCredentialsJSON: nil,
+            checkOverageLimitEnabled: true
+        )
+        try store.saveProfilesThrowing([original])
+        secrets.values[locator(profileID, .claudeSessionKey)] = "CLAUDE"
+        secrets.values[locator(profileID, .apiSessionKey)] = "API"
+        let manager = retain(ProfileManager(profileStore: store))
+        manager.profiles = [original]
+        manager.activeProfile = original
+
+        XCTAssertEqual(
+            try credentialChanges {
+                manager.updateOrganizationId("new-claude-org", for: profileID)
+            },
+            [expectedCredentialChange(profileID, component: "claude")]
+        )
+        XCTAssertEqual(
+            try credentialChanges {
+                manager.updateCheckOverageLimitEnabled(false, for: profileID)
+            },
+            [expectedCredentialChange(profileID, component: "claude")]
+        )
+        XCTAssertEqual(
+            try credentialChanges {
+                manager.updateAPIOrganizationId("new-api-org", for: profileID)
+            },
+            [expectedCredentialChange(profileID, component: "api")]
+        )
+
+        var linked = try XCTUnwrap(manager.activeProfile)
+        linked.cliCredentialsJSON = "CLI"
+        XCTAssertEqual(
+            try credentialChanges {
+                try manager.updateProfileThrowing(linked)
+            },
+            [expectedCredentialChange(profileID, component: "cli")]
+        )
+        var unlinked = try XCTUnwrap(manager.activeProfile)
+        unlinked.cliCredentialsJSON = nil
+        XCTAssertEqual(
+            try credentialChanges {
+                try manager.updateProfileThrowing(unlinked)
+            },
+            [expectedCredentialChange(profileID, component: "cli")]
+        )
+
+        var metadataOnly = try XCTUnwrap(manager.activeProfile)
+        metadataOnly.name = "Metadata only"
+        XCTAssertTrue(
+            try credentialChanges {
+                try manager.updateProfileThrowing(metadataOnly)
+            }.isEmpty
+        )
+    }
+
+    @MainActor
+    func testFailedOrganizationAndOverageMutationsDoNotInvalidate() throws {
+        let backing = FaultingProfileDefaults()
+        let profileID = UUID()
+        let store = retain(
+            ProfileStore(
+                defaults: backing,
+                secretStore: MockProfileSecretStore()
+            )
+        )
+        let original = Profile(
+            id: profileID,
+            name: "Request settings",
+            organizationId: "old-org",
+            checkOverageLimitEnabled: true
+        )
+        try store.saveProfilesThrowing([original])
+        let manager = retain(ProfileManager(profileStore: store))
+        manager.profiles = [original]
+        manager.activeProfile = original
+
+        backing.corruptNextProfileWrite = true
+        XCTAssertTrue(
+            try credentialChanges {
+                manager.updateOrganizationId("new-org", for: profileID)
+            }.isEmpty
+        )
+        XCTAssertEqual(manager.activeProfile?.organizationId, "old-org")
+
+        backing.corruptNextProfileWrite = true
+        XCTAssertTrue(
+            try credentialChanges {
+                manager.updateCheckOverageLimitEnabled(false, for: profileID)
+            }.isEmpty
+        )
+        XCTAssertTrue(manager.activeProfile?.checkOverageLimitEnabled == true)
+    }
+
+    @MainActor
+    func testCompleteCredentialSaveInvalidatesAllOnceAndFailureDoesNotInvalidate()
+        throws {
+        let profileID = UUID()
+        let secrets = MockProfileSecretStore()
+        let store = retain(ProfileStore(defaults: defaults, secretStore: secrets))
+        let original = Profile(
+            id: profileID,
+            name: "Complete set",
+            claudeSessionKey: "OLD_CLAUDE",
+            organizationId: "old-claude-org",
+            apiSessionKey: "OLD_API",
+            apiOrganizationId: "old-api-org",
+            cliCredentialsJSON: "OLD_CLI"
+        )
+        try store.saveProfilesThrowing([original])
+        for field in ProfileSecretField.allCases {
+            secrets.values[locator(profileID, field)] = "OLD_\(field.rawValue)"
+        }
+        let manager = retain(ProfileManager(profileStore: store))
+        manager.profiles = [original]
+        manager.activeProfile = original
+        let replacement = ProfileCredentials(
+            claudeSessionKey: "NEW_CLAUDE",
+            organizationId: "new-claude-org",
+            apiSessionKey: "NEW_API",
+            apiOrganizationId: "new-api-org",
+            apiSessionKeyExpiry: Date(timeIntervalSinceReferenceDate: 80),
+            cliCredentialsJSON: "NEW_CLI"
+        )
+
+        XCTAssertEqual(
+            try credentialChanges {
+                try manager.saveCredentials(
+                    for: profileID,
+                    credentials: replacement
+                )
+            },
+            [expectedCredentialChange(profileID, component: "all")]
+        )
+
+        var expiryOnly = replacement
+        expiryOnly.apiSessionKeyExpiry =
+            Date(timeIntervalSinceReferenceDate: 81)
+        XCTAssertTrue(
+            try credentialChanges {
+                try manager.saveCredentials(
+                    for: profileID,
+                    credentials: expiryOnly
+                )
+            }.isEmpty
+        )
+
+        var failedReplacement = expiryOnly
+        failedReplacement.claudeSessionKey = "FAILED_CLAUDE"
+        failedReplacement.apiSessionKey = "FAILED_API"
+        secrets.writeErrors[.apiSessionKey] = TestError.expected
+        XCTAssertTrue(
+            try credentialChanges {
+                XCTAssertThrowsError(
+                    try manager.saveCredentials(
+                        for: profileID,
+                        credentials: failedReplacement
+                    )
+                )
+            }.isEmpty
+        )
+        XCTAssertEqual(manager.activeProfile?.claudeSessionKey, "NEW_CLAUDE")
+        XCTAssertEqual(manager.activeProfile?.apiSessionKey, "NEW_API")
+    }
+
+    @MainActor
+    func testDirectCLISyncWritersInvalidateOnlyChangedSuccessfulMutations() throws {
+        let profileID = UUID()
+        let secrets = MockProfileSecretStore()
+        let store = retain(ProfileStore(defaults: defaults, secretStore: secrets))
+        try store.saveProfilesThrowing([
+            Profile(id: profileID, name: "Direct CLI")
+        ])
+        var systemCredentials =
+            #"{"claudeAiOauth":{"accessToken":"FIRST"}}"#
+        let service = retain(
+            ClaudeCodeSyncService(
+                profileStore: store,
+                systemCredentialsReader: { systemCredentials }
+            )
+        )
+
+        XCTAssertEqual(
+            try credentialChanges {
+                try service.syncToProfile(profileID)
+            },
+            [expectedCredentialChange(profileID, component: "cli")]
+        )
+        XCTAssertTrue(
+            try credentialChanges {
+                try service.syncToProfile(profileID)
+            }.isEmpty
+        )
+
+        systemCredentials =
+            #"{"claudeAiOauth":{"accessToken":"SECOND"}}"#
+        XCTAssertEqual(
+            try credentialChanges {
+                try service.resyncBeforeSwitching(for: profileID)
+            },
+            [expectedCredentialChange(profileID, component: "cli")]
+        )
+        XCTAssertEqual(
+            try credentialChanges {
+                try service.removeFromProfile(profileID)
+            },
+            [expectedCredentialChange(profileID, component: "cli")]
+        )
+        XCTAssertTrue(
+            try credentialChanges {
+                try service.removeFromProfile(profileID)
+            }.isEmpty
+        )
+    }
+
+    @MainActor
+    func testFailedDirectCLISyncAndRemovalDoNotInvalidate() throws {
+        let profileID = UUID()
+        let secrets = MockProfileSecretStore()
+        let store = retain(ProfileStore(defaults: defaults, secretStore: secrets))
+        try store.saveProfilesThrowing([
+            Profile(id: profileID, name: "Direct CLI")
+        ])
+        let service = retain(
+            ClaudeCodeSyncService(
+                profileStore: store,
+                systemCredentialsReader: {
+                    #"{"claudeAiOauth":{"accessToken":"SYNC"}}"#
+                }
+            )
+        )
+
+        secrets.readErrors[.cliCredentialsJSON] = TestError.expected
+        XCTAssertTrue(
+            try credentialChanges {
+                XCTAssertThrowsError(try service.syncToProfile(profileID))
+            }.isEmpty
+        )
+        XCTAssertNil(secrets.values[locator(profileID, .cliCredentialsJSON)])
+        XCTAssertFalse(
+            secrets.deleted.contains(
+                locator(profileID, .cliCredentialsJSON)
+            )
+        )
+        secrets.readErrors.removeAll()
+
+        secrets.writeErrors[.cliCredentialsJSON] = TestError.expected
+        XCTAssertTrue(
+            try credentialChanges {
+                XCTAssertThrowsError(try service.syncToProfile(profileID))
+            }.isEmpty
+        )
+        secrets.writeErrors.removeAll()
+        try service.syncToProfile(profileID)
+
+        let deletionsBeforeReadFailure = secrets.deleted
+        secrets.readErrors[.cliCredentialsJSON] = TestError.expected
+        XCTAssertTrue(
+            try credentialChanges {
+                XCTAssertThrowsError(try service.removeFromProfile(profileID))
+            }.isEmpty
+        )
+        XCTAssertEqual(
+            secrets.values[locator(profileID, .cliCredentialsJSON)],
+            #"{"claudeAiOauth":{"accessToken":"SYNC"}}"#
+        )
+        XCTAssertEqual(secrets.deleted, deletionsBeforeReadFailure)
+        secrets.readErrors.removeAll()
+
+        secrets.deleteErrors[.cliCredentialsJSON] = TestError.expected
+        XCTAssertTrue(
+            try credentialChanges {
+                XCTAssertThrowsError(try service.removeFromProfile(profileID))
+            }.isEmpty
+        )
+    }
+
+    @MainActor
+    func testSessionKeyReplacementClearsOrganizationAndInvalidatesExactlyOnce()
+        throws {
+        let profileID = UUID()
+        let secrets = MockProfileSecretStore()
+        let store = retain(ProfileStore(defaults: defaults, secretStore: secrets))
+        let original = Profile(
+            id: profileID,
+            name: "Claude",
+            claudeSessionKey: "sk-ant-sid01-existing-session-key-value",
+            organizationId: "existing-org"
+        )
+        try store.saveProfilesThrowing([original])
+        secrets.values[locator(profileID, .claudeSessionKey)] =
+            "sk-ant-sid01-existing-session-key-value"
+        let manager = retain(ProfileManager(profileStore: store))
+        manager.profiles = [original]
+        manager.activeProfile = original
+        let service = retain(ClaudeAPIService(profileManager: manager))
+
+        XCTAssertEqual(
+            try credentialChanges {
+                try service.saveSessionKey(
+                    "sk-ant-sid01-replacement-session-key-value"
+                )
+            },
+            [expectedCredentialChange(profileID, component: "all")]
+        )
+        XCTAssertEqual(
+            manager.activeProfile?.claudeSessionKey,
+            "sk-ant-sid01-replacement-session-key-value"
+        )
+        XCTAssertNil(manager.activeProfile?.organizationId)
+        let reloaded = try XCTUnwrap(
+            store.loadProfiles().first(where: { $0.id == profileID })
+        )
+        XCTAssertEqual(
+            reloaded.claudeSessionKey,
+            "sk-ant-sid01-replacement-session-key-value"
+        )
+        XCTAssertNil(reloaded.organizationId)
+    }
+
+    @MainActor
     func testSessionKeyReplacementPropagatesCredentialReadFailure() throws {
         let profileID = UUID()
         let secrets = MockProfileSecretStore()
@@ -471,11 +993,15 @@ final class ProfileSecurityIntegrationTests: XCTestCase {
         manager.activeProfile = loaded.first
         let service = retain(ClaudeAPIService(profileManager: manager))
 
-        XCTAssertThrowsError(
-            try service.saveSessionKey(
-                "sk-ant-sid01-replacement-session-key-value"
+        let notifications = try credentialChanges {
+            XCTAssertThrowsError(
+                try service.saveSessionKey(
+                    "sk-ant-sid01-replacement-session-key-value"
+                )
             )
-        )
+        }
+
+        XCTAssertTrue(notifications.isEmpty)
 
         XCTAssertEqual(
             secrets.values[locator(profileID, .claudeSessionKey)],
@@ -665,9 +1191,62 @@ final class ProfileSecurityIntegrationTests: XCTestCase {
         ProfileSecretLocator(profileID: id, field: field)
     }
 
-    private func retain<T: AnyObject>(_ service: T) -> T {
-        Self.processLifetimeServices.append(service)
-        return service
+    private func credentialChanges(
+        during operation: () throws -> Void
+    ) throws -> [SecurityCredentialChangeRecord] {
+        let recorder = SecurityCredentialChangeRecorder()
+        let observer = NotificationCenter.default.addObserver(
+            forName: .credentialsChanged,
+            object: nil,
+            queue: nil
+        ) { notification in
+            recorder.record(notification)
+        }
+        defer {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        try operation()
+        return recorder.snapshot()
+    }
+
+    private func expectedCredentialChange(
+        _ profileID: UUID,
+        component: String
+    ) -> SecurityCredentialChangeRecord {
+        SecurityCredentialChangeRecord(
+            objectProfileID: profileID,
+            userInfoProfileID: profileID,
+            component: component
+        )
+    }
+
+}
+
+private struct SecurityCredentialChangeRecord: Equatable {
+    let objectProfileID: UUID?
+    let userInfoProfileID: UUID?
+    let component: String?
+}
+
+private final class SecurityCredentialChangeRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var records: [SecurityCredentialChangeRecord] = []
+
+    func record(_ notification: Notification) {
+        let record = SecurityCredentialChangeRecord(
+            objectProfileID: notification.object as? UUID,
+            userInfoProfileID: notification.userInfo?["profileID"] as? UUID,
+            component: notification.userInfo?["component"] as? String
+        )
+        lock.lock()
+        records.append(record)
+        lock.unlock()
+    }
+
+    func snapshot() -> [SecurityCredentialChangeRecord] {
+        lock.lock()
+        defer { lock.unlock() }
+        return records
     }
 }
 
@@ -730,32 +1309,6 @@ private final class MockLegacyCredentialSource: LegacyCredentialSource {
             throw cleanupError
         }
         cleaned = true
-    }
-}
-
-private final class FaultingProfileDefaults: ProfileDefaultsStore {
-    var storage: [String: Any] = [:]
-    var corruptNextProfileWrite = false
-
-    func data(forKey defaultName: String) -> Data? {
-        storage[defaultName] as? Data
-    }
-
-    func string(forKey defaultName: String) -> String? {
-        storage[defaultName] as? String
-    }
-
-    func set(_ value: Any?, forKey defaultName: String) {
-        if corruptNextProfileWrite, defaultName == "profiles_v3" {
-            corruptNextProfileWrite = false
-            storage[defaultName] = Data("corrupt".utf8)
-        } else {
-            storage[defaultName] = value
-        }
-    }
-
-    func removeObject(forKey defaultName: String) {
-        storage.removeValue(forKey: defaultName)
     }
 }
 
