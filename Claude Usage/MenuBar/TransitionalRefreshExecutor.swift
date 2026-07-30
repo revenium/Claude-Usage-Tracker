@@ -419,6 +419,8 @@ extension MenuBarManager {
                 (TransitionalRefreshExecutor.Plan, ClaudeUsage) -> Void
             let notify:
                 (TransitionalRefreshExecutor.Plan, ClaudeUsage) -> Void
+            let isAutoSwitchPresentationCurrent:
+                (TransitionalRefreshExecutor.Plan) -> Bool
             let autoSwitch:
                 (TransitionalRefreshExecutor.Plan, ClaudeUsage) -> Void
             let recordAPI: (TransitionalRefreshExecutor.Plan, APIUsage) -> Void
@@ -475,6 +477,9 @@ extension MenuBarManager {
             guard case .single = plan.mode else { return }
             hooks.writeStatusline(plan, usage)
             hooks.notify(plan, usage)
+            guard hooks.isAutoSwitchPresentationCurrent(plan) else {
+                return
+            }
             hooks.autoSwitch(plan, usage)
         }
 

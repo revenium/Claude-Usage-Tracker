@@ -313,6 +313,67 @@ final class MenuReliabilityTests: HostedAppTestCase {
         XCTAssertEqual(recorder.loading, [true, false])
     }
 
+    func testProductionSinkSuppressesAAutoSwitchWhenActiveProfileIsBAtCompletion()
+        async throws {
+        let profileA = makeRefreshProfile(
+            name: "A",
+            includeAPI: false
+        )
+        let profileB = makeRefreshProfile(
+            name: "B",
+            includeAPI: false
+        )
+        let presentationIdentity =
+            TransitionalRefreshExecutor.PresentationIdentity(
+                profileID: profileA.id,
+                generation: 3
+            )
+        var activeProfileID = profileA.id
+        let service = retain(
+            ClaudeAPIService(systemCredentialsReader: { nil })
+        )
+        let plan = TransitionalRefreshExecutor.Plan.capture(
+            profile: profileA,
+            mode: .single,
+            presentationGeneration: 3,
+            apiService: service
+        )
+        let started = expectation(description: "A started")
+        let delayed = Deferred<ClaudeUsage>()
+        let recorder = RefreshRecorder()
+        let executor = makeRefreshExecutor(
+            activeIdentity: { presentationIdentity },
+            recorder: recorder,
+            isAutoSwitchPresentationCurrent: { plan in
+                MenuBarManager.autoSwitchProfile(
+                    for: plan,
+                    profiles: [profileA, profileB],
+                    activeProfileID: activeProfileID,
+                    presentationIdentity: presentationIdentity
+                ) != nil
+            },
+            fetchClaude: { _ in
+                started.fulfill()
+                return await delayed.wait()
+            },
+            fetchAPI: { _ in self.makeAPIUsage(0) }
+        )
+
+        let task = executor.start(plan)
+        await fulfillment(of: [started], timeout: 1)
+        activeProfileID = profileB.id
+        delayed.resolve(makeClaudeUsage(100))
+        await task.value
+
+        XCTAssertEqual(recorder.presentations, ["claude:A"])
+        XCTAssertTrue(
+            recorder.sideEffects.contains("notification:A")
+        )
+        XCTAssertFalse(
+            recorder.sideEffects.contains("auto-switch:A")
+        )
+    }
+
     func testExecutorRejectsStalePresentationAfterAToBToA()
         async throws {
         let profileA = makeRefreshProfile(
@@ -1369,6 +1430,10 @@ final class MenuReliabilityTests: HostedAppTestCase {
                 TransitionalRefreshExecutor.PresentationIdentity?,
         recorder: RefreshRecorder,
         isProfileWritable: @escaping (UUID) -> Bool = { _ in true },
+        isAutoSwitchPresentationCurrent:
+            @escaping (TransitionalRefreshExecutor.Plan) -> Bool = {
+                _ in true
+            },
         acceptClaudeSave: @escaping (UUID) -> Bool = { _ in true },
         acceptAPISave: @escaping (UUID) -> Bool = { _ in true },
         fetchClaude:
@@ -1425,6 +1490,8 @@ final class MenuReliabilityTests: HostedAppTestCase {
                             "notification:\(plan.profileName)"
                         )
                     },
+                    isAutoSwitchPresentationCurrent:
+                        isAutoSwitchPresentationCurrent,
                     autoSwitch: { plan, _ in
                         recorder.sideEffects.append(
                             "auto-switch:\(plan.profileName)"

@@ -89,15 +89,35 @@ class MenuBarManager: NSObject, ObservableObject {
             notify: { [weak self] plan, usage in
                 self?.notifyForRefresh(plan: plan, usage: usage)
             },
-            autoSwitch: { [weak self] _, usage in
+            isAutoSwitchPresentationCurrent: { [weak self] plan in
+                guard let self else { return false }
+                return Self.autoSwitchProfile(
+                    for: plan,
+                    profiles: self.profileManager.profiles,
+                    activeProfileID:
+                        self.profileManager.activeProfile?.id,
+                    presentationIdentity:
+                        self.currentRefreshPresentationIdentity
+                ) != nil
+            },
+            autoSwitch: { [weak self] plan, usage in
                 guard let self,
-                      let currentProfile =
-                        self.profileManager.activeProfile else {
+                      let capturedProfile =
+                        Self.autoSwitchProfile(
+                            for: plan,
+                            profiles: self.profileManager.profiles,
+                            activeProfileID:
+                                self.profileManager.activeProfile?.id,
+                            presentationIdentity:
+                                self.currentRefreshPresentationIdentity
+                        ) else {
                     return
                 }
                 self.checkAutoSwitchIfNeeded(
                     usage: usage,
-                    currentProfile: currentProfile
+                    currentProfile: capturedProfile,
+                    expectedPresentationIdentity:
+                        plan.presentationIdentity
                 )
             },
             recordAPI: { [weak self] plan, usage in
@@ -1398,6 +1418,20 @@ class MenuBarManager: NSObject, ObservableObject {
         }
     }
 
+    static func autoSwitchProfile(
+        for plan: TransitionalRefreshExecutor.Plan,
+        profiles: [Profile],
+        activeProfileID: UUID?,
+        presentationIdentity:
+            TransitionalRefreshExecutor.PresentationIdentity?
+    ) -> Profile? {
+        guard activeProfileID == plan.profileID,
+              presentationIdentity == plan.presentationIdentity else {
+            return nil
+        }
+        return profiles.first { $0.id == plan.profileID }
+    }
+
     private func isRefreshProfileWritable(_ profileID: UUID) -> Bool {
         profileManager.profiles.contains {
             $0.id == profileID && !$0.deletionInProgress
@@ -1622,7 +1656,9 @@ class MenuBarManager: NSObject, ObservableObject {
             }
             checkAutoSwitchIfNeeded(
                 usage: activeUsage,
-                currentProfile: activeProfile
+                currentProfile: activeProfile,
+                expectedPresentationIdentity:
+                    activeOutcome.plan.presentationIdentity
             )
         }
     }
@@ -1635,7 +1671,19 @@ class MenuBarManager: NSObject, ObservableObject {
     // MARK: - Auto-Switch Profile on Session Limit
 
     /// Checks if the current profile hit 100% and switches to the next available one
-    private func checkAutoSwitchIfNeeded(usage: ClaudeUsage, currentProfile: Profile) {
+    private func checkAutoSwitchIfNeeded(
+        usage: ClaudeUsage,
+        currentProfile: Profile,
+        expectedPresentationIdentity:
+            TransitionalRefreshExecutor.PresentationIdentity
+    ) {
+        guard currentRefreshPresentationIdentity
+                == expectedPresentationIdentity,
+              currentProfile.id
+                == expectedPresentationIdentity.profileID else {
+            return
+        }
+
         // Guard: feature must be enabled
         guard SharedDataStore.shared.loadAutoSwitchProfileEnabled() else { return }
 
@@ -1671,7 +1719,13 @@ class MenuBarManager: NSObject, ObservableObject {
         // Activate the next profile
         let fromName = currentProfile.name
         let toName = nextProfile.name
-        Task {
+        Task { @MainActor [weak self] in
+            guard let self,
+                  self.currentRefreshPresentationIdentity
+                    == expectedPresentationIdentity else {
+                self?.autoSwitchedProfileIds.remove(profileId)
+                return
+            }
             await profileManager.activateProfile(nextProfile.id)
 
             await MainActor.run {
