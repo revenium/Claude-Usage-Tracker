@@ -118,7 +118,10 @@ final class ProfileCurrentUsageIntegrationTests: HostedAppTestCase {
         let usageFiles = MockCurrentUsageFileStore()
         usageFiles.values[profileID] = existing
         let setupStore = retain(makeStore(usageFiles: usageFiles))
-        try setupStore.saveProfilesThrowing([Profile(id: profileID, name: "Before")])
+        try seedProfilesForTesting(
+            [Profile(id: profileID, name: "Before")],
+            in: setupStore
+        )
 
         usageFiles.loadErrors[profileID] = TestFailure.expected
         let store = retain(makeStore(usageFiles: usageFiles))
@@ -157,7 +160,10 @@ final class ProfileCurrentUsageIntegrationTests: HostedAppTestCase {
                 usageFileStore: usageFiles
             )
         )
-        try store.saveProfilesThrowing([Profile(id: profileID, name: "Before")])
+        try seedProfilesForTesting(
+            [Profile(id: profileID, name: "Before")],
+            in: store
+        )
 
         var loaded = store.loadProfiles()
         XCTAssertNil(loaded.first?.claudeUsage)
@@ -184,10 +190,10 @@ final class ProfileCurrentUsageIntegrationTests: HostedAppTestCase {
         let secondAPI = makeAPIUsage(spend: 33)
         let usageFiles = MockCurrentUsageFileStore()
         let store = retain(makeStore(usageFiles: usageFiles))
-        try store.saveProfilesThrowing([
+        try seedProfilesForTesting([
             Profile(id: firstID, name: "First"),
             Profile(id: secondID, name: "Second")
-        ])
+        ], in: store)
 
         try store.saveClaudeUsage(firstClaude, for: firstID)
         try store.saveAPIUsage(firstAPI, for: firstID)
@@ -218,7 +224,10 @@ final class ProfileCurrentUsageIntegrationTests: HostedAppTestCase {
             apiUsage: oldAPIUsage
         )
         let store = retain(makeStore(usageFiles: usageFiles))
-        try store.saveProfilesThrowing([Profile(id: profileID, name: "Profile")])
+        try seedProfilesForTesting(
+            [Profile(id: profileID, name: "Profile")],
+            in: store
+        )
         let history = retain(MockHistoryDeleter())
         let manager = retain(
             ProfileManager(profileStore: store, historyService: history)
@@ -287,9 +296,9 @@ final class ProfileCurrentUsageIntegrationTests: HostedAppTestCase {
             apiUsage: oldAPI
         )
         let store = retain(makeStore(usageFiles: usageFiles))
-        try store.saveProfilesThrowing([
+        try seedProfilesForTesting([
             Profile(id: profileID, name: "Profile")
-        ])
+        ], in: store)
         let runtimeProfile = Profile(
             id: profileID,
             name: "Profile",
@@ -412,14 +421,14 @@ final class ProfileCurrentUsageIntegrationTests: HostedAppTestCase {
                     usageFileStore: usageFiles
                 )
             )
-            try store.saveProfilesThrowing([
+            try seedProfilesForTesting([
                 Profile(
                     id: profileID,
                     name: "Notification",
                     organizationId: "claude-org",
                     apiOrganizationId: "api-org"
                 )
-            ])
+            ], in: store)
             secrets.values[
                 ProfileSecretLocator(
                     profileID: profileID,
@@ -1265,7 +1274,7 @@ final class ProfileCurrentUsageIntegrationTests: HostedAppTestCase {
             ),
             Profile(id: retainedID, name: "Keep")
         ]
-        try store.saveProfilesThrowing(initialProfiles)
+        try seedProfilesForTesting(initialProfiles, in: store)
         let history = retain(MockHistoryDeleter())
         let manager = retain(
             ProfileManager(profileStore: store, historyService: history)
@@ -1315,7 +1324,7 @@ final class ProfileCurrentUsageIntegrationTests: HostedAppTestCase {
             ),
             Profile(id: retainedID, name: "Keep")
         ]
-        try store.saveProfilesThrowing(initialProfiles)
+        try seedProfilesForTesting(initialProfiles, in: store)
         let history = retain(MockHistoryDeleter())
         history.deleteError = TestFailure.expected
         let manager = retain(
@@ -1371,7 +1380,7 @@ final class ProfileCurrentUsageIntegrationTests: HostedAppTestCase {
             ),
             Profile(id: retainedID, name: "Keep")
         ]
-        try store.saveProfilesThrowing(initialProfiles)
+        try seedProfilesForTesting(initialProfiles, in: store)
         let history = retain(MockHistoryDeleter())
         let manager = retain(
             ProfileManager(profileStore: store, historyService: history)
@@ -1585,14 +1594,14 @@ final class ProfileCurrentUsageIntegrationTests: HostedAppTestCase {
                 usageFileStore: usageFiles
             )
         )
-        try store.saveProfilesThrowing([
+        try seedProfilesForTesting([
             Profile(
                 id: profileID,
                 name: "Profile",
                 organizationId: "claude-org",
                 apiOrganizationId: "api-org"
             )
-        ])
+        ], in: store)
         let claudeLocator = ProfileSecretLocator(
             profileID: profileID,
             field: .claudeSessionKey
@@ -1776,6 +1785,13 @@ private final class MockCurrentUsageFileStore: ProfileCurrentUsageFileStoring {
         try transform(&usage)
         values[profileID] = usage
         return usage
+    }
+
+    func deleteCurrentUsage(for profileID: UUID) throws {
+        if let deleteError {
+            throw deleteError
+        }
+        values.removeValue(forKey: profileID)
     }
 
     func deleteAllData(for profileID: UUID) throws {

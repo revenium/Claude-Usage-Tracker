@@ -89,12 +89,15 @@ struct SetupWizardView: View {
 
     /// Saves CLI credentials to the active profile and dismisses the wizard
     private func startTrackingWithCLI(credentials: String) {
-        guard var profile = ProfileManager.shared.activeProfile else {
-            setupMode = .manualSetup
-            return
-        }
-
         do {
+            var profile: Profile
+            if let active = ProfileManager.shared.activeProfile {
+                profile = active
+            } else {
+                profile = try ProfileManager.shared.createInitialProfile(
+                    providerConfiguration: .claude
+                )
+            }
             profile.cliCredentialsJSON = credentials
             try ProfileManager.shared.updateProfileThrowing(profile)
             dismiss()
@@ -262,6 +265,10 @@ struct SetupWizardView: View {
         Task {
             do {
                 let count = try MigrationService.shared.migrateFromAppGroup()
+                // Imported v3 profiles and legacy credential/settings sources
+                // must pass the verified provider-aware migration before the
+                // wizard can consider setup complete.
+                try ProfileMigrationService.shared.migrateIfNeededThrowing()
                 await MainActor.run {
                     isMigrating = false
                     migrationMessage = String(format: "wizard.migration_success".localized, count)
@@ -269,12 +276,19 @@ struct SetupWizardView: View {
                     ProfileManager.shared.loadProfiles()
                 }
 
-                // Auto-close wizard after successful migration
-                // Give user a moment to see the success message
-                try? await Task.sleep(nanoseconds: 1_500_000_000) // 1.5 seconds
-
-                await MainActor.run {
-                    dismiss()
+                // A legacy container can contain settings/credentials without
+                // a profile. Preserve them for explicit provider choice and
+                // never dismiss into a zero-profile state.
+                let hasProfiles = await MainActor.run {
+                    !ProfileManager.shared.profiles.isEmpty
+                }
+                if hasProfiles {
+                    try? await Task.sleep(
+                        nanoseconds: 1_500_000_000
+                    )
+                    await MainActor.run {
+                        dismiss()
+                    }
                 }
             } catch {
                 await MainActor.run {
@@ -736,10 +750,13 @@ struct ConfirmStepSetup: View {
 
         Task {
             do {
-                guard let profileId = ProfileManager.shared.activeProfile?.id else {
-                    throw NSError(domain: "SetupWizard", code: 1, userInfo: [
-                        NSLocalizedDescriptionKey: "No active profile found"
-                    ])
+                let profileId: UUID
+                if let activeID = ProfileManager.shared.activeProfile?.id {
+                    profileId = activeID
+                } else {
+                    profileId = try ProfileManager.shared.createInitialProfile(
+                        providerConfiguration: .claude
+                    ).id
                 }
 
                 // Save to profile-specific Keychain using the refactored pattern

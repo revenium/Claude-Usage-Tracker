@@ -14,6 +14,16 @@ extension Notification.Name {
     /// Posted when credentials are added, removed, or changed (Claude.ai or API Console)
     static let credentialsChanged = Notification.Name("credentialsChanged")
 
+    /// Posted after a verified provider link, relink, or unlink transaction.
+    static let providerConfigurationChanged =
+        Notification.Name("providerConfigurationChanged")
+
+    static let profileDeletionStarted =
+        Notification.Name("profileDeletionStarted")
+
+    static let profileDeletionCompleted =
+        Notification.Name("profileDeletionCompleted")
+
     /// Posted when the setup wizard should be shown manually (for testing)
     static let showSetupWizard = Notification.Name("showSetupWizard")
 

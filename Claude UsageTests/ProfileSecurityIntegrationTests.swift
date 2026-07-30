@@ -136,7 +136,10 @@ final class ProfileSecurityIntegrationTests: HostedAppTestCase {
         let secrets = MockProfileSecretStore()
         secrets.values[locator(profileID, .claudeSessionKey)] = "READ_FAILURE_FIXTURE"
         let setupStore = retain(ProfileStore(defaults: defaults, secretStore: secrets))
-        try setupStore.saveProfilesThrowing([Profile(id: profileID, name: "Before")])
+        try seedProfilesForTesting(
+            [Profile(id: profileID, name: "Before")],
+            in: setupStore
+        )
 
         secrets.readErrors[.claudeSessionKey] = TestError.expected
         let store = retain(ProfileStore(defaults: defaults, secretStore: secrets))
@@ -162,7 +165,10 @@ final class ProfileSecurityIntegrationTests: HostedAppTestCase {
         let profileID = UUID()
         let secrets = MockProfileSecretStore()
         let store = retain(ProfileStore(defaults: defaults, secretStore: secrets))
-        try store.saveProfilesThrowing([Profile(id: profileID, name: "Delete")])
+        try seedProfilesForTesting(
+            [Profile(id: profileID, name: "Delete")],
+            in: store
+        )
         try store.saveCLIProfileCredential("DELETE_FIXTURE", for: profileID)
         secrets.deleteErrors[.cliCredentialsJSON] = TestError.expected
 
@@ -182,10 +188,10 @@ final class ProfileSecurityIntegrationTests: HostedAppTestCase {
         let expiry = Date(timeIntervalSinceReferenceDate: 654_321)
         let secrets = MockProfileSecretStore()
         let store = retain(ProfileStore(defaults: defaults, secretStore: secrets))
-        try store.saveProfilesThrowing([
+        try seedProfilesForTesting([
             Profile(id: firstID, name: "First", cliAccountName: "first-link"),
             Profile(id: secondID, name: "Second", cliAccountName: "second-link")
-        ])
+        ], in: store)
 
         try store.saveProfileCredentials(
             firstID,
@@ -223,7 +229,7 @@ final class ProfileSecurityIntegrationTests: HostedAppTestCase {
             refreshInterval: 30,
             autoStartSessionEnabled: false
         )
-        try store.saveProfilesThrowing([original])
+        try seedProfilesForTesting([original], in: store)
         secrets.values[locator(profileID, .claudeSessionKey)] = "OLD_CLAUDE"
         let manager = retain(ProfileManager(profileStore: store))
         manager.profiles = [original]
@@ -407,14 +413,14 @@ final class ProfileSecurityIntegrationTests: HostedAppTestCase {
             let profileID = UUID()
             let secrets = MockProfileSecretStore()
             let store = retain(ProfileStore(defaults: defaults, secretStore: secrets))
-            try store.saveProfilesThrowing([
+            try seedProfilesForTesting([
                 Profile(
                     id: profileID,
                     name: "Before",
                     organizationId: "old-org",
                     apiOrganizationId: "old-api-org"
                 )
-            ])
+            ], in: store)
             for field in ProfileSecretField.allCases {
                 secrets.values[locator(profileID, field)] = "OLD_\(field.rawValue)"
             }
@@ -457,14 +463,14 @@ final class ProfileSecurityIntegrationTests: HostedAppTestCase {
         let profileID = UUID()
         let secrets = MockProfileSecretStore()
         let store = retain(ProfileStore(defaults: backing, secretStore: secrets))
-        try store.saveProfilesThrowing([
+        try seedProfilesForTesting([
             Profile(
                 id: profileID,
                 name: "Before",
                 organizationId: "old-org",
                 apiOrganizationId: "old-api-org"
             )
-        ])
+        ], in: store)
         let previousProfileData = backing.data(forKey: "profiles_v3")
         for field in ProfileSecretField.allCases {
             secrets.values[locator(profileID, field)] = "OLD_\(field.rawValue)"
@@ -503,9 +509,9 @@ final class ProfileSecurityIntegrationTests: HostedAppTestCase {
         let profileID = UUID()
         let secrets = MockProfileSecretStore()
         let setupStore = retain(ProfileStore(defaults: defaults, secretStore: secrets))
-        try setupStore.saveProfilesThrowing([
+        try seedProfilesForTesting([
             Profile(id: profileID, name: "CLI")
-        ])
+        ], in: setupStore)
         secrets.values[locator(profileID, .claudeSessionKey)] = "UNRELATED_CLAUDE"
         secrets.values[locator(profileID, .apiSessionKey)] = "UNRELATED_API"
         secrets.values[locator(profileID, .cliCredentialsJSON)] = "OLD_CLI"
@@ -551,7 +557,7 @@ final class ProfileSecurityIntegrationTests: HostedAppTestCase {
             cliCredentialsJSON: "OLD_CLI",
             hasCliAccount: true
         )
-        try store.saveProfilesThrowing([original])
+        try seedProfilesForTesting([original], in: store)
         secrets.values[locator(profileID, .cliCredentialsJSON)] = "OLD_CLI"
         let manager = retain(ProfileManager(profileStore: store))
         manager.profiles = [original]
@@ -586,7 +592,7 @@ final class ProfileSecurityIntegrationTests: HostedAppTestCase {
             hasCliAccount: true,
             cliAccountName: "linked"
         )
-        try store.saveProfilesThrowing([original])
+        try seedProfilesForTesting([original], in: store)
         secrets.values[locator(profileID, .cliCredentialsJSON)] = "OLD_CLI"
         let manager = retain(ProfileManager(profileStore: store))
         manager.profiles = [original]
@@ -622,7 +628,7 @@ final class ProfileSecurityIntegrationTests: HostedAppTestCase {
             )
         )
         let original = Profile(id: profileID, name: "CLI")
-        try store.saveProfilesThrowing([original])
+        try seedProfilesForTesting([original], in: store)
         let manager = retain(ProfileManager(profileStore: store))
         manager.profiles = [original]
         manager.activeProfile = original
@@ -651,7 +657,7 @@ final class ProfileSecurityIntegrationTests: HostedAppTestCase {
             cliCredentialsJSON: nil,
             checkOverageLimitEnabled: true
         )
-        try store.saveProfilesThrowing([original])
+        try seedProfilesForTesting([original], in: store)
         secrets.values[locator(profileID, .claudeSessionKey)] = "CLAUDE"
         secrets.values[locator(profileID, .apiSessionKey)] = "API"
         let manager = retain(ProfileManager(profileStore: store))
@@ -719,7 +725,7 @@ final class ProfileSecurityIntegrationTests: HostedAppTestCase {
             organizationId: "old-org",
             checkOverageLimitEnabled: true
         )
-        try store.saveProfilesThrowing([original])
+        try seedProfilesForTesting([original], in: store)
         let manager = retain(ProfileManager(profileStore: store))
         manager.profiles = [original]
         manager.activeProfile = original
@@ -756,7 +762,7 @@ final class ProfileSecurityIntegrationTests: HostedAppTestCase {
             apiOrganizationId: "old-api-org",
             cliCredentialsJSON: "OLD_CLI"
         )
-        try store.saveProfilesThrowing([original])
+        try seedProfilesForTesting([original], in: store)
         for field in ProfileSecretField.allCases {
             secrets.values[locator(profileID, field)] = "OLD_\(field.rawValue)"
         }
@@ -817,9 +823,9 @@ final class ProfileSecurityIntegrationTests: HostedAppTestCase {
         let profileID = UUID()
         let secrets = MockProfileSecretStore()
         let store = retain(ProfileStore(defaults: defaults, secretStore: secrets))
-        try store.saveProfilesThrowing([
+        try seedProfilesForTesting([
             Profile(id: profileID, name: "Direct CLI")
-        ])
+        ], in: store)
         var systemCredentials =
             #"{"claudeAiOauth":{"accessToken":"FIRST"}}"#
         let service = retain(
@@ -867,9 +873,9 @@ final class ProfileSecurityIntegrationTests: HostedAppTestCase {
         let profileID = UUID()
         let secrets = MockProfileSecretStore()
         let store = retain(ProfileStore(defaults: defaults, secretStore: secrets))
-        try store.saveProfilesThrowing([
+        try seedProfilesForTesting([
             Profile(id: profileID, name: "Direct CLI")
-        ])
+        ], in: store)
         let service = retain(
             ClaudeCodeSyncService(
                 profileStore: store,
@@ -936,7 +942,7 @@ final class ProfileSecurityIntegrationTests: HostedAppTestCase {
             claudeSessionKey: "sk-ant-sid01-existing-session-key-value",
             organizationId: "existing-org"
         )
-        try store.saveProfilesThrowing([original])
+        try seedProfilesForTesting([original], in: store)
         secrets.values[locator(profileID, .claudeSessionKey)] =
             "sk-ant-sid01-existing-session-key-value"
         let manager = retain(ProfileManager(profileStore: store))
@@ -972,14 +978,14 @@ final class ProfileSecurityIntegrationTests: HostedAppTestCase {
         let profileID = UUID()
         let secrets = MockProfileSecretStore()
         let setupStore = retain(ProfileStore(defaults: defaults, secretStore: secrets))
-        try setupStore.saveProfilesThrowing([
+        try seedProfilesForTesting([
             Profile(
                 id: profileID,
                 name: "Claude",
                 organizationId: "existing-org",
                 apiOrganizationId: "existing-api-org"
             )
-        ])
+        ], in: setupStore)
         secrets.values[locator(profileID, .claudeSessionKey)] =
             "sk-ant-sid01-existing-session-key-value"
         secrets.values[locator(profileID, .apiSessionKey)] = "UNRELATED_API"
@@ -1025,13 +1031,13 @@ final class ProfileSecurityIntegrationTests: HostedAppTestCase {
         let oldSyncDate = Date(timeIntervalSinceReferenceDate: 30)
         let secrets = MockProfileSecretStore()
         let store = retain(ProfileStore(defaults: backing, secretStore: secrets))
-        try store.saveProfilesThrowing([
+        try seedProfilesForTesting([
             Profile(
                 id: profileID,
                 name: "CLI",
                 cliAccountSyncedAt: oldSyncDate
             )
-        ])
+        ], in: store)
         let previousProfileData = backing.data(forKey: "profiles_v3")
         secrets.values[locator(profileID, .cliCredentialsJSON)] = "OLD_CLI"
         backing.corruptNextProfileWrite = true
@@ -1059,7 +1065,10 @@ final class ProfileSecurityIntegrationTests: HostedAppTestCase {
         let backing = FaultingProfileDefaults()
         let secrets = MockProfileSecretStore()
         let store = retain(ProfileStore(defaults: backing, secretStore: secrets))
-        try store.saveProfilesThrowing([Profile(name: "Before")])
+        try seedProfilesForTesting(
+            [Profile(name: "Before")],
+            in: store
+        )
         let previous = backing.data(forKey: "profiles_v3")
         var profile = try XCTUnwrap(store.loadProfiles().first)
         profile.name = "After"
@@ -1074,7 +1083,10 @@ final class ProfileSecurityIntegrationTests: HostedAppTestCase {
         let profileID = UUID()
         let secrets = MockProfileSecretStore()
         let store = retain(ProfileStore(defaults: defaults, secretStore: secrets))
-        try store.saveProfilesThrowing([Profile(id: profileID, name: "Migration")])
+        try seedProfilesForTesting(
+            [Profile(id: profileID, name: "Migration")],
+            in: store
+        )
 
         let source = MockLegacyCredentialSource(
             snapshot: LegacyCredentialSnapshot(
@@ -1108,7 +1120,10 @@ final class ProfileSecurityIntegrationTests: HostedAppTestCase {
         let profileID = UUID()
         let secrets = MockProfileSecretStore()
         let store = retain(ProfileStore(defaults: defaults, secretStore: secrets))
-        try store.saveProfilesThrowing([Profile(id: profileID, name: "Existing")])
+        try seedProfilesForTesting(
+            [Profile(id: profileID, name: "Existing")],
+            in: store
+        )
         store.saveActiveProfileId(profileID)
         defaults.set(true, forKey: "didMigrateToProfilesV3")
 

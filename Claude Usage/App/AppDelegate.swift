@@ -2,6 +2,29 @@ import Cocoa
 import SwiftUI
 import UserNotifications
 
+struct SetupWizardDecision {
+    static func shouldShow(
+        hasShownWizardOnce: Bool,
+        activeProfile: Profile?,
+        hasValidClaudeCLI: () -> Bool
+    ) -> Bool {
+        guard hasShownWizardOnce else { return true }
+        guard let activeProfile else { return true }
+
+        switch activeProfile.providerConfiguration {
+        case .codex(let configuration):
+            // Linking a verified home completes provider setup. Never probe
+            // Claude Keychain or CLI state for a Codex target.
+            return configuration.linkedHome == nil
+        case .claude:
+            if activeProfile.hasAnyCredentials {
+                return false
+            }
+            return !hasValidClaudeCLI()
+        }
+    }
+}
+
 class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     private var menuBarManager: MenuBarManager?
     private var setupWindow: NSWindow?
@@ -120,32 +143,23 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     private func shouldShowSetupWizard() -> Bool {
         // FORCE SHOW wizard on very first app launch (one-time)
         // This ensures users see the migration option if they have old data
-        if !SharedDataStore.shared.hasShownWizardOnce() {
+        let hasShownWizardOnce =
+            SharedDataStore.shared.hasShownWizardOnce()
+        if !hasShownWizardOnce {
             LoggingService.shared.log("AppDelegate: First launch - forcing wizard to show migration option")
-            return true
         }
-
-        // After first launch, use normal checks:
-
-        // activeProfile will always exist after loadProfiles() is called
-        // (ProfileManager creates a default profile if none exist)
-        guard let activeProfile = ProfileManager.shared.activeProfile else {
-            return true  // Safety fallback, should never happen
+        return SetupWizardDecision.shouldShow(
+            hasShownWizardOnce: hasShownWizardOnce,
+            activeProfile: ProfileManager.shared.activeProfile
+        ) {
+            let valid = hasValidSystemCLICredentials()
+            if valid {
+                LoggingService.shared.log(
+                    "AppDelegate: Found valid CLI credentials, skipping wizard"
+                )
+            }
+            return valid
         }
-
-        // If profile already has any credentials, skip wizard
-        if activeProfile.hasAnyCredentials {
-            return false
-        }
-
-        // Check if valid CLI credentials exist in system Keychain
-        if hasValidSystemCLICredentials() {
-            LoggingService.shared.log("AppDelegate: Found valid CLI credentials, skipping wizard")
-            return false
-        }
-
-        // No credentials found - show wizard
-        return true
     }
 
     /// Checks if valid Claude Code CLI credentials exist in system Keychain

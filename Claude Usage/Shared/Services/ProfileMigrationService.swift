@@ -29,6 +29,8 @@ class ProfileMigrationService {
     private let credentialMigration: KeychainMigrationService
     private let legacySettings: any LegacyProfileSettingsSource
     private let migrationKey = "didMigrateToProfilesV3"
+    private let metadataMigrationKey =
+        "profileLegacyMetadataMigrationCompleted_v1"
 
     init(
         defaults: UserDefaults = .standard,
@@ -51,94 +53,126 @@ class ProfileMigrationService {
     }
 
     func migrateIfNeededThrowing() throws {
-        var profiles = try profileStore.loadProfilesWithVerifiedMigration()
-
-        if defaults.bool(forKey: migrationKey), !profiles.isEmpty {
-            // Existing v3 installations can predate profile-keyed secure
-            // storage. Retry both profile-blob and global/file source migration
-            // even though the earlier multi-profile marker is already set.
-            let targetID = profileStore.loadActiveProfileId()
-                .flatMap { activeID in
-                    profiles.first(where: { $0.id == activeID })?.id
-                } ?? profiles[0].id
-            try credentialMigration.migrateIfNeeded(
-                to: targetID,
-                profileStore: profileStore
-            )
+        let profiles = try profileStore.loadProfilesWithVerifiedMigration()
+        let previousActiveID = profileStore.loadActiveProfileId()
+        let activeClaude = profileStore.loadActiveProfileId()
+            .flatMap { activeID in
+                profiles.first(where: {
+                    $0.id == activeID
+                        && !$0.deletionInProgress
+                        && $0.providerConfiguration.kind == .claude
+                })
+            }
+        guard let targetProfile =
+                activeClaude
+                ?? profiles.first(where: {
+                    !$0.deletionInProgress
+                        && $0.providerConfiguration.kind == .claude
+                }) else {
+            // First run has no provider until the user chooses one. Likewise,
+            // a Codex-only installation must not consume or delete Claude
+            // legacy sources.
             return
         }
 
-        let targetProfile: Profile
+        _ = try migrateClaudeProfileIfNeeded(to: targetProfile.id)
 
-        if let activeID = profileStore.loadActiveProfileId(),
-           let active = profiles.first(where: { $0.id == activeID }) {
-            targetProfile = active
-        } else if let existing = profiles.first {
-            targetProfile = existing
-        } else {
-            targetProfile = createFirstProfileFromLegacy()
-            try profileStore.saveProfilesThrowing([targetProfile])
-            profiles = try profileStore.loadProfilesWithVerifiedMigration()
-            guard profiles.contains(where: { $0.id == targetProfile.id }) else {
+        // Keep a valid explicit provider selection. Only repair missing/stale
+        // selection metadata to the migration target.
+        if previousActiveID.flatMap({ id in
+            profiles.first(where: { $0.id == id })
+        }) == nil {
+            profileStore.saveActiveProfileId(targetProfile.id)
+        }
+    }
+
+    /// Explicit seam used immediately after the user creates the first Claude
+    /// profile. It preserves zero-profile/provider choice, then applies the
+    /// same verified legacy metadata and credential rules to that chosen UUID.
+    @discardableResult
+    func migrateClaudeProfileIfNeeded(
+        to profileID: UUID
+    ) throws -> Profile {
+        var profiles = try profileStore.loadProfilesWithVerifiedMigration()
+        guard let index = profiles.firstIndex(where: {
+            $0.id == profileID
+        }) else {
+            throw ProfileStoreError.profileNotFound(profileID)
+        }
+        guard profiles[index].providerConfiguration.kind == .claude else {
+            throw ProfileProviderConfigurationError
+                .claudeProfileRequired(profileID)
+        }
+        guard !profiles[index].deletionInProgress else {
+            throw ProfileStoreError.profileDeletionInProgress(profileID)
+        }
+
+        // The original all-in-one marker proves legacy metadata was already
+        // consumed on established v3 installations. Seed the split marker on
+        // upgrade so customized per-profile settings are never overwritten.
+        if defaults.bool(forKey: migrationKey),
+           !defaults.bool(forKey: metadataMigrationKey) {
+            defaults.set(true, forKey: metadataMigrationKey)
+            guard defaults.bool(forKey: metadataMigrationKey) else {
                 throw ProfileStoreError.profileWriteVerificationFailed
             }
         }
 
-        // Organization identifiers are metadata, not secrets. Populate them
-        // only when the target does not already contain a newer selection.
-        if let index = profiles.firstIndex(where: { $0.id == targetProfile.id }) {
+        if !defaults.bool(forKey: metadataMigrationKey) {
+            profiles[index].iconConfig =
+                legacySettings.loadMenuBarIconConfiguration()
+            profiles[index].refreshInterval =
+                legacySettings.loadRefreshInterval()
+            profiles[index].autoStartSessionEnabled =
+                legacySettings.loadAutoStartSessionEnabled()
+            profiles[index].notificationSettings = NotificationSettings(
+                enabled: legacySettings.loadNotificationsEnabled(),
+                threshold75Enabled: true,
+                threshold90Enabled: true,
+                threshold95Enabled: true
+            )
             if profiles[index].organizationId == nil {
-                profiles[index].organizationId = legacySettings.loadOrganizationId()
+                profiles[index].organizationId =
+                    legacySettings.loadOrganizationId()
             }
             if profiles[index].apiOrganizationId == nil {
-                profiles[index].apiOrganizationId = legacySettings.loadAPIOrganizationId()
+                profiles[index].apiOrganizationId =
+                    legacySettings.loadAPIOrganizationId()
             }
             try profileStore.saveProfilesThrowing(profiles)
+            defaults.set(true, forKey: metadataMigrationKey)
+            guard defaults.bool(forKey: metadataMigrationKey) else {
+                throw ProfileStoreError.profileWriteVerificationFailed
+            }
         }
 
+        // Existing v3 installations can predate profile-keyed secure storage.
+        // The credential service's own verified marker keeps this idempotent.
         try credentialMigration.migrateIfNeeded(
-            to: targetProfile.id,
+            to: profileID,
             profileStore: profileStore
         )
 
-        let verifiedProfiles = try profileStore.loadProfilesWithVerifiedMigration()
-        guard verifiedProfiles.contains(where: { $0.id == targetProfile.id }) else {
+        let verifiedProfiles =
+            try profileStore.loadProfilesWithVerifiedMigration()
+        guard let verified = verifiedProfiles.first(where: {
+            $0.id == profileID
+        }) else {
             throw ProfileStoreError.profileWriteVerificationFailed
         }
 
-        profileStore.saveActiveProfileId(targetProfile.id)
-        profileStore.saveDisplayMode(.single)
         defaults.set(true, forKey: migrationKey)
         guard defaults.bool(forKey: migrationKey) else {
             throw ProfileStoreError.profileWriteVerificationFailed
         }
 
         LoggingService.shared.log("Profile migration completed and verified")
-    }
-
-    private func createFirstProfileFromLegacy() -> Profile {
-        Profile(
-            id: UUID(),
-            name: FunnyNameGenerator.getRandomName(excluding: []),
-            hasCliAccount: false,
-            cliAccountSyncedAt: nil,
-            iconConfig: legacySettings.loadMenuBarIconConfiguration(),
-            refreshInterval: legacySettings.loadRefreshInterval(),
-            autoStartSessionEnabled: legacySettings.loadAutoStartSessionEnabled(),
-            notificationSettings: NotificationSettings(
-                enabled: legacySettings.loadNotificationsEnabled(),
-                threshold75Enabled: true,
-                threshold90Enabled: true,
-                threshold95Enabled: true
-            ),
-            isSelectedForDisplay: true,
-            createdAt: Date(),
-            lastUsedAt: Date()
-        )
+        return verified
     }
 
     func resetMigration() {
         defaults.removeObject(forKey: migrationKey)
+        defaults.removeObject(forKey: metadataMigrationKey)
         credentialMigration.resetMigrationForTesting()
     }
 }

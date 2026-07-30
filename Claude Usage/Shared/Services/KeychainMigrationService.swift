@@ -196,7 +196,11 @@ class KeychainMigrationService {
     /// Backward-compatible safe entry point for any older startup caller.
     func performMigrationIfNeeded() {
         do {
-            guard let profileID = ProfileStore.shared.loadProfiles().first?.id else {
+            guard let profileID = ProfileStore.shared.loadProfiles()
+                .first(where: {
+                    !$0.deletionInProgress
+                        && $0.providerConfiguration.kind == .claude
+                })?.id else {
                 return
             }
             try migrateIfNeeded(to: profileID, profileStore: .shared)

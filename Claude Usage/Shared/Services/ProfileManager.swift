@@ -8,6 +8,70 @@
 import Foundation
 import Combine
 
+struct ProfileActivationClaudeEffects {
+    var resyncBeforeSwitching: (UUID) throws -> Void
+    var applyProfileCredentials: (UUID) throws -> Void
+    var switchAccountAndSync: (String) throws -> Void
+    var updateStatuslineScripts: () throws -> Void
+    var updateStatuslineProfileName: (String) throws -> Void
+
+    static func live(
+        cliSyncService: ClaudeCodeSyncService
+    ) -> ProfileActivationClaudeEffects {
+        ProfileActivationClaudeEffects(
+            resyncBeforeSwitching: {
+                try cliSyncService.resyncBeforeSwitching(for: $0)
+            },
+            applyProfileCredentials: {
+                try cliSyncService.applyProfileCredentials($0)
+            },
+            switchAccountAndSync: { accountName in
+                try ClaudeSwitchService.shared.switchToAccount(accountName)
+                if SharedDataStore.shared.loadAutoSyncMCPEnabled() {
+                    _ = ClaudeSwitchService.shared.bidirectionalMcpSync()
+                    _ = ClaudeSwitchService.shared.syncSkills()
+                }
+            },
+            updateStatuslineScripts: {
+                try StatuslineService.shared.updateScriptsIfInstalled()
+            },
+            updateStatuslineProfileName: {
+                try StatuslineService.shared.updateProfileNameInConfig($0)
+            }
+        )
+    }
+}
+
+struct ProfileLifecycleEventSink {
+    var deletionStarted: (Profile) -> Void
+    var deletionCompleted: (Profile) -> Void
+
+    static let live = ProfileLifecycleEventSink(
+        deletionStarted: {
+            NotificationCenter.default.post(
+                name: .profileDeletionStarted,
+                object: $0.id,
+                userInfo: Self.userInfo(for: $0)
+            )
+        },
+        deletionCompleted: {
+            NotificationCenter.default.post(
+                name: .profileDeletionCompleted,
+                object: $0.id,
+                userInfo: Self.userInfo(for: $0)
+            )
+        }
+    )
+
+    private static func userInfo(for profile: Profile) -> [String: Any] {
+        [
+            "profileID": profile.id,
+            "providerKind": profile.providerConfiguration.kind.rawValue,
+            "providerRevision": profile.providerRevision
+        ]
+    }
+}
+
 @MainActor
 class ProfileManager: ObservableObject {
     static let shared = ProfileManager()
@@ -24,21 +88,44 @@ class ProfileManager: ObservableObject {
     @Published var displayMode: ProfileDisplayMode = .single
     @Published var multiProfileConfig: MultiProfileDisplayConfig = .default
     @Published var isSwitchingProfile: Bool = false
+    @Published private(set) var legacyMigrationPendingProfileID: UUID?
 
     private let profileStore: ProfileStore
-    private let cliSyncService: ClaudeCodeSyncService
     private let historyService: any ProfileHistoryDeleting
+    private let activationClaudeEffects: ProfileActivationClaudeEffects
+    private let codexHomeCanonicalizer: CodexHomeCanonicalizer
+    private let lifecycleEventSink: ProfileLifecycleEventSink
+    private let postClaudeCreationMigration: (UUID) throws -> Profile
+    private let now: () -> Date
 
     private var switchingSemaphore = false
 
     init(
         profileStore: ProfileStore? = nil,
         cliSyncService: ClaudeCodeSyncService? = nil,
-        historyService: (any ProfileHistoryDeleting)? = nil
+        historyService: (any ProfileHistoryDeleting)? = nil,
+        activationClaudeEffects: ProfileActivationClaudeEffects? = nil,
+        codexHomeCanonicalizer: CodexHomeCanonicalizer? = nil,
+        lifecycleEventSink: ProfileLifecycleEventSink? = nil,
+        postClaudeCreationMigration: ((UUID) throws -> Profile)? = nil,
+        now: @escaping () -> Date = Date.init
     ) {
         self.profileStore = profileStore ?? .shared
-        self.cliSyncService = cliSyncService ?? .shared
+        let resolvedCLISyncService = cliSyncService ?? .shared
         self.historyService = historyService ?? UsageHistoryService.shared
+        self.activationClaudeEffects =
+            activationClaudeEffects
+            ?? .live(cliSyncService: resolvedCLISyncService)
+        self.codexHomeCanonicalizer =
+            codexHomeCanonicalizer ?? CodexHomeCanonicalizer()
+        self.lifecycleEventSink = lifecycleEventSink ?? .live
+        self.postClaudeCreationMigration =
+            postClaudeCreationMigration
+            ?? {
+                try ProfileMigrationService.shared
+                    .migrateClaudeProfileIfNeeded(to: $0)
+            }
+        self.now = now
     }
 
     // MARK: - Initialization
@@ -46,23 +133,17 @@ class ProfileManager: ObservableObject {
     func loadProfiles() {
         profiles = profileStore.loadProfiles()
 
-        // Ensure minimum 1 profile
-        if profiles.isEmpty {
-            let defaultProfile = createDefaultProfile()
-            profiles = [defaultProfile]
-            profileStore.saveProfiles(profiles)
-
-            // On first launch, try to sync CLI credentials to the new default profile
-            syncCLICredentialsToDefaultProfile(defaultProfile.id)
-        }
-
         // Load active profile
         if let activeId = profileStore.loadActiveProfileId(),
-           let profile = profiles.first(where: { $0.id == activeId }) {
+           let profile = profiles.first(where: {
+               $0.id == activeId && !$0.deletionInProgress
+           }) {
             activeProfile = profile
         } else {
-            activeProfile = profiles.first
-            if let first = profiles.first {
+            activeProfile = profiles.first(where: {
+                !$0.deletionInProgress
+            })
+            if let first = activeProfile {
                 profileStore.saveActiveProfileId(first.id)
             }
         }
@@ -75,13 +156,221 @@ class ProfileManager: ObservableObject {
 
     // MARK: - Profile Operations
 
-    func createProfile(name: String? = nil, copySettingsFrom: Profile? = nil) -> Profile {
+    @discardableResult
+    func createInitialProfile(
+        name: String? = nil,
+        providerConfiguration: ProfileProviderConfiguration
+    ) throws -> Profile {
+        try createInitialProfile(
+            name: name,
+            providerConfiguration: providerConfiguration,
+            allowInitiallyLinkedCodex: false
+        )
+    }
+
+    @discardableResult
+    func createInitialCodexProfile(
+        name: String? = nil,
+        linkedHomePath: String
+    ) throws -> Profile {
+        let home = try codexHomeCanonicalizer.canonicalize(
+            linkedHomePath,
+            existingProfiles: profiles
+        )
+        return try createInitialProfile(
+            name: name,
+            providerConfiguration: .codex(
+                CodexProfileConfiguration(linkedHome: home)
+            ),
+            allowInitiallyLinkedCodex: true
+        )
+    }
+
+    private func createInitialProfile(
+        name: String?,
+        providerConfiguration: ProfileProviderConfiguration,
+        allowInitiallyLinkedCodex: Bool
+    ) throws -> Profile {
+        guard profiles.isEmpty else {
+            throw ProfileProviderConfigurationError
+                .initialProfileAlreadyExists
+        }
+        try validateCreationConfiguration(
+            providerConfiguration,
+            allowInitiallyLinkedCodex: allowInitiallyLinkedCodex
+        )
+        let profile = makeProfile(
+            name: name,
+            providerConfiguration: providerConfiguration,
+            copySettingsFrom: nil
+        )
+        try profileStore.createInitialProfile(profile)
+        profiles = [profile]
+        activeProfile = profile
+        profileStore.saveActiveProfileId(profile.id)
+        guard profile.providerConfiguration.kind == .claude else {
+            return profile
+        }
+        let migrated = attemptPostClaudeCreationMigration(profile)
+        profiles = [migrated]
+        activeProfile = migrated
+        return migrated
+    }
+
+    func createProfile(
+        name: String? = nil,
+        copySettingsFrom: Profile? = nil
+    ) -> Profile? {
+        do {
+            return try createProfileThrowing(
+                name: name,
+                providerConfiguration: .claude,
+                copySettingsFrom: copySettingsFrom
+            )
+        } catch {
+            LoggingService.shared.logError(
+                "ProfileManager.createProfile: Create was not verified",
+                error: error
+            )
+            return nil
+        }
+    }
+
+    @discardableResult
+    func createProfileThrowing(
+        name: String? = nil,
+        providerConfiguration: ProfileProviderConfiguration,
+        copySettingsFrom: Profile? = nil
+    ) throws -> Profile {
+        try createProfileThrowing(
+            name: name,
+            providerConfiguration: providerConfiguration,
+            copySettingsFrom: copySettingsFrom,
+            allowInitiallyLinkedCodex: false
+        )
+    }
+
+    @discardableResult
+    func createCodexProfile(
+        name: String? = nil,
+        linkedHomePath: String,
+        copySettingsFrom: Profile? = nil
+    ) throws -> Profile {
+        let home = try codexHomeCanonicalizer.canonicalize(
+            linkedHomePath,
+            existingProfiles: profiles
+        )
+        return try createProfileThrowing(
+            name: name,
+            providerConfiguration: .codex(
+                CodexProfileConfiguration(linkedHome: home)
+            ),
+            copySettingsFrom: copySettingsFrom,
+            allowInitiallyLinkedCodex: true
+        )
+    }
+
+    private func createProfileThrowing(
+        name: String?,
+        providerConfiguration: ProfileProviderConfiguration,
+        copySettingsFrom: Profile?,
+        allowInitiallyLinkedCodex: Bool
+    ) throws -> Profile {
+        try validateCreationConfiguration(
+            providerConfiguration,
+            allowInitiallyLinkedCodex: allowInitiallyLinkedCodex
+        )
+        let hadClaudeProfile = profiles.contains(where: {
+            !$0.deletionInProgress
+                && $0.providerConfiguration.kind == .claude
+        })
+        let newProfile = makeProfile(
+            name: name,
+            providerConfiguration: providerConfiguration,
+            copySettingsFrom: copySettingsFrom
+        )
+        try profileStore.appendProfile(
+            newProfile,
+            expectedExistingIDs: Set(profiles.map(\.id))
+        )
+        profiles.append(newProfile)
+
+        if providerConfiguration.kind == .claude && !hadClaudeProfile {
+            let migrated = attemptPostClaudeCreationMigration(newProfile)
+            if let index = profiles.firstIndex(where: {
+                $0.id == newProfile.id
+            }) {
+                profiles[index] = migrated
+            }
+            LoggingService.shared.log("Created new profile: \(migrated.name)")
+            return migrated
+        }
+
+        LoggingService.shared.log("Created new profile: \(newProfile.name)")
+        return newProfile
+    }
+
+    @discardableResult
+    func retryPendingLegacyMigration() throws -> Profile? {
+        guard let profileID = legacyMigrationPendingProfileID else {
+            return nil
+        }
+        let migrated = try postClaudeCreationMigration(profileID)
+        if let index = profiles.firstIndex(where: { $0.id == profileID }) {
+            profiles[index] = migrated
+        }
+        if activeProfile?.id == profileID {
+            activeProfile = migrated
+        }
+        legacyMigrationPendingProfileID = nil
+        return migrated
+    }
+
+    private func attemptPostClaudeCreationMigration(
+        _ profile: Profile
+    ) -> Profile {
+        do {
+            let migrated = try postClaudeCreationMigration(profile.id)
+            legacyMigrationPendingProfileID = nil
+            return migrated
+        } catch {
+            // Profile choice is already durably committed. Preserve it,
+            // retain legacy sources, and expose an explicit retry signal.
+            legacyMigrationPendingProfileID = profile.id
+            LoggingService.shared.logError(
+                "Post-create legacy migration remains pending",
+                error: error
+            )
+            return profileStore.loadProfiles().first(where: {
+                $0.id == profile.id
+            }) ?? profile
+        }
+    }
+
+    private func validateCreationConfiguration(
+        _ configuration: ProfileProviderConfiguration,
+        allowInitiallyLinkedCodex: Bool
+    ) throws {
+        if case .codex(let codex) = configuration,
+           codex.linkedHome != nil,
+           !allowInitiallyLinkedCodex {
+            throw ProfileProviderConfigurationError
+                .codexInitialHomeRequiresDedicatedCreation
+        }
+    }
+
+    private func makeProfile(
+        name: String?,
+        providerConfiguration: ProfileProviderConfiguration,
+        copySettingsFrom: Profile?
+    ) -> Profile {
         let usedNames = profiles.map { $0.name }
         let profileName = name ?? FunnyNameGenerator.getRandomName(excluding: usedNames)
 
-        let newProfile = Profile(
+        return Profile(
             id: UUID(),
             name: profileName,
+            providerConfiguration: providerConfiguration,
             hasCliAccount: false,
             iconConfig: copySettingsFrom?.iconConfig ?? .default,
             refreshInterval: copySettingsFrom?.refreshInterval ?? 30.0,
@@ -90,12 +379,85 @@ class ProfileManager: ObservableObject {
             notificationSettings: copySettingsFrom?.notificationSettings ?? NotificationSettings(),
             isSelectedForDisplay: true
         )
+    }
 
-        profiles.append(newProfile)
-        profileStore.saveProfiles(profiles)
+    @discardableResult
+    func linkCodexHome(_ path: String, for profileID: UUID) throws -> Profile {
+        guard let profile = profiles.first(where: {
+            $0.id == profileID
+        }) else {
+            throw ProfileStoreError.profileNotFound(profileID)
+        }
+        guard profile.providerConfiguration.kind == .codex else {
+            throw ProfileProviderConfigurationError
+                .codexProfileRequired(profileID)
+        }
+        if profile.providerConfiguration.codexConfiguration?
+            .linkedHome?.path == path {
+            return try replaceCodexLinkedHome(
+                profile.providerConfiguration.codexConfiguration?
+                    .linkedHome,
+                for: profileID
+            )
+        }
+        let home = try codexHomeCanonicalizer.canonicalize(
+            path,
+            excludingProfileID: profileID,
+            existingProfiles: profiles
+        )
+        return try replaceCodexLinkedHome(home, for: profileID)
+    }
 
-        LoggingService.shared.log("Created new profile: \(newProfile.name)")
-        return newProfile
+    @discardableResult
+    func unlinkCodexHome(for profileID: UUID) throws -> Profile {
+        try replaceCodexLinkedHome(nil, for: profileID)
+    }
+
+    private func replaceCodexLinkedHome(
+        _ home: CanonicalCodexHome?,
+        for profileID: UUID
+    ) throws -> Profile {
+        do {
+            guard let previous = profiles.first(where: {
+                $0.id == profileID
+            }) else {
+                throw ProfileStoreError.profileNotFound(profileID)
+            }
+            let updated = try profileStore.replaceCodexLinkedHome(
+                home,
+                for: profileID
+            )
+            guard let index = profiles.firstIndex(where: {
+                $0.id == profileID
+            }) else {
+                throw ProfileStoreError.profileNotFound(profileID)
+            }
+            profiles[index] = updated
+            if activeProfile?.id == profileID {
+                activeProfile = updated
+            }
+            if previous.providerConfiguration
+                    != updated.providerConfiguration
+                || previous.providerRevision != updated.providerRevision {
+                NotificationCenter.default.post(
+                    name: .providerConfigurationChanged,
+                    object: profileID,
+                    userInfo: [
+                        "profileID": profileID,
+                        "providerRevision": updated.providerRevision
+                    ]
+                )
+            }
+            return updated
+        } catch {
+            // Rollback recovery may have completed forward on relaunch. Reload
+            // the authoritative metadata before surfacing the failure.
+            profiles = profileStore.loadProfiles()
+            if let activeID = activeProfile?.id {
+                activeProfile = profiles.first(where: { $0.id == activeID })
+            }
+            throw error
+        }
     }
 
     func updateProfile(_ profile: Profile) {
@@ -162,46 +524,106 @@ class ProfileManager: ObservableObject {
     }
 
     func deleteProfile(_ id: UUID) throws {
-        guard profiles.count > 1 else {
-            throw ProfileError.cannotDeleteLastProfile
-        }
-
         let profileName = profiles.first(where: { $0.id == id })?.name ?? "unknown"
 
-        guard profiles.contains(where: { $0.id == id }) else {
+        guard let deletionTarget = profiles.first(where: {
+            $0.id == id
+        }) else {
             throw ProfileStoreError.profileNotFound(id)
+        }
+        let usableProfileCount = profiles.filter {
+            !$0.deletionInProgress
+        }.count
+        if !deletionTarget.deletionInProgress && usableProfileCount <= 1 {
+            throw ProfileError.cannotDeleteLastProfile
         }
 
         // Atomically retain a scrubbed marker before any destructive cleanup.
         // On failure or relaunch, identity remains for retry without allowing
         // migration envelopes or surviving stores to rehydrate deleted data.
+        let wasActive = activeProfile?.id == id
         let scrubbedProfile = try profileStore.beginProfileDeletion(id)
+        lifecycleEventSink.deletionStarted(scrubbedProfile)
         if let index = profiles.firstIndex(where: { $0.id == id }) {
             profiles[index] = scrubbedProfile
-            if activeProfile?.id == id {
-                activeProfile = scrubbedProfile
+        }
+        if wasActive {
+            if let survivor = profiles.first(where: {
+                $0.id != id && !$0.deletionInProgress
+            }) {
+                activeProfile = survivor
+                profileStore.saveActiveProfileId(survivor.id)
+                applyPostDeletionActivationEffects(survivor)
+            } else {
+                activeProfile = nil
             }
         }
 
-        try profileStore.deleteProfileSecrets(for: id)
+        if scrubbedProfile.providerConfiguration.kind == .claude {
+            try profileStore.deleteProfileSecrets(for: id)
+        }
         try historyService.deleteHistoryThrowing(for: id)
         try profileStore.deleteProfileUsageData(for: id)
         LoggingService.shared.log("Successfully deleted usage history for profile: \(profileName)")
 
         let remainingProfiles = profiles.filter { $0.id != id }
-        try profileStore.saveProfilesThrowing(remainingProfiles)
+        try profileStore.finalizeProfileDeletion(
+            id,
+            expectedRemainingIDs: Set(remainingProfiles.map(\.id))
+        )
         profiles = remainingProfiles
 
-        // Switch to first profile if deleted active
-        if activeProfile?.id == id {
-            if let first = profiles.first {
-                Task {
-                    await activateProfile(first.id)
-                }
-            }
-        }
+        lifecycleEventSink.deletionCompleted(scrubbedProfile)
 
         LoggingService.shared.log("Deleted profile: \(profileName)")
+    }
+
+    private func applyPostDeletionActivationEffects(_ profile: Profile) {
+        guard profile.providerConfiguration.kind == .claude else {
+            return
+        }
+        if profile.cliCredentialsJSON != nil {
+            do {
+                try activationClaudeEffects
+                    .applyProfileCredentials(profile.id)
+            } catch {
+                LoggingService.shared.logError(
+                    "Post-delete CLI credential activation failed",
+                    error: error
+                )
+            }
+        }
+        if let accountName = profile.cliAccountName {
+            do {
+                try activationClaudeEffects
+                    .switchAccountAndSync(accountName)
+            } catch {
+                LoggingService.shared.logError(
+                    "Post-delete CLI account activation failed",
+                    error: error
+                )
+            }
+        }
+        if profile.claudeSessionKey != nil
+            && profile.organizationId != nil {
+            do {
+                try activationClaudeEffects.updateStatuslineScripts()
+            } catch {
+                LoggingService.shared.logError(
+                    "Post-delete statusline update failed",
+                    error: error
+                )
+            }
+        }
+        do {
+            try activationClaudeEffects
+                .updateStatuslineProfileName(profile.name)
+        } catch {
+            LoggingService.shared.logError(
+                "Post-delete statusline profile update failed",
+                error: error
+            )
+        }
     }
 
     func toggleProfileSelection(_ id: UUID) {
@@ -218,7 +640,9 @@ class ProfileManager: ObservableObject {
     func getSelectedProfiles() -> [Profile] {
         displayMode == .single
             ? [activeProfile].compactMap { $0 }
-            : profiles.filter { $0.isSelectedForDisplay }
+            : profiles.filter {
+                $0.isSelectedForDisplay && !$0.deletionInProgress
+            }
     }
 
     func updateDisplayMode(_ mode: ProfileDisplayMode) {
@@ -247,7 +671,9 @@ class ProfileManager: ObservableObject {
             return
         }
 
-        guard let profile = profiles.first(where: { $0.id == id }) else {
+        guard let profile = profiles.first(where: {
+            $0.id == id && !$0.deletionInProgress
+        }) else {
             LoggingService.shared.log("Profile not found: \(id)")
             return
         }
@@ -259,13 +685,43 @@ class ProfileManager: ObservableObject {
 
         switchingSemaphore = true
         isSwitchingProfile = true
+        defer {
+            switchingSemaphore = false
+            isSwitchingProfile = false
+        }
 
         LoggingService.shared.log("Switching to profile: \(profile.name)")
+
+        // The target provider selects the branch before any provider-specific
+        // side effect. Codex selection is app metadata only.
+        if profile.providerConfiguration.kind == .codex {
+            do {
+                let updated = try profileStore.updateActivationMetadata(
+                    for: id,
+                    at: now()
+                )
+                if let index = profiles.firstIndex(where: { $0.id == id }) {
+                    profiles[index] = updated
+                }
+                activeProfile = updated
+                profileStore.saveActiveProfileId(id)
+                LoggingService.shared.log(
+                    "Successfully activated Codex profile: \(updated.name)"
+                )
+            } catch {
+                LoggingService.shared.logError(
+                    "Failed to activate Codex profile",
+                    error: error
+                )
+            }
+            return
+        }
 
         // Re-sync current profile before leaving (if CLI credentials exist)
         if let currentProfile = activeProfile, currentProfile.cliCredentialsJSON != nil {
             do {
-                try cliSyncService.resyncBeforeSwitching(for: currentProfile.id)
+                try activationClaudeEffects
+                    .resyncBeforeSwitching(currentProfile.id)
                 // Reload profiles to get the updated data in memory
                 profiles = profileStore.loadProfiles()
                 LoggingService.shared.log("✓ Re-synced current profile before switching")
@@ -280,8 +736,6 @@ class ProfileManager: ObservableObject {
         // Get the updated target profile from the reloaded data
         guard let updatedProfile = profiles.first(where: { $0.id == id }) else {
             LoggingService.shared.log("Profile not found after reload: \(id)")
-            switchingSemaphore = false
-            isSwitchingProfile = false
             return
         }
 
@@ -290,7 +744,8 @@ class ProfileManager: ObservableObject {
 
         if updatedProfile.cliCredentialsJSON != nil {
             do {
-                try cliSyncService.applyProfileCredentials(updatedProfile.id)
+                try activationClaudeEffects
+                    .applyProfileCredentials(updatedProfile.id)
                 LoggingService.shared.log("✓ Applied CLI credentials for: \(updatedProfile.name)")
             } catch {
                 LoggingService.shared.logError("Failed to apply CLI credentials (non-fatal)", error: error)
@@ -303,24 +758,8 @@ class ProfileManager: ObservableObject {
         LoggingService.shared.log("CLI account check for '\(updatedProfile.name)': cliAccountName=\(updatedProfile.cliAccountName ?? "nil")")
         if let accountName = updatedProfile.cliAccountName {
             do {
-                try ClaudeSwitchService.shared.switchToAccount(accountName)
+                try activationClaudeEffects.switchAccountAndSync(accountName)
                 LoggingService.shared.log("✓ Switched CLI account to: \(accountName)")
-
-                // Auto-sync MCP servers and skills across all accounts after switch
-                if SharedDataStore.shared.loadAutoSyncMCPEnabled() {
-                    let mcpResult = ClaudeSwitchService.shared.bidirectionalMcpSync()
-                    if mcpResult.hasChanges {
-                        LoggingService.shared.log(
-                            "Auto-synced MCP servers: \(mcpResult.totalSynced) server(s) "
-                            + "across \(mcpResult.changes.count) target(s)")
-                    }
-                    let skillsResult = ClaudeSwitchService.shared.syncSkills()
-                    if skillsResult.hasChanges {
-                        LoggingService.shared.log(
-                            "Auto-synced skills: \(skillsResult.totalSynced) skill(s) "
-                            + "across \(skillsResult.changes.count) target(s)")
-                    }
-                }
             } catch {
                 LoggingService.shared.logError("Failed to switch CLI account (non-fatal)", error: error)
             }
@@ -328,7 +767,7 @@ class ProfileManager: ObservableObject {
 
         // Update last used timestamp
         var updated = updatedProfile
-        updated.lastUsedAt = Date()
+        updated.lastUsedAt = now()
 
         if let index = profiles.firstIndex(where: { $0.id == updatedProfile.id }) {
             profiles[index] = updated
@@ -341,7 +780,7 @@ class ProfileManager: ObservableObject {
         // Update statusline script if the new profile has credentials
         if updated.claudeSessionKey != nil && updated.organizationId != nil {
             do {
-                try StatuslineService.shared.updateScriptsIfInstalled()
+                try activationClaudeEffects.updateStatuslineScripts()
                 LoggingService.shared.log("✓ Updated statusline for profile: \(updated.name)")
             } catch {
                 LoggingService.shared.logError("Failed to update statusline (non-fatal)", error: error)
@@ -350,13 +789,11 @@ class ProfileManager: ObservableObject {
 
         // Update profile name in statusline config
         do {
-            try StatuslineService.shared.updateProfileNameInConfig(updated.name)
+            try activationClaudeEffects
+                .updateStatuslineProfileName(updated.name)
         } catch {
             LoggingService.shared.logError("Failed to update statusline profile name (non-fatal)", error: error)
         }
-
-        switchingSemaphore = false
-        isSwitchingProfile = false
 
         LoggingService.shared.log("Successfully activated profile: \(updatedProfile.name)")
     }
@@ -707,53 +1144,6 @@ class ProfileManager: ObservableObject {
 
     // MARK: - Private Helpers
 
-    /// Syncs CLI credentials to default profile on first launch only
-    private func syncCLICredentialsToDefaultProfile(_ profileId: UUID) {
-        do {
-            // Attempt to read credentials from system Keychain
-            guard let jsonData = try cliSyncService.readSystemCredentials() else {
-                LoggingService.shared.log("ProfileManager: No CLI credentials found in system Keychain")
-                return
-            }
-
-            // Validate: not expired
-            if cliSyncService.isTokenExpired(jsonData) {
-                LoggingService.shared.log("ProfileManager: CLI credentials found but expired")
-                return
-            }
-
-            // Validate: has valid access token
-            guard cliSyncService.extractAccessToken(from: jsonData) != nil else {
-                LoggingService.shared.log("ProfileManager: CLI credentials found but missing access token")
-                return
-            }
-
-            // Sync to the newly created default profile
-            try cliSyncService.syncToProfile(profileId)
-
-            // Reload the profile to get updated credentials
-            profiles = profileStore.loadProfiles()
-
-            LoggingService.shared.log("ProfileManager: ✅ Successfully synced CLI credentials to default profile on first launch")
-
-        } catch {
-            LoggingService.shared.logError("ProfileManager: Failed to sync CLI credentials on first launch (non-fatal)", error: error)
-            // Non-fatal: profile will be created without credentials
-            // User can manually sync in settings
-        }
-    }
-
-    private func createDefaultProfile() -> Profile {
-        Profile(
-            name: FunnyNameGenerator.getRandomName(excluding: []),
-            iconConfig: .default,
-            refreshInterval: 30.0,
-            autoStartSessionEnabled: false,
-            checkOverageLimitEnabled: true,
-            notificationSettings: NotificationSettings()
-        )
-    }
-
     private func updateClaudeUsageInMemory(_ usage: ClaudeUsage?, for profileID: UUID) {
         guard let index = profiles.firstIndex(where: { $0.id == profileID }) else {
             return
@@ -778,7 +1168,7 @@ class ProfileManager: ObservableObject {
 
 // MARK: - ProfileError
 
-enum ProfileError: LocalizedError {
+enum ProfileError: LocalizedError, Equatable {
     case cannotDeleteLastProfile
 
     var errorDescription: String? {

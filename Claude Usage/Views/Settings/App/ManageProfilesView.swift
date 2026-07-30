@@ -336,7 +336,11 @@ struct ManageProfilesView: View {
 
     private func createNewProfile() {
         let name = newProfileName.isEmpty ? nil : newProfileName
-        _ = profileManager.createProfile(name: name)
+        guard profileManager.createProfile(name: name) != nil else {
+            errorMessage = "The profile could not be saved. Please try again."
+            return
+        }
+        errorMessage = nil
         showingCreateProfile = false
         newProfileName = ""
     }

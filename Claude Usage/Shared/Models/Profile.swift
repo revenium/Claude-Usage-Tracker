@@ -12,6 +12,10 @@ struct Profile: Codable, Identifiable, Equatable {
     // MARK: - Identity
     let id: UUID
     var name: String
+    /// Provider identity is immutable for the lifetime of this UUID.
+    var providerConfiguration: ProfileProviderConfiguration
+    /// Monotonic identity revision for provider-owned request state.
+    var providerRevision: UInt64
 
     // MARK: - Credentials (runtime values hydrated from secure storage)
     var claudeSessionKey: String?
@@ -67,6 +71,8 @@ struct Profile: Codable, Identifiable, Equatable {
     init(
         id: UUID = UUID(),
         name: String,
+        providerConfiguration: ProfileProviderConfiguration = .claude,
+        providerRevision: UInt64 = 0,
         claudeSessionKey: String? = nil,
         organizationId: String? = nil,
         apiSessionKey: String? = nil,
@@ -92,6 +98,8 @@ struct Profile: Codable, Identifiable, Equatable {
     ) {
         self.id = id
         self.name = name
+        self.providerConfiguration = providerConfiguration
+        self.providerRevision = providerRevision
         self.claudeSessionKey = claudeSessionKey
         self.organizationId = organizationId
         self.apiSessionKey = apiSessionKey
@@ -119,6 +127,8 @@ struct Profile: Codable, Identifiable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case id
         case name
+        case provider
+        case providerRevision
         case claudeSessionKey
         case organizationId
         case apiSessionKey
@@ -148,6 +158,30 @@ struct Profile: Codable, Identifiable, Equatable {
 
         id = try container.decode(UUID.self, forKey: .id)
         name = try container.decode(String.self, forKey: .name)
+        let hasExplicitProvider = container.contains(.provider)
+        if hasExplicitProvider {
+            providerConfiguration = try container.decode(
+                ProfileProviderConfiguration.self,
+                forKey: .provider
+            )
+        } else {
+            // Every profile written before provider support represented Claude.
+            providerConfiguration = .claude
+        }
+        if hasExplicitProvider {
+            guard container.contains(.providerRevision) else {
+                throw ProfileProviderConfigurationError.invalidTaggedShape
+            }
+            providerRevision = try container.decode(
+                UInt64.self,
+                forKey: .providerRevision
+            )
+        } else {
+            providerRevision = try container.decodeIfPresent(
+                UInt64.self,
+                forKey: .providerRevision
+            ) ?? 0
+        }
         organizationId = try container.decodeIfPresent(String.self, forKey: .organizationId)
         apiOrganizationId = try container.decodeIfPresent(String.self, forKey: .apiOrganizationId)
         apiSessionKeyExpiry = try container.decodeIfPresent(Date.self, forKey: .apiSessionKeyExpiry)
@@ -229,13 +263,17 @@ struct Profile: Codable, Identifiable, Equatable {
         currentUsageMigrationRetry = usageRetry?.isEmpty == false ? usageRetry : nil
         claudeUsage = currentUsageMigrationRetry?.claudeUsage
         apiUsage = currentUsageMigrationRetry?.apiUsage
+        try validateProviderIsolation()
     }
 
     func encode(to encoder: Encoder) throws {
+        try validateProviderIsolation()
         var container = encoder.container(keyedBy: CodingKeys.self)
 
         try container.encode(id, forKey: .id)
         try container.encode(name, forKey: .name)
+        try container.encode(providerConfiguration, forKey: .provider)
+        try container.encode(providerRevision, forKey: .providerRevision)
         try container.encodeIfPresent(organizationId, forKey: .organizationId)
         try container.encodeIfPresent(apiOrganizationId, forKey: .apiOrganizationId)
         try container.encodeIfPresent(apiSessionKeyExpiry, forKey: .apiSessionKeyExpiry)
@@ -288,6 +326,28 @@ struct Profile: Codable, Identifiable, Equatable {
 
     var hasAnyCredentials: Bool {
         hasClaudeAI || hasAPIConsole || cliCredentialsJSON != nil
+    }
+
+    func validateProviderIsolation() throws {
+        guard providerConfiguration.kind == .codex else { return }
+        let containsClaudeState =
+            claudeSessionKey != nil
+            || organizationId != nil
+            || apiSessionKey != nil
+            || apiOrganizationId != nil
+            || apiSessionKeyExpiry != nil
+            || cliCredentialsJSON != nil
+            || hasCliAccount
+            || cliAccountSyncedAt != nil
+            || cliAccountName != nil
+            || !credentialMigrationRetry.isEmpty
+            || claudeUsage != nil
+            || apiUsage != nil
+            || currentUsageMigrationRetry != nil
+        guard !containsClaudeState else {
+            throw ProfileProviderConfigurationError
+                .claudeStateOnCodexProfile(id)
+        }
     }
 }
 

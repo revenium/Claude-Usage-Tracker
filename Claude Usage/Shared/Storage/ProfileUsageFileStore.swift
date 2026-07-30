@@ -88,6 +88,7 @@ protocol ProfileCurrentUsageFileStoring: AnyObject {
         transform: (inout ProfileCurrentUsage) throws -> Void
     ) throws -> ProfileCurrentUsage
 
+    func deleteCurrentUsage(for profileID: UUID) throws
     func deleteAllData(for profileID: UUID) throws
 }
 
@@ -327,6 +328,14 @@ extension ProfileUsageFileStore: ProfileCurrentUsageFileStoring {
         )
         guard try loadCurrentUsage(for: profileID) == usage else {
             throw ProfileUsageFileStoreError.currentUsageWriteVerificationFailed(profileID)
+        }
+    }
+
+    func deleteCurrentUsage(for profileID: UUID) throws {
+        try delete(for: profileID, kind: .currentUsage)
+        guard try loadCurrentUsage(for: profileID) == nil else {
+            throw ProfileUsageFileStoreError
+                .currentUsageWriteVerificationFailed(profileID)
         }
     }
 
