@@ -13,7 +13,11 @@ public struct CodexUsageProvider: UsageProvider, Sendable {
         .resetCredits: .available,
         .interactiveLogin: .available,
         .automaticSessionStart: .unavailable,
-        .statusLineIntegration: .unavailable
+        .statusLineIntegration: .unavailable,
+        .usageHistory: .available,
+        .usageNotifications: .available,
+        .cliAccountSync: .unavailable,
+        .apiBilling: .unavailable
     ])
 
     public let capabilities = Self.supportedCapabilities

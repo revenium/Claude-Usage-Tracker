@@ -7,6 +7,7 @@
 
 import Foundation
 import Cocoa
+import UsageCore
 
 /// Background service that monitors all profiles and auto-starts sessions when they reset
 @MainActor
@@ -34,6 +35,27 @@ final class AutoStartSessionService {
         self.apiService = ClaudeAPIService()
         self.profileManager = ProfileManager.shared
         self.notificationManager = NotificationManager.shared
+    }
+
+    static func isSupported(
+        for providerID: ProviderID,
+        capabilities: ProviderCapabilities
+    ) -> Bool {
+        capabilities.supports(.automaticSessionStart)
+            && providerID == .claude
+    }
+
+    private func capabilities(
+        for providerID: ProviderID
+    ) -> ProviderCapabilities {
+        switch providerID {
+        case .claude:
+            return ClaudeUsageProviderAdapter.capabilities
+        case .codex:
+            return CodexProviderFactory.capabilities
+        default:
+            return ProviderCapabilities()
+        }
     }
 
     // MARK: - Lifecycle
@@ -119,7 +141,15 @@ final class AutoStartSessionService {
         LoggingService.shared.logDebug("AutoStartSessionService: Checking all profiles for auto-start (source: \(source))")
 
         // Get all profiles with auto-start enabled
-        let profilesWithAutoStart = profileManager.profiles.filter { $0.autoStartSessionEnabled }
+        let profilesWithAutoStart = profileManager.profiles.filter {
+            $0.autoStartSessionEnabled
+                && Self.isSupported(
+                    for: $0.providerID,
+                    capabilities: capabilities(
+                        for: $0.providerID
+                    )
+                )
+        }
 
         guard !profilesWithAutoStart.isEmpty else {
             LoggingService.shared.logDebug("No profiles with auto-start enabled")
@@ -135,6 +165,16 @@ final class AutoStartSessionService {
     }
 
     private func checkProfile(_ profile: Profile) async {
+        guard Self.isSupported(
+            for: profile.providerID,
+            capabilities: capabilities(for: profile.providerID)
+        ) else {
+            LoggingService.shared.logDebug(
+                "Skipping profile '\(profile.name)' - "
+                    + "automatic session start is unsupported"
+            )
+            return
+        }
         // Skip if profile doesn't have Claude.ai credentials
         guard profile.hasClaudeAI else {
             LoggingService.shared.logDebug("Skipping profile '\(profile.name)' - no Claude.ai credentials")

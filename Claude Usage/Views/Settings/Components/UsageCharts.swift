@@ -7,6 +7,106 @@
 
 import SwiftUI
 import Charts
+import UsageCore
+
+/// Provider-neutral chart for an arbitrary normalized usage window.
+struct NormalizedUsageChart: View {
+    let title: String
+    let snapshots: [NormalizedUsageSnapshot]
+    @Binding var timeScale: ChartTimeScale
+    @State private var timeOffset: Double = 0
+
+    private var visibleRange: ClosedRange<Date> {
+        let end = Date().addingTimeInterval(timeOffset * 3600)
+        return end.addingTimeInterval(
+            -timeScale.rawValue * 3600
+        )...end
+    }
+
+    private var visibleSnapshots: [NormalizedUsageSnapshot] {
+        snapshots.filter {
+            visibleRange.contains($0.timestamp)
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(title)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.secondary)
+                Spacer()
+                Button {
+                    timeOffset -= timeScale.rawValue / 2
+                } label: {
+                    Image(systemName: "chevron.left")
+                }
+                .buttonStyle(.plain)
+                Button {
+                    timeOffset = min(
+                        0,
+                        timeOffset + timeScale.rawValue / 2
+                    )
+                } label: {
+                    Image(systemName: "chevron.right")
+                }
+                .buttonStyle(.plain)
+                .disabled(timeOffset == 0)
+            }
+
+            Chart(visibleSnapshots) { snapshot in
+                if let percentage = snapshot.usedPercentage
+                    ?? snapshot.quantity?
+                        .calculatedUsedPercentage {
+                    LineMark(
+                        x: .value("Time", snapshot.timestamp),
+                        y: .value(
+                            "Usage",
+                            min(max(percentage, 0), 100)
+                        )
+                    )
+                    .interpolationMethod(.stepEnd)
+                    .foregroundStyle(Color.accentColor)
+
+                    AreaMark(
+                        x: .value("Time", snapshot.timestamp),
+                        y: .value(
+                            "Usage",
+                            min(max(percentage, 0), 100)
+                        )
+                    )
+                    .interpolationMethod(.stepEnd)
+                    .foregroundStyle(
+                        Color.accentColor.opacity(0.12)
+                    )
+                }
+            }
+            .chartXScale(domain: visibleRange)
+            .chartYScale(domain: 0...100)
+            .chartYAxis {
+                AxisMarks(
+                    position: .leading,
+                    values: [0, 50, 100]
+                ) { value in
+                    AxisGridLine()
+                    AxisValueLabel {
+                        if let intValue = value.as(Int.self) {
+                            Text("\(intValue)%")
+                                .font(.system(size: 9))
+                        }
+                    }
+                }
+            }
+            .frame(height: 140)
+        }
+        .padding(12)
+        .background(DesignTokens.Colors.cardBackground)
+        .cornerRadius(8)
+        .onChange(of: timeScale) {
+            timeOffset = 0
+        }
+    }
+}
 
 /// Data point for timeline chart
 struct TimeSlot: Identifiable, Equatable {

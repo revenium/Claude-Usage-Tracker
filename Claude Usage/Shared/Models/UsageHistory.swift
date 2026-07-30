@@ -6,6 +6,170 @@
 //
 
 import Foundation
+import UsageCore
+
+/// Stable identity for one provider window reset cycle.
+///
+/// Display names are deliberately excluded because providers may localize or
+/// rename them without changing the underlying limit.
+struct UsageHistoryWindowIdentity: Codable, Hashable, Sendable {
+    let profileID: UUID
+    let providerID: ProviderID
+    let groupID: UsageLimitGroupID
+    let windowID: UsageWindowID
+    let cycleID: String
+}
+
+/// Provider-neutral history point captured from a normalized usage report.
+struct NormalizedUsageSnapshot: Codable, Identifiable, Equatable, Sendable {
+    let id: UUID
+    let timestamp: Date
+    let profileID: UUID
+    let providerID: ProviderID
+    let groupID: UsageLimitGroupID
+    let groupDisplayName: String?
+    let windowID: UsageWindowID
+    let windowDisplayName: String?
+    let cycleID: String
+    let usedPercentage: Double?
+    let quantity: UsageQuantity?
+    let startedAt: Date?
+    let resetsAt: Date?
+    let duration: TimeInterval?
+    let sourceUpdatedAt: Date?
+    let fetchedAt: Date
+
+    var identity: UsageHistoryWindowIdentity {
+        UsageHistoryWindowIdentity(
+            profileID: profileID,
+            providerID: providerID,
+            groupID: groupID,
+            windowID: windowID,
+            cycleID: cycleID
+        )
+    }
+
+    init(
+        id: UUID = UUID(),
+        timestamp: Date,
+        profileID: UUID,
+        providerID: ProviderID,
+        groupID: UsageLimitGroupID,
+        groupDisplayName: String? = nil,
+        windowID: UsageWindowID,
+        windowDisplayName: String? = nil,
+        cycleID: String,
+        usedPercentage: Double?,
+        quantity: UsageQuantity?,
+        startedAt: Date?,
+        resetsAt: Date?,
+        duration: TimeInterval?,
+        sourceUpdatedAt: Date?,
+        fetchedAt: Date
+    ) {
+        self.id = id
+        self.timestamp = timestamp
+        self.profileID = profileID
+        self.providerID = providerID
+        self.groupID = groupID
+        self.groupDisplayName = groupDisplayName
+        self.windowID = windowID
+        self.windowDisplayName = windowDisplayName
+        self.cycleID = cycleID
+        self.usedPercentage = usedPercentage
+        self.quantity = quantity
+        self.startedAt = startedAt
+        self.resetsAt = resetsAt
+        self.duration = duration
+        self.sourceUpdatedAt = sourceUpdatedAt
+        self.fetchedAt = fetchedAt
+    }
+
+    init(
+        profileID: UUID,
+        report: UsageReport,
+        group: UsageLimitGroup,
+        window: UsageWindow
+    ) {
+        self.init(
+            timestamp: report.fetchedAt,
+            profileID: profileID,
+            providerID: report.providerID,
+            groupID: group.id,
+            groupDisplayName: group.displayName,
+            windowID: window.id,
+            windowDisplayName: window.displayName,
+            cycleID: Self.cycleID(for: window),
+            usedPercentage: window.usedPercentage
+                ?? window.quantity?.calculatedUsedPercentage,
+            quantity: window.quantity,
+            startedAt: window.startedAt,
+            resetsAt: window.resetsAt,
+            duration: window.duration,
+            sourceUpdatedAt: report.sourceUpdatedAt,
+            fetchedAt: report.fetchedAt
+        )
+    }
+
+    /// Reset and start timestamps come from the provider protocol and are
+    /// stable across refreshes. The fallback remains stable for an unbounded
+    /// window instead of using a display label or fetch timestamp.
+    static func cycleID(for window: UsageWindow) -> String {
+        if let resetsAt = window.resetsAt {
+            return "reset:\(Self.timestampComponent(resetsAt))"
+        }
+        if let startedAt = window.startedAt {
+            return "start:\(Self.timestampComponent(startedAt))"
+        }
+        if let duration = window.duration {
+            return "duration:\(duration.bitPattern)"
+        }
+        return "unbounded"
+    }
+
+    private static func timestampComponent(_ date: Date) -> String {
+        String(date.timeIntervalSinceReferenceDate.bitPattern)
+    }
+}
+
+struct UsageHistoryExportProfile: Codable, Equatable {
+    let profileID: UUID
+    let profileName: String
+    let providerID: ProviderID
+    let legacySnapshots: [UsageSnapshot]
+    let normalizedSnapshots: [NormalizedUsageSnapshot]
+}
+
+/// Explicit, forward-versioned user export. It intentionally contains only
+/// display metadata and usage values—never credentials, provider home paths,
+/// executable paths, or authentication-file content.
+struct UsageHistoryExportDocument: Codable, Equatable {
+    static let currentSchemaVersion = 2
+
+    let schemaVersion: Int
+    let exportedAt: Date
+    let profiles: [UsageHistoryExportProfile]
+
+    init(
+        schemaVersion: Int = Self.currentSchemaVersion,
+        exportedAt: Date,
+        profiles: [UsageHistoryExportProfile]
+    ) {
+        self.schemaVersion = schemaVersion
+        self.exportedAt = exportedAt
+        self.profiles = profiles
+    }
+
+    func encodedJSON() throws -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        return try String(
+            decoding: encoder.encode(self),
+            as: UTF8.self
+        )
+    }
+}
 
 /// Reset type that triggers a usage snapshot
 enum ResetType: String, Codable, CaseIterable {
@@ -167,9 +331,31 @@ struct UsageSnapshot: Codable, Identifiable, Equatable {
 /// Container for a profile's usage history
 struct UsageHistoryData: Codable, Equatable {
     var snapshots: [UsageSnapshot]
+    var normalizedSnapshots: [NormalizedUsageSnapshot]
 
-    init(snapshots: [UsageSnapshot] = []) {
+    init(
+        snapshots: [UsageSnapshot] = [],
+        normalizedSnapshots: [NormalizedUsageSnapshot] = []
+    ) {
         self.snapshots = snapshots
+        self.normalizedSnapshots = normalizedSnapshots
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case snapshots
+        case normalizedSnapshots
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        snapshots = try container.decodeIfPresent(
+            [UsageSnapshot].self,
+            forKey: .snapshots
+        ) ?? []
+        normalizedSnapshots = try container.decodeIfPresent(
+            [NormalizedUsageSnapshot].self,
+            forKey: .normalizedSnapshots
+        ) ?? []
     }
 
     /// Snapshots filtered by reset type
@@ -200,17 +386,36 @@ struct UsageHistoryData: Codable, Equatable {
 
     /// Total number of snapshots
     var count: Int {
-        snapshots.count
+        snapshots.count + normalizedSnapshots.count
     }
 
     /// Whether there are any snapshots
     var isEmpty: Bool {
-        snapshots.isEmpty
+        snapshots.isEmpty && normalizedSnapshots.isEmpty
     }
 
     /// Add a new snapshot
     mutating func addSnapshot(_ snapshot: UsageSnapshot) {
         snapshots.append(snapshot)
+    }
+
+    mutating func addNormalizedSnapshot(
+        _ snapshot: NormalizedUsageSnapshot
+    ) {
+        normalizedSnapshots.append(snapshot)
+    }
+
+    func normalizedSnapshots(
+        providerID: ProviderID? = nil,
+        groupID: UsageLimitGroupID? = nil,
+        windowID: UsageWindowID? = nil
+    ) -> [NormalizedUsageSnapshot] {
+        normalizedSnapshots.filter { snapshot in
+            (providerID == nil || snapshot.providerID == providerID)
+                && (groupID == nil || snapshot.groupID == groupID)
+                && (windowID == nil || snapshot.windowID == windowID)
+        }
+        .sorted { $0.timestamp > $1.timestamp }
     }
 
     /// Export to JSON string

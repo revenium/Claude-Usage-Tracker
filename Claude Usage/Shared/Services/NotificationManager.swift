@@ -1,6 +1,223 @@
 import Foundation
 import UserNotifications
 import AppKit
+import UsageCore
+
+struct UsageNotificationWindowKey: Hashable, Sendable {
+    let profileID: UUID
+    let providerID: ProviderID
+    let groupID: UsageLimitGroupID
+    let windowID: UsageWindowID
+}
+
+struct UsageNotificationWindowState: Equatable, Sendable {
+    let cycleID: String
+    let percentage: Double
+}
+
+enum UsageNotificationEventKind: String, Equatable, Sendable {
+    case threshold
+    case reset
+}
+
+struct UsageNotificationIdentity: Hashable, Sendable {
+    let window: UsageNotificationWindowKey
+    let cycleID: String
+    let kind: UsageNotificationEventKind
+    let threshold: Int?
+
+    /// Injective, display-independent identity persisted across launches.
+    var persistenceKey: String {
+        [
+            window.profileID.uuidString.lowercased(),
+            window.providerID.rawValue,
+            window.groupID.rawValue,
+            window.windowID.rawValue,
+            cycleID,
+            kind.rawValue,
+            threshold.map(String.init) ?? "-"
+        ]
+        .map { "\($0.utf8.count):\($0)" }
+        .joined()
+    }
+}
+
+struct UsageNotificationEvent: Equatable, Sendable {
+    let identity: UsageNotificationIdentity
+    let percentage: Double
+    let threshold: Int?
+    let resetTime: Date?
+    let groupDisplayName: String?
+    let windowDisplayName: String?
+}
+
+struct UsageNotificationEvaluation: Equatable, Sendable {
+    let events: [UsageNotificationEvent]
+    let states: [UsageNotificationWindowKey:
+        UsageNotificationWindowState]
+}
+
+/// Pure threshold/reset policy used by NotificationManager and deterministic
+/// tests. It consumes only normalized provider data and stable identities.
+enum UsageNotificationPolicy {
+    static func baselineStates(
+        report: UsageReport,
+        profileID: UUID
+    ) -> [UsageNotificationWindowKey:
+        UsageNotificationWindowState] {
+        var result: [UsageNotificationWindowKey:
+            UsageNotificationWindowState] = [:]
+        for group in report.limitGroups {
+            for window in group.windows {
+                guard let percentage = window.usedPercentage
+                        ?? window.quantity?
+                            .calculatedUsedPercentage,
+                      percentage.isFinite else {
+                    continue
+                }
+                result[
+                    UsageNotificationWindowKey(
+                        profileID: profileID,
+                        providerID: report.providerID,
+                        groupID: group.id,
+                        windowID: window.id
+                    )
+                ] = UsageNotificationWindowState(
+                    cycleID:
+                        NormalizedUsageSnapshot.cycleID(
+                            for: window
+                        ),
+                    percentage: percentage
+                )
+            }
+        }
+        return result
+    }
+
+    static func evaluate(
+        report: UsageReport,
+        profileID: UUID,
+        settings: NotificationSettings,
+        now: Date,
+        previousStates: [UsageNotificationWindowKey:
+            UsageNotificationWindowState],
+        sentIdentities: Set<String>
+    ) -> UsageNotificationEvaluation {
+        guard settings.enabled,
+              !report.isStale(at: now),
+              report.health.status != .unavailable,
+              report.health.status != .unauthenticated,
+              report.health.status != .unsupported else {
+            return UsageNotificationEvaluation(
+                events: [],
+                states: previousStates
+            )
+        }
+
+        var states = previousStates
+        var events: [UsageNotificationEvent] = []
+        let thresholds = settings.sortedThresholds.filter {
+            threshold in
+            (1...100).contains(threshold)
+        }
+        for group in report.limitGroups {
+            for window in group.windows {
+                guard let percentage = window.usedPercentage
+                        ?? window.quantity?
+                            .calculatedUsedPercentage,
+                      percentage.isFinite else {
+                    continue
+                }
+                let key = UsageNotificationWindowKey(
+                    profileID: profileID,
+                    providerID: report.providerID,
+                    groupID: group.id,
+                    windowID: window.id
+                )
+                let cycleID =
+                    NormalizedUsageSnapshot.cycleID(for: window)
+                let previous = previousStates[key]
+                let isNewCycle =
+                    previous.map { $0.cycleID != cycleID } ?? false
+
+                if isNewCycle,
+                   let previous,
+                   previous.percentage > 0 {
+                    let identity = UsageNotificationIdentity(
+                        window: key,
+                        cycleID: cycleID,
+                        kind: .reset,
+                        threshold: nil
+                    )
+                    if !sentIdentities.contains(
+                        identity.persistenceKey
+                    ) {
+                        events.append(
+                            UsageNotificationEvent(
+                                identity: identity,
+                                percentage: percentage,
+                                threshold: nil,
+                                resetTime: window.resetsAt,
+                                groupDisplayName:
+                                    group.displayName,
+                                windowDisplayName:
+                                    window.displayName
+                            )
+                        )
+                    }
+                }
+
+                // The first observation establishes a baseline. A new reset
+                // cycle starts from zero so high first samples can alert again.
+                let priorPercentage: Double?
+                if isNewCycle {
+                    priorPercentage = 0
+                } else {
+                    priorPercentage = previous?.percentage
+                }
+                if let priorPercentage,
+                   let threshold = thresholds
+                    .reversed()
+                    .first(where: {
+                        priorPercentage < Double($0)
+                            && percentage >= Double($0)
+                    }) {
+                    let identity = UsageNotificationIdentity(
+                        window: key,
+                        cycleID: cycleID,
+                        kind: .threshold,
+                        threshold: threshold
+                    )
+                    if !sentIdentities.contains(
+                        identity.persistenceKey
+                    ) {
+                        events.append(
+                            UsageNotificationEvent(
+                                identity: identity,
+                                percentage: percentage,
+                                threshold: threshold,
+                                resetTime: window.resetsAt,
+                                groupDisplayName:
+                                    group.displayName,
+                                windowDisplayName:
+                                    window.displayName
+                            )
+                        )
+                    }
+                }
+
+                states[key] = UsageNotificationWindowState(
+                    cycleID: cycleID,
+                    percentage: percentage
+                )
+            }
+        }
+        return UsageNotificationEvaluation(
+            events: events,
+            states: states
+        )
+    }
+}
 
 /// Manages user notifications for usage threshold alerts
 class NotificationManager: NotificationServiceProtocol {
@@ -8,6 +225,9 @@ class NotificationManager: NotificationServiceProtocol {
 
     // Track previous session percentage per profile to detect resets
     private var previousSessionPercentages: [String: Double] = [:]
+    private var normalizedWindowStates:
+        [UsageNotificationWindowKey:
+            UsageNotificationWindowState] = [:]
 
     // Track which notifications have been sent to prevent duplicates
     // Persisted to UserDefaults to survive app restarts
@@ -21,6 +241,145 @@ class NotificationManager: NotificationServiceProtocol {
     }
 
     private init() {}
+
+    /// Applies the profile's notification policy to every normalized usage
+    /// window. Callers must pass the accepted report for the exact profile.
+    func checkAndNotify(
+        report: UsageReport,
+        previousReport: UsageReport? = nil,
+        profileID: UUID,
+        profileName: String,
+        settings: NotificationSettings,
+        now: Date = Date()
+    ) {
+        var priorStates = normalizedWindowStates
+        if let previousReport,
+           previousReport.providerID == report.providerID {
+            let persistedBaseline =
+                UsageNotificationPolicy.baselineStates(
+                    report: previousReport,
+                    profileID: profileID
+                )
+            for (key, state) in persistedBaseline
+            where priorStates[key] == nil {
+                priorStates[key] = state
+            }
+        }
+        let evaluation = UsageNotificationPolicy.evaluate(
+            report: report,
+            profileID: profileID,
+            settings: settings,
+            now: now,
+            previousStates: priorStates,
+            sentIdentities: sentNotifications
+        )
+        normalizedWindowStates = evaluation.states
+        for event in evaluation.events {
+            sendNormalizedAlert(
+                event,
+                profileName: profileName,
+                soundName: settings.soundName
+            )
+        }
+    }
+
+    private func sendNormalizedAlert(
+        _ event: UsageNotificationEvent,
+        profileName: String,
+        soundName: String
+    ) {
+        let identifier = event.identity.persistenceKey
+        guard !sentNotifications.contains(identifier) else {
+            return
+        }
+
+        let content = UNMutableNotificationContent()
+        let groupLabel = event.groupDisplayName
+            ?? event.identity.window.groupID.rawValue
+        let windowLabel = event.windowDisplayName
+            ?? event.identity.window.windowID.rawValue
+        let label =
+            groupLabel == windowLabel
+            ? windowLabel
+            : "\(groupLabel) – \(windowLabel)"
+        let titleFormat = ProviderUILocalization.text(
+            "notification.provider_usage.title",
+            fallback: "%@ – %@"
+        )
+        content.title = String(
+            format: titleFormat,
+            profileName,
+            label
+        )
+        if let threshold = event.threshold {
+            let reset = event.resetTime.map {
+                let resetFormat = ProviderUILocalization.text(
+                    "notification.provider_usage.reset_suffix",
+                    fallback: " Resets %@."
+                )
+                return String(
+                    format: resetFormat,
+                    FormatterHelper.timeUntilReset(from: $0)
+                )
+            } ?? ""
+            let bodyFormat = ProviderUILocalization.text(
+                "notification.provider_usage.threshold",
+                fallback: "Usage crossed %d%% (%.1f%%).%@"
+            )
+            content.body = String(
+                format: bodyFormat,
+                threshold,
+                event.percentage,
+                reset
+            )
+        } else {
+            content.body = ProviderUILocalization.text(
+                "notification.provider_usage.reset",
+                fallback: "Usage window reset."
+            )
+        }
+        content.categoryIdentifier = "USAGE_ALERT"
+
+        let customSoundName: String?
+        switch soundName {
+        case "none":
+            customSoundName = nil
+        case "default":
+            content.sound = .default
+            customSoundName = nil
+        default:
+            customSoundName = soundName
+        }
+
+        var updated = sentNotifications
+        updated.insert(identifier)
+        sentNotifications = updated
+        let request = UNNotificationRequest(
+            identifier: identifier,
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request) {
+            [weak self] error in
+            if let error {
+                var rollback = self?.sentNotifications ?? []
+                rollback.remove(identifier)
+                self?.sentNotifications = rollback
+                LoggingService.shared.logError(
+                    "Failed to send usage notification",
+                    error: error
+                )
+                return
+            }
+            if let customSoundName {
+                DispatchQueue.main.async {
+                    NSSound(
+                        named: NSSound.Name(customSoundName)
+                    )?.play()
+                }
+            }
+        }
+    }
 
     /// Sends a notification when approaching usage limits (legacy method)
     func sendUsageAlert(type: AlertType, percentage: Double, resetTime: Date?) {
@@ -314,6 +673,21 @@ class NotificationManager: NotificationServiceProtocol {
     func clearNotificationsForProfile(_ profileName: String) {
         sentNotifications = sentNotifications.filter { !$0.hasPrefix(profileName) }
         previousSessionPercentages.removeValue(forKey: profileName)
+    }
+
+    func clearNotificationsForProfile(
+        _ profileID: UUID,
+        providerID: ProviderID
+    ) {
+        normalizedWindowStates = normalizedWindowStates.filter {
+            $0.key.profileID != profileID
+                || $0.key.providerID != providerID
+        }
+        let component = profileID.uuidString.lowercased()
+        let profilePrefix = "\(component.utf8.count):\(component)"
+        sentNotifications = sentNotifications.filter {
+            !$0.hasPrefix(profilePrefix)
+        }
     }
 
     /// Schedules a notification 24 hours before the session key expires

@@ -1364,12 +1364,24 @@ final class MenuReliabilityTests: HostedAppTestCase {
             trigger: .manual,
             presentationContext: context,
             capabilities: ProviderCapabilities([
-                .statusLineIntegration: .available
+                .statusLineIntegration: .available,
+                .usageHistory: .available,
+                .usageNotifications: .available
             ]),
             previousUsage: nil,
             currentUsage: ProfileCurrentUsage(
                 providerID: .claude,
                 providerRevision: 0,
+                report:
+                    components.contains(.providerUsage)
+                        ? try! makeUsageReport(
+                            providerID: .claude,
+                            fetchedAt: Date(
+                                timeIntervalSinceReferenceDate:
+                                    2_000
+                            )
+                        )
+                        : nil,
                 claudeUsage:
                     components.contains(.providerUsage)
                         ? usage
@@ -1461,15 +1473,16 @@ final class MenuReliabilityTests: HostedAppTestCase {
     ) -> MenuBarManager.RefreshSideEffectRouter {
         retain(MenuBarManager.RefreshSideEffectRouter(
             hooks: .init(
-                recordClaude: { event, _ in
+                recordNormalized: { event, _ in
                     recorder.append("history:\(event.profileName)")
                 },
+                recordClaude: { _, _ in },
                 writeStatusline: { event, _ in
                     recorder.append(
                         "statusline:\(event.profileName)"
                     )
                 },
-                notify: { event, _ in
+                notifyNormalized: { event, _ in
                     recorder.append(
                         "notify:\(event.profileName):"
                             + "\(event.notificationSettings.enabled):"

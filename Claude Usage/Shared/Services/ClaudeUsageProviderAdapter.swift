@@ -43,7 +43,11 @@ enum ClaudeUsageProviderAdapter {
         .resetCredits: .unavailable,
         .interactiveLogin: .unavailable,
         .automaticSessionStart: .available,
-        .statusLineIntegration: .available
+        .statusLineIntegration: .available,
+        .usageHistory: .available,
+        .usageNotifications: .available,
+        .cliAccountSync: .available,
+        .apiBilling: .available
     ])
 
     static func makeReport(

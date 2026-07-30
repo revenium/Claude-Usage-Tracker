@@ -8,6 +8,7 @@
 import Foundation
 import AppKit
 import UniformTypeIdentifiers
+import UsageCore
 
 @MainActor
 protocol ProfileHistoryDeleting: AnyObject {
@@ -43,21 +44,27 @@ class UsageHistoryService: ProfileHistoryDeleting {
     /// Maximum snapshots to keep per type (to prevent excessive data)
     private let maxSessionSnapshots = 1000   // ~7 days at 10-min intervals
     private let maxWeeklySnapshots = 500     // ~6 weeks at 2-hour intervals
+    private let maxNormalizedSnapshots: Int
 
     /// Recording intervals for periodic snapshots
     private let sessionRecordingInterval: TimeInterval = 10 * 60  // 10 minutes
     private let weeklyRecordingInterval: TimeInterval = 2 * 60 * 60  // 2 hours
 
-    private let providerID = "claude"
+    private let legacyProviderID = ProviderID.claude
 
     init(
         defaults: UserDefaults = .standard,
         fileStore: ProfileUsageFileStore? = nil,
-        now: @escaping () -> Date = Date.init
+        now: @escaping () -> Date = Date.init,
+        maxNormalizedSnapshots: Int = 5000
     ) {
         self.defaults = defaults
         self.fileStore = fileStore ?? ProfileUsageFileStore()
         self.now = now
+        self.maxNormalizedSnapshots = max(
+            1,
+            maxNormalizedSnapshots
+        )
         migrateLegacyHistory()
     }
 
@@ -93,12 +100,16 @@ class UsageHistoryService: ProfileHistoryDeleting {
     // MARK: - Save/Load History
 
     /// Saves usage history for a profile in durable file storage.
-    func saveHistory(_ history: UsageHistoryData, for profileId: UUID) {
+    func saveHistory(
+        _ history: UsageHistoryData,
+        for profileId: UUID,
+        providerID: ProviderID = .claude
+    ) {
         do {
             try fileStore.save(
                 history,
                 for: profileId,
-                providerID: providerID,
+                providerID: providerID.rawValue,
                 kind: .history
             )
             LoggingService.shared.logStorageSave("usageHistory for profile \(profileId.uuidString.prefix(8))")
@@ -108,14 +119,32 @@ class UsageHistoryService: ProfileHistoryDeleting {
     }
 
     /// Loads usage history for a profile
-    func loadHistory(for profileId: UUID) -> UsageHistoryData {
+    func loadHistory(
+        for profileId: UUID,
+        providerID: ProviderID = .claude
+    ) -> UsageHistoryData {
         do {
             if let history = try fileStore.load(
                 UsageHistoryData.self,
                 for: profileId,
-                providerID: providerID,
+                providerID: providerID.rawValue,
                 kind: .history
             ) {
+                let matching = history.normalizedSnapshots.filter {
+                    $0.profileID == profileId
+                        && $0.providerID == providerID
+                }
+                guard matching.count
+                        == history.normalizedSnapshots.count else {
+                    LoggingService.shared.logError(
+                        "Ignored normalized history with mismatched "
+                            + "profile or provider identity"
+                    )
+                    return UsageHistoryData(
+                        snapshots: history.snapshots,
+                        normalizedSnapshots: matching
+                    )
+                }
                 return history
             }
         } catch {
@@ -124,7 +153,8 @@ class UsageHistoryService: ProfileHistoryDeleting {
 
         // A failed migration never deletes its source. Falling back here keeps
         // history available until a later launch can complete the file write.
-        if let legacy = decodeLegacyHistory(for: profileId) {
+        if providerID == .claude,
+           let legacy = decodeLegacyHistory(for: profileId) {
             return legacy
         }
         return UsageHistoryData()
@@ -166,7 +196,7 @@ class UsageHistoryService: ProfileHistoryDeleting {
             if try fileStore.load(
                 UsageHistoryData.self,
                 for: profileID,
-                providerID: providerID,
+                providerID: legacyProviderID.rawValue,
                 kind: .history
             ) != nil {
                 // A valid file is authoritative if a previous migration wrote
@@ -181,14 +211,14 @@ class UsageHistoryService: ProfileHistoryDeleting {
             try fileStore.save(
                 legacyHistory,
                 for: profileID,
-                providerID: providerID,
+                providerID: legacyProviderID.rawValue,
                 kind: .history
             )
 
             guard let verified = try fileStore.load(
                 UsageHistoryData.self,
                 for: profileID,
-                providerID: providerID,
+                providerID: legacyProviderID.rawValue,
                 kind: .history
             ), verified == legacyHistory else {
                 LoggingService.shared.logError(
@@ -221,17 +251,96 @@ class UsageHistoryService: ProfileHistoryDeleting {
     @discardableResult
     private func updateHistory(
         for profileID: UUID,
+        providerID: ProviderID = .claude,
         transform: (inout UsageHistoryData) -> Void
     ) throws -> UsageHistoryData {
-        let initialHistory = decodeLegacyHistory(for: profileID) ?? UsageHistoryData()
+        let initialHistory =
+            providerID == .claude
+            ? (decodeLegacyHistory(for: profileID) ?? UsageHistoryData())
+            : UsageHistoryData()
         return try fileStore.update(
             UsageHistoryData.self,
             for: profileID,
-            providerID: providerID,
+            providerID: providerID.rawValue,
             kind: .history,
             initialValue: initialHistory,
             transform: transform
         )
+    }
+
+    // MARK: - Provider-Neutral Recording
+
+    /// Records one point per normalized provider window.
+    ///
+    /// A reset-cycle change records immediately. Otherwise points are sampled
+    /// at the existing session cadence to keep durable history bounded.
+    func recordNormalizedReport(
+        _ report: UsageReport,
+        for profileID: UUID,
+        providerID: ProviderID,
+        recordedAt: Date? = nil
+    ) {
+        guard report.providerID == providerID else {
+            LoggingService.shared.logError(
+                "History report provider does not match profile provider"
+            )
+            return
+        }
+        let effectiveNow = recordedAt ?? now()
+        guard !report.isStale(at: effectiveNow),
+              report.health.status != .unavailable,
+              report.health.status != .unauthenticated,
+              report.health.status != .unsupported else {
+            LoggingService.shared.logInfo(
+                "Skipping stale or unavailable normalized history report"
+            )
+            return
+        }
+
+        let candidates = report.limitGroups.flatMap { group in
+            group.windows.map {
+                NormalizedUsageSnapshot(
+                    profileID: profileID,
+                    report: report,
+                    group: group,
+                    window: $0
+                )
+            }
+        }
+        guard !candidates.isEmpty else { return }
+
+        do {
+            try updateHistory(
+                for: profileID,
+                providerID: providerID
+            ) { history in
+                for candidate in candidates {
+                    let previous = history.normalizedSnapshots
+                        .filter {
+                            $0.profileID == candidate.profileID
+                                && $0.providerID
+                                    == candidate.providerID
+                                && $0.groupID == candidate.groupID
+                                && $0.windowID == candidate.windowID
+                        }
+                        .max { $0.timestamp < $1.timestamp }
+                    if let previous,
+                       previous.cycleID == candidate.cycleID,
+                       candidate.timestamp
+                        .timeIntervalSince(previous.timestamp)
+                            < sessionRecordingInterval {
+                        continue
+                    }
+                    history.addNormalizedSnapshot(candidate)
+                }
+                pruneNormalizedSnapshots(in: &history)
+            }
+        } catch {
+            LoggingService.shared.logStorageError(
+                "recordNormalizedReport",
+                error: error
+            )
+        }
     }
 
     // MARK: - Record Resets
@@ -404,6 +513,20 @@ class UsageHistoryService: ProfileHistoryDeleting {
         history.snapshots.removeAll { idsToRemove.contains($0.id) }
     }
 
+    private func pruneNormalizedSnapshots(
+        in history: inout UsageHistoryData
+    ) {
+        guard history.normalizedSnapshots.count
+                > maxNormalizedSnapshots else {
+            return
+        }
+        history.normalizedSnapshots = Array(
+            history.normalizedSnapshots
+                .sorted { $0.timestamp > $1.timestamp }
+                .prefix(maxNormalizedSnapshots)
+        )
+    }
+
     // MARK: - Query Methods
 
     /// Gets session snapshots for a profile (sorted newest first)
@@ -422,33 +545,81 @@ class UsageHistoryService: ProfileHistoryDeleting {
     }
 
     /// Gets all snapshots for a profile (sorted newest first)
-    func getAllSnapshots(for profileId: UUID) -> [UsageSnapshot] {
-        return loadHistory(for: profileId).snapshots.sorted { $0.timestamp > $1.timestamp }
+    func getAllSnapshots(
+        for profileId: UUID,
+        providerID: ProviderID = .claude
+    ) -> [UsageSnapshot] {
+        return loadHistory(
+            for: profileId,
+            providerID: providerID
+        ).snapshots.sorted { $0.timestamp > $1.timestamp }
     }
 
     // MARK: - Export
 
     /// Exports history to file in specified format
-    func exportToFile(for profileId: UUID, resetType: ResetType? = nil, format: ExportFormat = .json) {
-        let history = loadHistory(for: profileId)
-        let content: String
+    func makeExport(
+        profiles: [Profile],
+        exportedAt: Date? = nil
+    ) -> UsageHistoryExportDocument {
+        UsageHistoryExportDocument(
+            exportedAt: exportedAt ?? now(),
+            profiles: profiles.map { profile in
+                let history = loadHistory(
+                    for: profile.id,
+                    providerID: profile.providerID
+                )
+                return UsageHistoryExportProfile(
+                    profileID: profile.id,
+                    profileName: profile.name,
+                    providerID: profile.providerID,
+                    legacySnapshots: history.snapshots,
+                    normalizedSnapshots:
+                        history.normalizedSnapshots
+                )
+            }
+        )
+    }
+
+    func exportContent(
+        profiles: [Profile],
+        resetType: ResetType? = nil,
+        format: ExportFormat = .json,
+        exportedAt: Date? = nil
+    ) -> String? {
+        let document = makeExport(
+            profiles: profiles,
+            exportedAt: exportedAt
+        )
+        switch format {
+        case .json:
+            return try? document.encodedJSON()
+        case .csv:
+            return Self.csv(
+                document: document,
+                resetType: resetType
+            )
+        }
+    }
+
+    /// Exports history to file in specified format.
+    func exportToFile(
+        profile: Profile,
+        resetType: ResetType? = nil,
+        format: ExportFormat = .json
+    ) {
+        let content = exportContent(
+            profiles: [profile],
+            resetType: resetType,
+            format: format
+        ) ?? ""
         let fileExtension: String
 
         switch format {
         case .json:
-            if let type = resetType {
-                content = history.exportToJSON(for: type) ?? ""
-            } else {
-                content = history.exportToJSON() ?? ""
-            }
             fileExtension = "json"
 
         case .csv:
-            if let type = resetType {
-                content = history.exportToCSV(for: type)
-            } else {
-                content = history.exportToCSV()
-            }
             fileExtension = "csv"
         }
 
@@ -466,7 +637,9 @@ class UsageHistoryService: ProfileHistoryDeleting {
         let dateStr = dateFormatter.string(from: Date())
 
         let typeSuffix = resetType?.rawValue ?? "all"
-        savePanel.nameFieldStringValue = "claude-usage-history-\(typeSuffix)-\(dateStr).\(fileExtension)"
+        savePanel.nameFieldStringValue =
+            "\(profile.providerID.rawValue)-usage-history-"
+            + "\(typeSuffix)-\(dateStr).\(fileExtension)"
 
         savePanel.begin { response in
             if response == .OK, let url = savePanel.url {
@@ -480,9 +653,171 @@ class UsageHistoryService: ProfileHistoryDeleting {
         }
     }
 
+    /// Compatibility entry point for legacy callers that only carry a UUID.
+    func exportToFile(
+        for profileId: UUID,
+        resetType: ResetType? = nil,
+        format: ExportFormat = .json
+    ) {
+        let profile = Profile(
+            id: profileId,
+            name: "Profile"
+        )
+        exportToFile(
+            profile: profile,
+            resetType: resetType,
+            format: format
+        )
+    }
+
     enum ExportFormat {
         case json
         case csv
+    }
+
+    private static func csv(
+        document: UsageHistoryExportDocument,
+        resetType: ResetType?
+    ) -> String {
+        var rows = [
+            "Schema Version,Profile ID,Profile Name,Provider,Timestamp,"
+                + "Group ID,Window ID,Cycle ID,Usage %,Used,Limit,Unit,"
+                + "Currency,Started At,Resets At,Session Tokens,"
+                + "Weekly Tokens,Opus %,Sonnet %,Fable %,API Spend,"
+                + "API Prepaid Credits"
+        ]
+        let formatter = ISO8601DateFormatter()
+
+        for profile in document.profiles {
+            let normalized = profile.normalizedSnapshots
+                .sorted { $0.timestamp > $1.timestamp }
+            for snapshot in normalized {
+                let percentage = snapshot.usedPercentage.map {
+                    String($0)
+                } ?? ""
+                let used = snapshot.quantity.map {
+                    String($0.used)
+                } ?? ""
+                let limit = snapshot.quantity?.limit.map {
+                    String($0)
+                } ?? ""
+                let startedAt = snapshot.startedAt.map {
+                    formatter.string(from: $0)
+                } ?? ""
+                let resetsAt = snapshot.resetsAt.map {
+                    formatter.string(from: $0)
+                } ?? ""
+                let columns: [String] = [
+                    String(document.schemaVersion),
+                    profile.profileID.uuidString,
+                    escapedCSV(profile.profileName),
+                    profile.providerID.rawValue,
+                    formatter.string(from: snapshot.timestamp),
+                    escapedCSV(snapshot.groupID.rawValue),
+                    escapedCSV(snapshot.windowID.rawValue),
+                    escapedCSV(snapshot.cycleID),
+                    percentage,
+                    used,
+                    limit,
+                    snapshot.quantity?.unit.rawValue ?? "",
+                    snapshot.quantity?.currencyCode?.rawValue ?? "",
+                    startedAt,
+                    resetsAt,
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    ""
+                ]
+                rows.append(columns.joined(separator: ","))
+            }
+
+            let legacy = resetType.map { selectedType in
+                profile.legacySnapshots.filter {
+                    $0.resetType == selectedType
+                }
+            } ?? profile.legacySnapshots
+            for snapshot in legacy.sorted(
+                by: { $0.timestamp > $1.timestamp }
+            ) {
+                let percentage =
+                    snapshot.sessionPercentage.map {
+                        String($0)
+                    }
+                    ?? snapshot.weeklyPercentage.map {
+                        String($0)
+                    }
+                    ?? ""
+                let cycleBits = snapshot.triggeringResetTime
+                    .timeIntervalSinceReferenceDate
+                    .bitPattern
+                let cycleID = "reset:" + String(cycleBits)
+                let sessionTokens = snapshot.sessionTokensUsed.map {
+                    String($0)
+                } ?? ""
+                let weeklyTokens = snapshot.weeklyTokensUsed.map {
+                    String($0)
+                } ?? ""
+                let opusPercentage =
+                    snapshot.opusWeeklyPercentage.map {
+                        String($0)
+                    } ?? ""
+                let sonnetPercentage =
+                    snapshot.sonnetWeeklyPercentage.map {
+                        String($0)
+                    } ?? ""
+                let fablePercentage =
+                    snapshot.fableWeeklyPercentage.map {
+                        String($0)
+                    } ?? ""
+                let apiSpend = snapshot.apiSpendCents.map {
+                    String(Double($0) / 100)
+                } ?? ""
+                let apiPrepaidCredits =
+                    snapshot.apiPrepaidCreditsCents.map {
+                        String(Double($0) / 100)
+                    } ?? ""
+                let columns: [String] = [
+                    String(document.schemaVersion),
+                    profile.profileID.uuidString,
+                    escapedCSV(profile.profileName),
+                    profile.providerID.rawValue,
+                    formatter.string(from: snapshot.timestamp),
+                    "legacy",
+                    snapshot.resetType.rawValue,
+                    escapedCSV(cycleID),
+                    percentage,
+                    "",
+                    "",
+                    "",
+                    snapshot.apiCurrency ?? "",
+                    "",
+                    formatter.string(
+                        from: snapshot.triggeringResetTime
+                    ),
+                    sessionTokens,
+                    weeklyTokens,
+                    opusPercentage,
+                    sonnetPercentage,
+                    fablePercentage,
+                    apiSpend,
+                    apiPrepaidCredits
+                ]
+                rows.append(columns.joined(separator: ","))
+            }
+        }
+        return rows.joined(separator: "\n") + "\n"
+    }
+
+    private static func escapedCSV(_ value: String) -> String {
+        guard value.contains(",")
+                || value.contains("\"")
+                || value.contains("\n") else {
+            return value
+        }
+        return "\"\(value.replacingOccurrences(of: "\"", with: "\"\""))\""
     }
 
     // MARK: - Cleanup

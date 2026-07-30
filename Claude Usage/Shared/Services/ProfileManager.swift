@@ -56,6 +56,11 @@ struct ProfileLifecycleEventSink {
             )
         },
         deletionCompleted: {
+            NotificationManager.shared
+                .clearNotificationsForProfile(
+                    $0.id,
+                    providerID: $0.providerID
+                )
             NotificationCenter.default.post(
                 name: .profileDeletionCompleted,
                 object: $0.id,
