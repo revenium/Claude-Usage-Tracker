@@ -179,6 +179,36 @@ final class ProviderDiagnosticsTests: HostedAppTestCase {
                 SensitiveDataRedactor.redactedPath
             ),
             (
+                "bare-custom-home-after-single-quote",
+                "Provider home '\(bareCustomHome)'",
+                SensitiveDataRedactor.redactedPath
+            ),
+            (
+                "bare-custom-home-after-semicolon",
+                "Provider home;\(bareCustomHome)",
+                SensitiveDataRedactor.redactedPath
+            ),
+            (
+                "bare-custom-home-after-ampersand",
+                "Provider home&\(bareCustomHome)",
+                SensitiveDataRedactor.redactedPath
+            ),
+            (
+                "bare-custom-home-after-plus",
+                "Provider home+\(bareCustomHome)",
+                SensitiveDataRedactor.redactedPath
+            ),
+            (
+                "bare-custom-home-after-percent",
+                "Provider home%\(bareCustomHome)",
+                SensitiveDataRedactor.redactedPath
+            ),
+            (
+                "bare-custom-home-after-hyphen",
+                "Provider home-\(bareCustomHome)",
+                SensitiveDataRedactor.redactedPath
+            ),
+            (
                 "standalone-jwt",
                 "Probe returned \(jwt)",
                 SensitiveDataRedactor.redactedValue
@@ -214,14 +244,38 @@ final class ProviderDiagnosticsTests: HostedAppTestCase {
         let version = "codex-cli 1.2.3"
         let publicURL =
             "https://example.test/releases/codex-cli/1.2.3"
+        let relativeTokens = [
+            "module/name",
+            "./relative/path",
+            "../relative/path"
+        ]
 
         XCTAssertEqual(
             SensitiveDataRedactor.redact(version),
             version
         )
+        let redactedPublicURL =
+            SensitiveDataRedactor.redact(publicURL)
+        XCTAssertTrue(
+            redactedPublicURL.hasPrefix(
+                "https://example.test/"
+            )
+        )
+        XCTAssertTrue(
+            redactedPublicURL.contains("redacted-path")
+        )
+        XCTAssertFalse(redactedPublicURL.contains("codex-cli"))
+        for token in relativeTokens {
+            XCTAssertEqual(
+                SensitiveDataRedactor.redact(token),
+                token
+            )
+        }
         XCTAssertEqual(
-            SensitiveDataRedactor.redact(publicURL),
-            publicURL
+            SensitiveDataRedactor.redact(
+                "GET https://api.example.test/v1/usage"
+            ),
+            "GET https://api.example.test/v1/usage"
         )
         XCTAssertFalse(
             SensitiveDataRedactor.redact(
@@ -368,6 +422,60 @@ final class ProviderDiagnosticsTests: HostedAppTestCase {
         XCTAssertFalse(tracker.containmentReliable)
     }
 
+    func testTraversalDiscardsChildrenWhenParentIdentityChanges()
+    {
+        let parentIdentity = CodexVersionProbe.ProcessIdentity(
+            processIdentifier: 42_001,
+            startSeconds: 100,
+            startMicroseconds: 200
+        )
+        let childIdentity = CodexVersionProbe.ProcessIdentity(
+            processIdentifier: 42_002,
+            startSeconds: 300,
+            startMicroseconds: 400
+        )
+        let childSnapshot = CodexVersionProbe.ProcessSnapshot(
+            identity: childIdentity,
+            parentIdentifier: parentIdentity.processIdentifier,
+            isZombie: false
+        )
+        var parentIdentityChecks = 0
+        var enumeratedParents: [pid_t] = []
+        var tracker = CodexVersionProbe.OwnedProcessTracker(
+            leader: 42_000,
+            descendants: [parentIdentity]
+        )
+
+        tracker.refresh(
+            identityStateProvider: { identity in
+                XCTAssertEqual(identity, parentIdentity)
+                parentIdentityChecks += 1
+                return parentIdentityChecks < 3
+                    ? .sameLiveProcess
+                    : .exitedOrReused
+            },
+            directChildrenProvider: { parent in
+                enumeratedParents.append(parent)
+                return parent == parentIdentity.processIdentifier
+                    ? .available([childSnapshot])
+                    : .available([])
+            }
+        )
+
+        XCTAssertEqual(parentIdentityChecks, 3)
+        XCTAssertTrue(
+            enumeratedParents.contains(
+                parentIdentity.processIdentifier
+            )
+        )
+        XCTAssertTrue(enumeratedParents.contains(42_000))
+        XCTAssertFalse(
+            tracker.descendants.contains(childIdentity)
+        )
+        XCTAssertFalse(tracker.identityReliable)
+        XCTAssertFalse(tracker.containmentReliable)
+    }
+
     func testEveryLoggingEntryPointUsesCentralRedactionBoundary() {
         var output: [String] = []
         let logger = retain(
@@ -500,6 +608,58 @@ final class ProviderDiagnosticsTests: HostedAppTestCase {
             ) ?? "",
             context: "encoded legacy"
         )
+    }
+
+    func testNetworkModelRedactsUnknownURLPathsForNewAndLegacy()
+        throws
+    {
+        let organizationID = "org-p14-network-private"
+        let userID = "user-p14-network-private"
+        let hostileURL =
+            "https://api.example.test/organizations/"
+            + organizationID
+            + "/users/"
+            + userID
+            + "?token=\(query)"
+
+        let newLog = NetworkRequestLog(
+            timestamp: Date(),
+            url: hostileURL,
+            method: "GET"
+        )
+        let legacy = UnsafeLegacyNetworkLog(
+            id: UUID(),
+            timestamp: Date(),
+            url: hostileURL,
+            method: "GET",
+            statusCode: 200,
+            duration: 0.1,
+            requestBody: nil,
+            responsePreview: nil,
+            fullResponseSize: nil,
+            errorMessage: nil
+        )
+        let decoded = try JSONDecoder().decode(
+            NetworkRequestLog.self,
+            from: JSONEncoder().encode(legacy)
+        )
+
+        for (context, log) in [
+            ("new unknown URL", newLog),
+            ("legacy unknown URL", decoded)
+        ] {
+            XCTAssertTrue(
+                log.url.hasPrefix("https://api.example.test/"),
+                context
+            )
+            XCTAssertTrue(
+                log.url.contains("redacted-path"),
+                context
+            )
+            XCTAssertFalse(log.url.contains(organizationID), context)
+            XCTAssertFalse(log.url.contains(userID), context)
+            XCTAssertFalse(log.url.contains("/users/"), context)
+        }
     }
 
     func testNetworkLoggerSanitizesBeforeMemoryAndDisk() throws {

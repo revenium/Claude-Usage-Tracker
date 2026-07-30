@@ -95,6 +95,9 @@ nonisolated enum SensitiveDataRedactor {
               components.scheme != nil else {
             return redact(value)
         }
+        if components.scheme?.lowercased() == "file" {
+            return redactedPath
+        }
         components.user = nil
         components.password = nil
         if components.query != nil {
@@ -105,10 +108,22 @@ nonisolated enum SensitiveDataRedactor {
                     )
         }
         components.fragment = nil
-        let identitySafe = redactingSensitiveAPIRouteIdentities(
-            in: components.string ?? value
+        let identitySafePath =
+            redactingSensitiveAPIRouteIdentities(
+                in: components.path
+            )
+        if isSafeURLPath(identitySafePath) {
+            components.path = identitySafePath
+        } else {
+            // URLComponents re-encodes the marker while preserving only the
+            // non-sensitive scheme and authority. Unknown path shapes are
+            // replaced wholesale so no nested identifier can survive.
+            components.path = "/\(redactedPath)"
+        }
+        return limited(
+            components.string
+                ?? "\(components.scheme ?? "url")://\(redactedPath)"
         )
-        return limited(replacingLocalPaths(in: identitySafe))
     }
 
     static func redact(data: Data?) -> String? {
@@ -339,6 +354,19 @@ nonisolated enum SensitiveDataRedactor {
         return result
     }
 
+    private static func isSafeURLPath(_ value: String) -> Bool {
+        guard let expression = try? NSRegularExpression(
+            pattern: safeURLPathPattern
+        ) else {
+            return false
+        }
+        let range = NSRange(value.startIndex..., in: value)
+        return expression.firstMatch(
+            in: value,
+            range: range
+        )?.range == range
+    }
+
     private static func replacing(
         _ pattern: String,
         in value: String,
@@ -372,8 +400,11 @@ nonisolated enum SensitiveDataRedactor {
     /// remain excluded so a slash inside a complete URL is not mistaken for a
     /// local path. `file:///...` is intentionally included.
     private static let localPathPattern =
-        #"file:///[^\s"'?,;)\]}]+|(?<![-A-Za-z0-9._~/?#@!$&'*+;%])/(?!/)[^\s"'?,;)\]}]+"#
+        #"file:///[^\s"'?,;)\]}]+|(?<![A-Za-z0-9._~/?#@!$*])/(?!/)[^\s"'?,;)\]}]+"#
 
     private static let safeAPIRoutePattern =
         #"(?i)(?:\b(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+/v[0-9]+/usage|/organizations(?:/<redacted>/(?:usage|overage_spend_limit|overage_credit_grant|chat_conversations(?:/<redacted>/completion)?))?|/(?:conversations|chat_conversations)/<redacted>(?:/completion)?)"#
+
+    private static let safeURLPathPattern =
+        #"(?i)^/(?:api/)?(?:v[0-9]+/usage|organizations(?:/<redacted>/(?:usage|overage_spend_limit|overage_credit_grant|chat_conversations(?:/<redacted>/completion)?))?|(?:conversations|chat_conversations)/<redacted>(?:/completion)?)$"#
 }

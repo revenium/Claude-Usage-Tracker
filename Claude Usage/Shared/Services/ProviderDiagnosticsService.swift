@@ -791,13 +791,21 @@ nonisolated enum CodexVersionProbe {
             // Once the unreaped leader has exited, it cannot create another
             // child and libproc may reject child enumeration for its zombie
             // PID. Previously observed descendants remain identity-tracked.
-            var pending = CodexVersionProbe.hasExited(leader)
-                ? [] : [leader]
+            var pending: [(
+                processIdentifier: pid_t,
+                expectedIdentity: ProcessIdentity?
+            )] = CodexVersionProbe.hasExited(leader)
+                ? [] : [(leader, nil)]
             var visited = Set<pid_t>()
             for identity in descendants {
                 switch identityStateProvider(identity) {
                 case .sameLiveProcess:
-                    pending.append(identity.processIdentifier)
+                    pending.append(
+                        (
+                            identity.processIdentifier,
+                            identity
+                        )
+                    )
                 case .exitedOrReused:
                     continue
                 case .unknown:
@@ -805,18 +813,44 @@ nonisolated enum CodexVersionProbe {
                 }
             }
             while let parent = pending.popLast() {
-                guard visited.insert(parent).inserted else {
+                guard visited.insert(
+                    parent.processIdentifier
+                ).inserted else {
+                    continue
+                }
+                if let expectedIdentity =
+                        parent.expectedIdentity,
+                   identityStateProvider(expectedIdentity)
+                        != .sameLiveProcess {
+                    // Never enumerate a PID that changed after it was queued.
+                    identityReliable = false
                     continue
                 }
                 guard case .available(let children) =
-                        directChildrenProvider(parent) else {
+                        directChildrenProvider(
+                            parent.processIdentifier
+                        ) else {
                     censusReliable = false
+                    continue
+                }
+                if let expectedIdentity =
+                        parent.expectedIdentity,
+                   identityStateProvider(expectedIdentity)
+                        != .sameLiveProcess {
+                    // Child enumeration and identity observation are not one
+                    // atomic kernel operation. If the parent changed during
+                    // the census, none of those children can be attributed to
+                    // the expected process.
+                    identityReliable = false
                     continue
                 }
                 for snapshot in children {
                     descendants.insert(snapshot.identity)
                     pending.append(
-                        snapshot.identity.processIdentifier
+                        (
+                            snapshot.identity.processIdentifier,
+                            snapshot.identity
+                        )
                     )
                 }
             }
