@@ -341,8 +341,20 @@ struct PopoverContentView: View {
 
         PopoverDivider()
 
+        let resolvedBanner: LegacyPopoverBanner? =
+            presentation.providerID == .claude
+            ? LegacyPopoverBanner.resolve(
+                hasCredentialError: manager.hasCredentialError,
+                consecutiveRefreshFailures:
+                    manager.consecutiveRefreshFailures,
+                lastSuccessfulRefreshTime:
+                    manager.lastSuccessfulRefreshTime,
+                now: now
+            )
+            : nil
+
         if presentation.providerID == .claude {
-            claudeBanner(now: now)
+            claudeBanner(resolvedBanner: resolvedBanner)
         }
 
         ScrollView {
@@ -351,11 +363,10 @@ struct PopoverContentView: View {
                     presentation: presentation
                 )
                 NormalizedUsageView(
-                    presentation:
-                        presentation.providerID == .claude
-                        ? presentation
-                            .filteringOutNoticesShownByClaudeBanner()
-                        : presentation,
+                    presentation: presentation
+                        .filteringOutNoticesShownByClaudeBanner(
+                            matching: resolvedBanner
+                        ),
                     displayPreferences: displayPreferences,
                     timeDisplay: timeDisplay,
                     now: now
@@ -378,15 +389,10 @@ struct PopoverContentView: View {
     }
 
     @ViewBuilder
-    private func claudeBanner(now: Date) -> some View {
-        if let banner = LegacyPopoverBanner.resolve(
-            hasCredentialError: manager.hasCredentialError,
-            consecutiveRefreshFailures:
-                manager.consecutiveRefreshFailures,
-            lastSuccessfulRefreshTime:
-                manager.lastSuccessfulRefreshTime,
-            now: now
-        ) {
+    private func claudeBanner(
+        resolvedBanner: LegacyPopoverBanner?
+    ) -> some View {
+        if let banner = resolvedBanner {
             switch banner {
             case .credentialError:
                 StatusBannerView(
@@ -1229,12 +1235,26 @@ struct ExpandableStatusBanner: View {
 
 extension NormalizedUsagePresentation {
     /// Claude renders its own credential-error and refresh-failure
-    /// banners via `claudeBanner(now:)`. Strip the equivalent notices
-    /// from `NormalizedUsageView`'s notice list so the same problem
-    /// isn't shown twice in the popover.
-    fileprivate func filteringOutNoticesShownByClaudeBanner()
-        -> NormalizedUsagePresentation {
-        NormalizedUsagePresentation(
+    /// banners via `claudeBanner(resolvedBanner:)`. Strip only the
+    /// notice kind that corresponds to the banner actually resolved
+    /// for the current state, so the same problem isn't shown twice
+    /// in the popover — but nothing is silently dropped when no
+    /// banner is being rendered (e.g. fewer than 3 consecutive
+    /// refresh failures).
+    fileprivate func filteringOutNoticesShownByClaudeBanner(
+        matching resolvedBanner: LegacyPopoverBanner?
+    ) -> NormalizedUsagePresentation {
+        guard let resolvedBanner else { return self }
+        let kindToStrip: NormalizedUsageNotice.Kind
+        switch resolvedBanner {
+        case .credentialError:
+            kindToStrip = .unauthenticated
+        case .refreshFailed:
+            kindToStrip = .refreshFailed
+        case .stale:
+            kindToStrip = .stale
+        }
+        return NormalizedUsagePresentation(
             profileID: profileID,
             profileName: profileName,
             providerID: providerID,
@@ -1246,11 +1266,7 @@ extension NormalizedUsagePresentation {
             groups: groups,
             summary: summary,
             credits: credits,
-            notices: notices.filter {
-                $0.kind != .refreshFailed
-                    && $0.kind != .unauthenticated
-                    && $0.kind != .stale
-            },
+            notices: notices.filter { $0.kind != kindToStrip },
             emptyState: emptyState,
             legacyClaudeUsage: legacyClaudeUsage,
             legacyClaudeAPIUsage: legacyClaudeAPIUsage
