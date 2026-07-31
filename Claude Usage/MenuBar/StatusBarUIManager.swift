@@ -858,7 +858,7 @@ final class StatusBarUIManager {
         }
 
         return renderer.createMultiProfilePercentage(
-            sessionPercentage: primary?.displayedPercentage ?? 0,
+            sessionPercentage: primary?.displayedPercentage,
             weekPercentage: secondary?.displayedPercentage,
             sessionStatus: primary?.statusLevel ?? .safe,
             weekStatus: secondary?.statusLevel ?? .safe,

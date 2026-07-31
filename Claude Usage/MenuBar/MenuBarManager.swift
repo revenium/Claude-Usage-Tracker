@@ -573,18 +573,7 @@ class MenuBarManager: NSObject, ObservableObject {
                     self.usage = snapshot.claudeUsage ?? .empty
                     self.apiUsage = snapshot.claudeAPIUsage
                 }
-                self.isRefreshing = snapshot.activity.isInFlight
-                self.lastSuccessfulRefreshTime =
-                    snapshot.lastSuccessfulAt
-                self.consecutiveRefreshFailures =
-                    snapshot.currentFailure?.consecutiveCount ?? 0
-                self.hasCredentialError =
-                    snapshot.currentFailure?.isCredentialFailure ?? false
-                self.lastRefreshError = snapshot.currentFailure.map {
-                    String(describing: $0.kind)
-                }
-                self.lastRefreshFailureKind =
-                    snapshot.currentFailure?.kind
+                self.applyBannerProjection(from: snapshot)
                 self.updateAllStatusBarIcons()
             }
             .store(in: &cancellables)
@@ -620,6 +609,21 @@ class MenuBarManager: NSObject, ObservableObject {
                 )
             }
             .store(in: &cancellables)
+    }
+
+    private func applyBannerProjection(
+        from snapshot: PresentationSnapshot?
+    ) {
+        isRefreshing = snapshot?.activity.isInFlight ?? false
+        lastSuccessfulRefreshTime = snapshot?.lastSuccessfulAt
+        consecutiveRefreshFailures =
+            snapshot?.currentFailure?.consecutiveCount ?? 0
+        hasCredentialError =
+            snapshot?.currentFailure?.isCredentialFailure ?? false
+        lastRefreshError = snapshot?.currentFailure.map {
+            String(describing: $0.kind)
+        }
+        lastRefreshFailureKind = snapshot?.currentFailure?.kind
     }
 
     private func activateRefreshPresentation() {
@@ -1779,6 +1783,7 @@ class MenuBarManager: NSObject, ObservableObject {
             )
             clickedProfileUsage = snapshot?.claudeUsage
             clickedProfileAPIUsage = snapshot?.claudeAPIUsage
+            applyBannerProjection(from: snapshot)
             LoggingService.shared.log("Multi-profile popover: showing data for '\(profile.name)'")
         } else {
             // Single profile mode - use active profile

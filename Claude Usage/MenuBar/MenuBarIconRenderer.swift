@@ -1642,7 +1642,7 @@ struct MenuBarIconRenderer {
     /// Creates a percentage text icon for multi-profile mode
     /// Format: "30 · 4" (session · week) with status colors, optional profile label below
     func createMultiProfilePercentage(
-        sessionPercentage: Double,
+        sessionPercentage: Double?,
         weekPercentage: Double?,
         sessionStatus: UsageStatusLevel,
         weekStatus: UsageStatusLevel,
@@ -1665,7 +1665,7 @@ struct MenuBarIconRenderer {
         let attributed = NSMutableAttributedString()
 
         // Session number
-        let sessionText = "\(Int(sessionPercentage))"
+        let sessionText = sessionPercentage.map { "\(Int($0))" } ?? "—"
         attributed.append(NSAttributedString(string: sessionText, attributes: [
             .font: font,
             .foregroundColor: sessionColor
