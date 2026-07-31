@@ -6,18 +6,34 @@ import XCTest
 final class NormalizedUsagePresentationTests: HostedAppTestCase {
     private let now = Date(timeIntervalSince1970: 2_000_000_000)
 
-    func testProviderShellPreservesClaudeAndNormalizesCodex() {
+    func testClaudeStatusURLPointsAtStatusPage() {
         XCTAssertEqual(
-            PopoverShell.resolve(providerID: .claude),
-            .claudeLegacy
-        )
-        XCTAssertEqual(
-            PopoverShell.resolve(providerID: .codex),
-            .normalized
-        )
-        XCTAssertEqual(
-            SmartHeader.claudeStatusURL.absoluteString,
+            ProviderPopoverHeader.claudeStatusURL.absoluteString,
             "https://status.claude.com"
+        )
+    }
+
+    func testCompactPercentageTextOmitsQualifierWord() {
+        XCTAssertEqual(
+            NormalizedUsageFormatter.compactPercentageText(
+                usedPercentage: 78,
+                showRemaining: false
+            ),
+            "78%"
+        )
+        XCTAssertEqual(
+            NormalizedUsageFormatter.compactPercentageText(
+                usedPercentage: 25,
+                showRemaining: true
+            ),
+            "75%"
+        )
+        XCTAssertEqual(
+            NormalizedUsageFormatter.percentageText(
+                usedPercentage: 78,
+                showRemaining: false
+            ),
+            "78% used"
         )
     }
 

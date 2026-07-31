@@ -165,6 +165,13 @@ private struct NormalizedUsageWindowView: View {
     }
 
     private var percentageText: String {
+        NormalizedUsageFormatter.compactPercentageText(
+            usedPercentage: window.usedPercentage,
+            showRemaining: showRemaining
+        )
+    }
+
+    private var percentageAccessibilityText: String {
         NormalizedUsageFormatter.percentageText(
             usedPercentage: window.usedPercentage,
             showRemaining: showRemaining
@@ -283,8 +290,8 @@ private struct NormalizedUsageWindowView: View {
                     }
                 }
                 .frame(height: 4)
-                .accessibilityLabel(percentageText)
-                .accessibilityValue(percentageText)
+                .accessibilityLabel(percentageAccessibilityText)
+                .accessibilityValue(percentageAccessibilityText)
                 .accessibilityIdentifier(
                     window.accessibilityIdentifier + ".progress"
                 )

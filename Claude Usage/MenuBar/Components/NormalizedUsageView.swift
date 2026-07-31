@@ -745,6 +745,10 @@ enum NormalizedUsageStrings {
 }
 
 struct ProviderPopoverHeader: View {
+    static let claudeStatusURL = URL(
+        string: "https://status.claude.com"
+    )!
+
     @ObservedObject var profileManager: ProfileManager
     let presentation: NormalizedUsagePresentation
     let claudeStatus: ClaudeStatus
@@ -791,6 +795,28 @@ struct ProviderPopoverHeader: View {
         }
     }
 
+    @ViewBuilder
+    private var statusRow: some View {
+        let content = HStack(spacing: 4) {
+            Text(presentation.providerName)
+                .font(.system(size: 9, weight: .semibold))
+            Text("·")
+            Text(providerStatusText)
+                .lineLimit(1)
+        }
+        if presentation.providerID == .claude {
+            Button(action: {
+                NSWorkspace.shared.open(Self.claudeStatusURL)
+            }) {
+                content
+            }
+            .buttonStyle(.plain)
+            .help("Click to open status.claude.com")
+        } else {
+            content
+        }
+    }
+
     private var accountDescription: String {
         let identity = presentation.accountName
             ?? presentation.organizationName
@@ -810,19 +836,13 @@ struct ProviderPopoverHeader: View {
                     onManageProfiles: onManageProfiles
                 )
 
-                HStack(spacing: 4) {
-                    Text(presentation.providerName)
-                        .font(.system(size: 9, weight: .semibold))
-                    Text("·")
-                    Text(providerStatusText)
-                        .lineLimit(1)
-                }
-                .foregroundColor(.secondary)
-                .accessibilityElement(children: .combine)
-                .accessibilityIdentifier(
-                    presentation
-                        .providerHeaderAccessibilityIdentifier
-                )
+                statusRow
+                    .foregroundColor(.secondary)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier(
+                        presentation
+                            .providerHeaderAccessibilityIdentifier
+                    )
 
                 Text(accountDescription)
                     .font(.system(size: 9))
@@ -888,17 +908,23 @@ struct NormalizedUsageView: View {
                 NormalizedUsageNoticeView(notice: notice)
             }
 
-            if presentation.providerID == .claude,
-               let usage = presentation.legacyClaudeUsage {
-                SmartUsageDashboard(
-                    usage: usage,
-                    apiUsage: presentation.legacyClaudeAPIUsage,
-                    displayPreferences: displayPreferences
+            normalizedContent(now: now)
+
+            // Anthropic Console API billing is a Claude-only capability with
+            // no normalized-report equivalent; gate on the data itself
+            // (presence of a mapped APIUsage value) rather than forking on
+            // provider identity in the view layer.
+            if let apiUsage = presentation.legacyClaudeAPIUsage {
+                APIUsageCard(
+                    apiUsage: apiUsage,
+                    showRemaining:
+                        displayPreferences.showRemainingPercentage,
+                    timeDisplay: timeDisplay
                 )
-                .padding(.horizontal, -14)
-                .padding(.vertical, -8)
-            } else {
-                normalizedContent(now: now)
+                if let costCents = apiUsage.apiTokenCostCents,
+                   costCents > 0 {
+                    APICostCard(apiUsage: apiUsage)
+                }
             }
         }
         .padding(.horizontal, 14)
@@ -1091,16 +1117,54 @@ private struct NormalizedUsageSummaryView: View {
     let timeDisplay: PopoverTimeDisplay
     let now: Date
 
+    // Collapsed by default: the metric/daily-bucket list is the most
+    // verbose part of the popover, so it starts tucked away and expands
+    // on demand for every provider that emits a summary.
+    @State private var isExpanded = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(
-                NormalizedUsageStrings.localized(
-                    "popover.normalized.summary.title",
-                    default: "Usage summary"
+            DisclosureGroup(isExpanded: $isExpanded) {
+                summaryDetails
+                    .padding(.top, 4)
+            } label: {
+                Text(
+                    NormalizedUsageStrings.localized(
+                        "popover.normalized.summary.title",
+                        default: "Usage summary"
+                    )
                 )
-            )
-            .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: 12, weight: .semibold))
+            }
+            .accessibilityIdentifier("popover.summary.disclosure")
 
+            if let end = summary.periodEndsAt {
+                Text(
+                    NormalizedUsageFormatter.periodEnd(
+                        end,
+                        now: now,
+                        display: timeDisplay
+                    )
+                )
+                .font(.system(size: 9))
+                .foregroundColor(.secondary)
+            }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(
+                    Color.primary.opacity(0.1),
+                    lineWidth: 0.5
+                )
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("popover.summary")
+    }
+
+    @ViewBuilder
+    private var summaryDetails: some View {
+        VStack(alignment: .leading, spacing: 6) {
             if summary.metrics.isEmpty,
                summary.dailyBuckets == nil {
                 Text(
@@ -1169,29 +1233,7 @@ private struct NormalizedUsageSummaryView: View {
                     }
                 }
             }
-
-            if let end = summary.periodEndsAt {
-                Text(
-                    NormalizedUsageFormatter.periodEnd(
-                        end,
-                        now: now,
-                        display: timeDisplay
-                    )
-                )
-                .font(.system(size: 9))
-                .foregroundColor(.secondary)
-            }
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(
-                    Color.primary.opacity(0.1),
-                    lineWidth: 0.5
-                )
-        )
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("popover.summary")
     }
 
     private func metricRow(_ metric: UsageMetric) -> some View {
@@ -1301,6 +1343,25 @@ enum NormalizedUsageFormatter {
         return min(max(percentage / 100, 0), 1)
     }
 
+    /// Compact "78%" form used for on-screen display, app-wide.
+    static func compactPercentageText(
+        usedPercentage: Double?,
+        showRemaining: Bool
+    ) -> String {
+        guard let value = percentage(
+            usedPercentage: usedPercentage,
+            showRemaining: showRemaining
+        ) else {
+            return NormalizedUsageStrings.localized(
+                "popover.normalized.value.unavailable",
+                default: "Unavailable"
+            )
+        }
+        return "\(number(value))%"
+    }
+
+    /// Word-qualified "78% used"/"78% remaining" form reserved for
+    /// accessibility labels, where the mode must be spoken explicitly.
     static func percentageText(
         usedPercentage: Double?,
         showRemaining: Bool
