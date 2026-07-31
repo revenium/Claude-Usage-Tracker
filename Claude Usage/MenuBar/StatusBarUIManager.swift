@@ -840,7 +840,7 @@ final class StatusBarUIManager {
             ProviderMenuPresentationBuilder.metric($0, applying: config)
         }
         let primary = rendered.first ?? nil
-        let secondary = rendered.count > 1 ? rendered[1] : nil
+        let secondary = config.showWeek && rendered.count > 1 ? rendered[1] : nil
 
         func paceStatus(
             for metric: ProviderMetricPresentation?

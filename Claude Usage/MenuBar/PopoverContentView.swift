@@ -351,7 +351,11 @@ struct PopoverContentView: View {
                     presentation: presentation
                 )
                 NormalizedUsageView(
-                    presentation: presentation,
+                    presentation:
+                        presentation.providerID == .claude
+                        ? presentation
+                            .filteringOutNoticesShownByClaudeBanner()
+                        : presentation,
                     displayPreferences: displayPreferences,
                     timeDisplay: timeDisplay,
                     now: now
@@ -1220,5 +1224,36 @@ struct ExpandableStatusBanner: View {
         .padding(.horizontal, 10)
         .padding(.top, 4)
         .accessibilityElement(children: .contain)
+    }
+}
+
+extension NormalizedUsagePresentation {
+    /// Claude renders its own credential-error and refresh-failure
+    /// banners via `claudeBanner(now:)`. Strip the equivalent notices
+    /// from `NormalizedUsageView`'s notice list so the same problem
+    /// isn't shown twice in the popover.
+    fileprivate func filteringOutNoticesShownByClaudeBanner()
+        -> NormalizedUsagePresentation {
+        NormalizedUsagePresentation(
+            profileID: profileID,
+            profileName: profileName,
+            providerID: providerID,
+            providerName: providerName,
+            accountName: accountName,
+            planName: planName,
+            organizationName: organizationName,
+            healthStatus: healthStatus,
+            groups: groups,
+            summary: summary,
+            credits: credits,
+            notices: notices.filter {
+                $0.kind != .refreshFailed
+                    && $0.kind != .unauthenticated
+                    && $0.kind != .stale
+            },
+            emptyState: emptyState,
+            legacyClaudeUsage: legacyClaudeUsage,
+            legacyClaudeAPIUsage: legacyClaudeAPIUsage
+        )
     }
 }
