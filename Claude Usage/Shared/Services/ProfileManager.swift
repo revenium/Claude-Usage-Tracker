@@ -663,13 +663,26 @@ class ProfileManager: ObservableObject {
             if activeProfile?.id == profileID {
                 activeProfile = updated
             }
-            // Unlinking the currently-active Codex profile's home must
-            // clear CODEX_HOME immediately — otherwise terminals keep
-            // using the just-unlinked directory until the next activation.
-            if home == nil,
-               updated.providerConfiguration.kind == .codex,
+            // Changing the currently-active Codex profile's linked home —
+            // whether unlinking it or relinking it to a different path —
+            // must update CODEX_HOME immediately, mirroring activation.
+            // Otherwise terminals keep using the old directory until the
+            // next activation.
+            if updated.providerConfiguration.kind == .codex,
                activeProfileID(for: .codex) == profileID {
-                activationCodexEffects.clearHome()
+                if let home {
+                    do {
+                        try activationCodexEffects.switchToLinkedHome(home)
+                    } catch {
+                        LoggingService.shared.logError(
+                            "Failed to switch CODEX_HOME after relink",
+                            error: error
+                        )
+                        activationCodexEffects.clearHome()
+                    }
+                } else {
+                    activationCodexEffects.clearHome()
+                }
             }
             if previous.providerConfiguration
                     != updated.providerConfiguration

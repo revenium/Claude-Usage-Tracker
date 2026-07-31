@@ -784,9 +784,7 @@ private final class UITestMenuStatusController:
             profile: profile,
             snapshot: nil,
             now: Date(),
-            isActive:
-                profile.id
-                    == compositionRoot.profileManager.activeProfile?.id
+            isActive: compositionRoot.profileManager.isActive(profile)
         )
         return ProviderMenuPresentation(
             identity: ProviderStatusItemIdentity(
@@ -859,10 +857,8 @@ private final class UITestMenuStatusController:
                 profile: profile,
                 snapshot: nil,
                 now: Date(),
-                isActive:
-                    profile.id
-                        == compositionRoot.profileManager
-                            .activeProfile?.id
+                isActive: compositionRoot.profileManager
+                    .isActive(profile)
             )
         let menu: NSMenu
         if MenuBarManager.usesLegacyContextMenu(
