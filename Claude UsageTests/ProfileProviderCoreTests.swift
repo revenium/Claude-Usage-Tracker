@@ -724,7 +724,7 @@ final class ProfileProviderCoreTests: HostedAppTestCase {
         )
         XCTAssertEqual(firstLoad[1].refreshInterval, 93)
         XCTAssertFalse(firstLoad[1].notificationSettings.enabled)
-        XCTAssertEqual(store.loadActiveProfileId(), primaryID)
+        XCTAssertEqual(store.loadLegacyActiveProfileId(), primaryID)
         XCTAssertEqual(store.loadDisplayMode(), .multi)
         XCTAssertEqual(
             store.loadMultiProfileConfig(),
@@ -996,7 +996,7 @@ final class ProfileProviderCoreTests: HostedAppTestCase {
         )
         XCTAssertEqual(initial.providerConfiguration, .codex(.init()))
         XCTAssertEqual(manager.activeProfile?.id, initial.id)
-        XCTAssertEqual(store.loadActiveProfileId(), initial.id)
+        XCTAssertEqual(store.loadActiveProfileId(for: .codex), initial.id)
         XCTAssertThrowsError(
             try manager.createInitialProfile(
                 providerConfiguration: .claude
@@ -1120,7 +1120,8 @@ final class ProfileProviderCoreTests: HostedAppTestCase {
         XCTAssertEqual(manager.activeProfile?.id, codex.id)
         XCTAssertEqual(manager.activeProfile?.lastUsedAt, timestamp)
         XCTAssertEqual(manager.activeProfile?.providerRevision, 0)
-        XCTAssertEqual(store.loadActiveProfileId(), codex.id)
+        XCTAssertEqual(store.loadActiveProfileId(for: .codex), codex.id)
+        XCTAssertEqual(manager.activeCodexProfile?.id, codex.id)
     }
 
     @MainActor
@@ -1969,6 +1970,7 @@ final class ProfileProviderCoreTests: HostedAppTestCase {
             cliAccountName: "account"
         )
         try seedProfilesForTesting([target, survivor], in: store)
+        store.saveActiveProfileId(target.id, for: .codex)
         let history = retain(ProviderHistoryDeleter())
         history.failuresRemaining = 1
         let lifecycle = ProviderLifecycleRecorder()
@@ -1979,15 +1981,18 @@ final class ProfileProviderCoreTests: HostedAppTestCase {
             activationClaudeEffects: effects.effects,
             lifecycleEventSink: lifecycle.sink
         ))
-        manager.profiles = [target, survivor]
-        manager.activeProfile = target
+        manager.loadProfiles()
         effects.reset()
 
         XCTAssertThrowsError(try manager.deleteProfile(target.id))
 
+        // No Codex profile survives, so the deleted profile's own provider
+        // slot clears; focus falls back to the remaining Claude profile,
+        // which was already independently active — no Claude CLI side
+        // effects fire for it.
+        XCTAssertNil(manager.activeCodexProfile)
         XCTAssertEqual(manager.activeProfile?.id, survivor.id)
-        XCTAssertEqual(store.loadActiveProfileId(), survivor.id)
-        XCTAssertEqual(effects.count, 4)
+        XCTAssertEqual(effects.count, 0)
         XCTAssertEqual(lifecycle.started.map(\.id), [target.id])
         XCTAssertTrue(lifecycle.completed.isEmpty)
         XCTAssertTrue(manager.profiles.contains(where: {
@@ -2012,7 +2017,7 @@ final class ProfileProviderCoreTests: HostedAppTestCase {
             providerConfiguration: .codex(.init())
         )
         try seedProfilesForTesting([target, survivor], in: store)
-        store.saveActiveProfileId(target.id)
+        store.saveActiveProfileId(target.id, for: .codex)
         _ = try store.beginProfileDeletion(target.id)
         let manager = retain(ProfileManager(
             profileStore: store,
@@ -2022,7 +2027,7 @@ final class ProfileProviderCoreTests: HostedAppTestCase {
         manager.loadProfiles()
 
         XCTAssertEqual(manager.activeProfile?.id, survivor.id)
-        XCTAssertEqual(store.loadActiveProfileId(), survivor.id)
+        XCTAssertEqual(store.loadActiveProfileId(for: .codex), survivor.id)
         XCTAssertTrue(manager.profiles.contains(where: {
             $0.id == target.id && $0.deletionInProgress
         }))
@@ -2047,6 +2052,7 @@ final class ProfileProviderCoreTests: HostedAppTestCase {
             providerConfiguration: .codex(.init())
         )
         try seedProfilesForTesting([target, survivor], in: store)
+        store.saveActiveProfileId(target.id, for: .codex)
         var activeAtCompletion: UUID?
         let effects = ProviderEffectCounter()
         var manager: ProfileManager!
@@ -2061,14 +2067,13 @@ final class ProfileProviderCoreTests: HostedAppTestCase {
                 }
             )
         ))
-        manager.profiles = [target, survivor]
-        manager.activeProfile = target
+        manager.loadProfiles()
 
         try manager.deleteProfile(target.id)
 
         XCTAssertEqual(activeAtCompletion, survivor.id)
         XCTAssertEqual(manager.activeProfile?.id, survivor.id)
-        XCTAssertEqual(store.loadActiveProfileId(), survivor.id)
+        XCTAssertEqual(store.loadActiveProfileId(for: .codex), survivor.id)
         XCTAssertEqual(effects.count, 0)
     }
 
@@ -2093,20 +2098,26 @@ final class ProfileProviderCoreTests: HostedAppTestCase {
             cliAccountName: "account"
         )
         try seedProfilesForTesting([target, survivor], in: store)
+        store.saveActiveProfileId(target.id, for: .codex)
         let effects = ProviderEffectCounter()
         let manager = retain(ProfileManager(
             profileStore: store,
             historyService: retain(ProviderHistoryDeleter()),
             activationClaudeEffects: effects.effects
         ))
-        manager.profiles = [target, survivor]
-        manager.activeProfile = target
+        manager.loadProfiles()
         effects.reset()
 
         try manager.deleteProfile(target.id)
 
+        // No Codex profile survives, so focus falls back to the Claude
+        // profile that was already independently active for its own
+        // provider. It was never "reactivated" — no Claude CLI side effects
+        // fire for a profile the deletion of an unrelated Codex profile
+        // never touched.
+        XCTAssertNil(manager.activeCodexProfile)
         XCTAssertEqual(manager.activeProfile?.id, survivor.id)
-        XCTAssertEqual(effects.count, 4)
+        XCTAssertEqual(effects.count, 0)
     }
 
     @MainActor
@@ -2375,7 +2386,9 @@ final class ProfileProviderCoreTests: HostedAppTestCase {
         )
         try seedProfilesForTesting([oldClaude, codex], in: store)
         _ = try store.beginProfileDeletion(oldClaude.id)
-        store.saveActiveProfileId(oldClaude.id)
+        // Simulate a pre-upgrade single-slot install: the legacy key, not
+        // either per-provider key, is what `ProfileMigrationService` reads.
+        defaults.set(oldClaude.id.uuidString, forKey: "activeProfileId")
         let source = ProviderLegacySource(
             snapshot: .init(
                 globalClaudeSessionKey: "new-owner-secret",
@@ -2443,7 +2456,7 @@ final class ProfileProviderCoreTests: HostedAppTestCase {
         )
         let claude = Profile(name: "Claude")
         try seedProfilesForTesting([codex, claude], in: store)
-        store.saveActiveProfileId(codex.id)
+        defaults.set(codex.id.uuidString, forKey: "activeProfileId")
         let source = ProviderLegacySource(
             snapshot: .init(
                 globalClaudeSessionKey: "legacy-claude",
@@ -2472,7 +2485,7 @@ final class ProfileProviderCoreTests: HostedAppTestCase {
         )
         XCTAssertEqual(claudeCredentials.apiSessionKey, "legacy-api")
         XCTAssertTrue(source.cleaned)
-        XCTAssertEqual(store.loadActiveProfileId(), codex.id)
+        XCTAssertEqual(store.loadLegacyActiveProfileId(), codex.id)
         XCTAssertEqual(
             store.loadProfiles().first(where: { $0.id == codex.id })?
                 .providerConfiguration.kind,
@@ -2787,7 +2800,7 @@ final class ProfileProviderCoreTests: HostedAppTestCase {
             providerConfiguration: .codex(.init())
         )
         try seedProfilesForTesting([codex], in: store)
-        store.saveActiveProfileId(codex.id)
+        defaults.set(codex.id.uuidString, forKey: "activeProfileId")
         let source = ProviderLegacySource(
             snapshot: .init(
                 globalClaudeSessionKey: "preserve",
@@ -2811,7 +2824,206 @@ final class ProfileProviderCoreTests: HostedAppTestCase {
         XCTAssertEqual(source.readCount, 0)
         XCTAssertFalse(source.cleaned)
         XCTAssertFalse(defaults.bool(forKey: "didMigrateToProfilesV3"))
-        XCTAssertEqual(store.loadActiveProfileId(), codex.id)
+        XCTAssertEqual(store.loadLegacyActiveProfileId(), codex.id)
+    }
+
+    @MainActor
+    func testClaudeAndCodexProfilesActivateIndependently() async throws {
+        let defaults = ProviderTestDefaults()
+        let store = retain(ProfileStore(
+            defaults: defaults,
+            secretStore: ProviderSecretStore(),
+            usageFileStore: ProviderUsageStore()
+        ))
+        let claude = Profile(name: "Claude One")
+        let claudeTwo = Profile(name: "Claude Two")
+        let codex = Profile(
+            name: "Codex One",
+            providerConfiguration: .codex(.init())
+        )
+        let codexTwo = Profile(
+            name: "Codex Two",
+            providerConfiguration: .codex(.init())
+        )
+        try seedProfilesForTesting(
+            [claude, claudeTwo, codex, codexTwo],
+            in: store
+        )
+        let effects = ProviderEffectCounter()
+        let manager = retain(ProfileManager(
+            profileStore: store,
+            activationClaudeEffects: effects.effects
+        ))
+        manager.loadProfiles()
+
+        await manager.activateProfile(claudeTwo.id)
+        await manager.activateProfile(codexTwo.id)
+
+        // Each provider's own active slot moved independently; activating
+        // Codex never touched the Claude slot and vice versa.
+        XCTAssertEqual(manager.activeClaudeProfile?.id, claudeTwo.id)
+        XCTAssertEqual(manager.activeCodexProfile?.id, codexTwo.id)
+        XCTAssertEqual(
+            store.loadActiveProfileId(for: .claude), claudeTwo.id
+        )
+        XCTAssertEqual(
+            store.loadActiveProfileId(for: .codex), codexTwo.id
+        )
+        // Focus follows the most recently activated profile, regardless of
+        // provider.
+        XCTAssertEqual(manager.activeProfile?.id, codexTwo.id)
+        XCTAssertTrue(manager.isActive(claudeTwo))
+        XCTAssertFalse(manager.isActive(claude))
+        XCTAssertTrue(manager.isActive(codexTwo))
+        XCTAssertFalse(manager.isActive(codex))
+    }
+
+    @MainActor
+    func testReactivatingAlreadyActiveProfileOnlyMovesFocus() async throws {
+        let defaults = ProviderTestDefaults()
+        let store = retain(ProfileStore(
+            defaults: defaults,
+            secretStore: ProviderSecretStore(),
+            usageFileStore: ProviderUsageStore()
+        ))
+        let claude = Profile(name: "Claude")
+        let codex = Profile(
+            name: "Codex",
+            providerConfiguration: .codex(.init())
+        )
+        try seedProfilesForTesting([claude, codex], in: store)
+        let effects = ProviderEffectCounter()
+        let manager = retain(ProfileManager(
+            profileStore: store,
+            activationClaudeEffects: effects.effects
+        ))
+        manager.loadProfiles()
+        await manager.activateProfile(codex.id)
+        effects.reset()
+
+        // Claude is already the active Claude profile (it was elected as the
+        // provider's first profile on load) — reactivating it must not rerun
+        // Claude activation side effects, only move focus.
+        await manager.activateProfile(claude.id)
+
+        XCTAssertEqual(effects.count, 0)
+        XCTAssertEqual(manager.activeProfile?.id, claude.id)
+        XCTAssertEqual(manager.activeClaudeProfile?.id, claude.id)
+        XCTAssertEqual(manager.activeCodexProfile?.id, codex.id)
+    }
+
+    @MainActor
+    func testLegacySingleSlotMigratesToOwningProviderOnly() throws {
+        let defaults = ProviderTestDefaults()
+        let store = retain(ProfileStore(
+            defaults: defaults,
+            secretStore: ProviderSecretStore(),
+            usageFileStore: ProviderUsageStore()
+        ))
+        let claude = Profile(name: "Claude")
+        let codex = Profile(
+            name: "Codex",
+            providerConfiguration: .codex(.init())
+        )
+        try seedProfilesForTesting([claude, codex], in: store)
+        // Simulate a pre-upgrade install: only the legacy single slot is
+        // populated, pointing at the Codex profile.
+        defaults.set(codex.id.uuidString, forKey: "activeProfileId")
+
+        let manager = retain(ProfileManager(
+            profileStore: store,
+            activationClaudeEffects: .noOp
+        ))
+        manager.loadProfiles()
+
+        // The legacy id is claimed only by the provider that actually owns
+        // it; the other provider falls back to its own first profile.
+        XCTAssertEqual(manager.activeCodexProfile?.id, codex.id)
+        XCTAssertEqual(manager.activeClaudeProfile?.id, claude.id)
+        XCTAssertEqual(manager.activeProfile?.id, codex.id)
+        XCTAssertEqual(store.loadActiveProfileId(for: .codex), codex.id)
+        XCTAssertEqual(store.loadActiveProfileId(for: .claude), claude.id)
+    }
+
+    @MainActor
+    func testDeletingActiveCodexProfileNeverTouchesActiveClaudeProfile()
+        throws
+    {
+        let defaults = ProviderTestDefaults()
+        let store = retain(ProfileStore(
+            defaults: defaults,
+            secretStore: ProviderSecretStore(),
+            usageFileStore: ProviderUsageStore()
+        ))
+        let claude = Profile(name: "Claude")
+        let codex = Profile(
+            name: "Codex",
+            providerConfiguration: .codex(.init())
+        )
+        let codexSurvivor = Profile(
+            name: "Codex Survivor",
+            providerConfiguration: .codex(.init())
+        )
+        try seedProfilesForTesting(
+            [claude, codex, codexSurvivor],
+            in: store
+        )
+        let manager = retain(ProfileManager(
+            profileStore: store,
+            activationClaudeEffects: .noOp
+        ))
+        manager.loadProfiles()
+        XCTAssertEqual(manager.activeCodexProfile?.id, codex.id)
+        XCTAssertEqual(manager.activeClaudeProfile?.id, claude.id)
+
+        try manager.deleteProfile(codex.id)
+
+        XCTAssertEqual(manager.activeCodexProfile?.id, codexSurvivor.id)
+        XCTAssertEqual(manager.activeClaudeProfile?.id, claude.id)
+        XCTAssertEqual(
+            store.loadActiveProfileId(for: .codex), codexSurvivor.id
+        )
+    }
+
+    @MainActor
+    func testActivatingLinkedCodexProfileSwitchesCodexHomeNotClaudeEffects()
+        async throws
+    {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let homeURL = root.appendingPathComponent(
+            "codex-home", isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: homeURL, withIntermediateDirectories: true
+        )
+        let linkedHome = try CodexHomeCanonicalizer()
+            .canonicalize(homeURL.path)
+
+        let defaults = ProviderTestDefaults()
+        let store = retain(ProfileStore(
+            defaults: defaults,
+            secretStore: ProviderSecretStore(),
+            usageFileStore: ProviderUsageStore()
+        ))
+        let codex = Profile(
+            name: "Linked Codex",
+            providerConfiguration: .codex(.init(linkedHome: linkedHome))
+        )
+        try seedProfilesForTesting([codex], in: store)
+        let claudeEffects = ProviderEffectCounter()
+        let codexEffects = ProviderCodexEffectCounter()
+        let manager = retain(ProfileManager(
+            profileStore: store,
+            activationClaudeEffects: claudeEffects.effects,
+            activationCodexEffects: codexEffects.effects
+        ))
+        manager.profiles = [codex]
+
+        await manager.activateProfile(codex.id)
+
+        XCTAssertEqual(claudeEffects.count, 0)
+        XCTAssertEqual(codexEffects.switchedHomes, [linkedHome])
     }
 
     private func makeTemporaryDirectory() throws -> URL {
@@ -3017,6 +3229,18 @@ private final class ProviderEffectCounter {
             updateStatuslineScripts: { [weak self] in self?.count += 1 },
             updateStatuslineProfileName: {
                 [weak self] _ in self?.count += 1
+            }
+        )
+    }
+}
+
+private final class ProviderCodexEffectCounter {
+    private(set) var switchedHomes: [CanonicalCodexHome] = []
+
+    var effects: ProfileActivationCodexEffects {
+        ProfileActivationCodexEffects(
+            switchToLinkedHome: { [weak self] home in
+                self?.switchedHomes.append(home)
             }
         )
     }

@@ -945,9 +945,9 @@ final class ProfileSecurityIntegrationTests: HostedAppTestCase {
         try seedProfilesForTesting([original], in: store)
         secrets.values[locator(profileID, .claudeSessionKey)] =
             "sk-ant-sid01-existing-session-key-value"
+        store.saveActiveProfileId(profileID, for: .claude)
         let manager = retain(ProfileManager(profileStore: store))
-        manager.profiles = [original]
-        manager.activeProfile = original
+        manager.loadProfiles()
         let service = retain(ClaudeAPIService(profileManager: manager))
 
         XCTAssertEqual(
@@ -1124,7 +1124,7 @@ final class ProfileSecurityIntegrationTests: HostedAppTestCase {
             [Profile(id: profileID, name: "Existing")],
             in: store
         )
-        store.saveActiveProfileId(profileID)
+        store.saveActiveProfileId(profileID, for: .claude)
         defaults.set(true, forKey: "didMigrateToProfilesV3")
 
         let source = MockLegacyCredentialSource(

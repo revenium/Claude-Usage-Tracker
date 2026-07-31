@@ -955,7 +955,7 @@ final class NormalizedUsagePresentationTests: HostedAppTestCase {
                 verifiedCodex,
                 claude
             ],
-            activeProfileID: codexID
+            isActive: { $0.id == codexID }
         )
 
         XCTAssertEqual(

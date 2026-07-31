@@ -319,7 +319,7 @@ final class ProviderMenuPresentationTests: HostedAppTestCase {
             profiles: [codex, claudeB, claudeA],
             snapshots: [:],
             now: .distantPast,
-            activeProfileID: nil
+            isActive: { _ in false }
         )
 
         XCTAssertEqual(values.map(\.identity.providerID), [
