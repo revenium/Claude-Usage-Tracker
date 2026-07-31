@@ -3,7 +3,7 @@
   "project": "Claude Usage Desktop App Codex Support",
   "slug": "claude-usage-desktop-app-codex-support",
   "created_at": "2026-07-30T05:19:19Z",
-  "last_updated": "2026-07-31T00:25:25Z",
+  "last_updated": "2026-07-31T06:02:00Z",
   "status": "active",
   "current_batch": "B05",
   "current_phase": "P17",
@@ -65,7 +65,7 @@
     "require_previous_batch_merged": true,
     "require_fresh_upstream_main": true,
     "greptile_max_reviews_per_pr": 2,
-    "feature_flag": "The centralized Codex production gate is enabled; B05 remains unmergeable until hosted UI and ship gates pass.",
+    "feature_flag": "The centralized Codex production gate is enabled; the complete local and hosted matrices pass, and B05 remains unmergeable until the Tessie latch and final ship audits pass.",
     "slack_updates_required": false
   },
   "shared_file_policy": {
@@ -313,17 +313,18 @@
       "target": "upstream/main",
       "depends_on": ["B04"],
       "phases": ["P13", "P14", "P15", "P16", "P17"],
-      "primary_linear_issue": "PRODUCT-2293",
+      "primary_linear_issue": "PRODUCT-2290",
       "pr_number": 11,
       "pr_url": "https://github.com/revenium/Claude-Usage-Tracker/pull/11",
-      "head_sha": "8cd3f2ba49eb30a4bc5bfab90648f0bd7fc7bc51",
-      "source_sha": "8cd3f2ba49eb30a4bc5bfab90648f0bd7fc7bc51",
-      "local_matrix_sha": "8b6a3c2ebd780ed4bed8a90b089edd9fbbf84500",
+      "head_sha": "54ce0d12afa844ec77a75a2d7a16622ab223ad00",
+      "source_sha": "54ce0d12afa844ec77a75a2d7a16622ab223ad00",
+      "local_matrix_sha": "54ce0d12afa844ec77a75a2d7a16622ab223ad00",
+      "source_sha_role": "Exact implementation and exhaustive local-matrix source; its evidence-reconciliation descendant changes project documentation only and is revalidated by hosted CI.",
       "base_update_merge_sha": "5448504b5bf45241159ea96b124ff4f89dd596d1",
-      "review_size_prerequisite": {
-        "pr_number": 12,
-        "merge_sha": "16b2a8764e0b1e9d83e98c983a14b5a1a7e244c7",
-        "resulting_changed_file_count": 99
+      "review_size_reconciliation": {
+        "prerequisite_prs": [12, 13, 14, 15],
+        "final_rebuild_commit": "54ce0d12afa844ec77a75a2d7a16622ab223ad00",
+        "resulting_changed_file_count": 42
       },
       "started_at": "2026-07-30T18:08:14Z",
       "merged_at": null
@@ -1018,19 +1019,15 @@
       ],
       "current_validation": {
         "verified": [
-          "Isolated UI automation bootstrap commit 03649aa.",
-          "Double-gated launch parser tests: 5 passed, 0 failed.",
-          "Exact source 8b6a3c2: UITesting arm64 build-for-testing succeeded with a separate bundle/defaults/data domain and no production startup services.",
-          "Exact source 8b6a3c2: all nine catalogs contain 994 keys; 15/15 validator fixtures, placeholder parity, and production source-call validation pass.",
+          "Isolated UI automation uses a compile-time UITesting build plus explicit fail-closed launch contract, separate bundle/defaults/data domains, and no production startup services.",
+          "Exact source 54ce0d1: UITesting arm64 build-for-testing succeeded.",
+          "Exact source 54ce0d1: all nine catalogs contain 998 keys; 15/15 validator fixtures, placeholder parity, and production source-call validation pass.",
           "CodexParityUITests contains exactly 11 test methods covering setup, both login modes, mixed profiles, menus/status/popover lifecycle, settings/history, all nine locales, and fail-closed launch; no skips or expected failures exist.",
-          "Exact source 8b6a3c2: full application suite passed 610/610 in both serial and parallel modes; UsageKit Debug and Release passed 80 tests with only the intentional opt-in live-smoke skip.",
-          "Independent exact-head review is CLEAN; P15 source/integration stable patch IDs are identical and no production P15 source drift exists.",
-          "Hosted-path corrections through 8cd3f2b: all 21 parser/security tests plus app and dedicated UI builds-for-testing passed; exact three-file independent review CLEAN.",
-          "Prerequisite PR #12 merged 16 exact synthetic fixture files as 16b2a87; B05 now has an exact 99-file reviewer diff."
+          "Exact source 54ce0d1: full application suite passed 631/631 in both serial and parallel modes; UsageKit Debug and Release passed 80 tests with only the intentional opt-in live-smoke skip.",
+          "Hosted CI run 30607952002 executed all 11 UI methods: 11 passed, 0 failed, 0 skipped, 0 expected failures.",
+          "Prerequisite PR #15 merged localization, accessibility, documentation, UI automation, and distribution as 77528e4."
         ],
-        "pending": [
-          "Hosted macOS CI must execute all 11 UI methods with zero failures, skips, or expected failures before the B05 merge."
-        ]
+        "pending": []
       }
     },
     "P16": {
@@ -1084,8 +1081,9 @@
         ],
         "pending": [],
         "combined_validation": [
-          "Exact B05 source 8b6a3c2 passed distribution validation, duplicate-YAML validation, 43/43 embedded workflow shell blocks, and bash plus ShellCheck validation for all five release/localization scripts.",
-          "Exact B05 source 8b6a3c2 passed Debug and universal Release builds; the Release executable contains arm64 and x86_64."
+          "Exact source 54ce0d1 passed distribution validation, all six workflow YAML/duplicate-key checks, 47/47 embedded workflow shell blocks, and bash plus ShellCheck validation for all six repository shell scripts.",
+          "Exact source 54ce0d1 passed Debug and universal Release builds; all six bundled executable Mach-O files contain arm64 and x86_64.",
+          "Hosted Distribution Validation run 30607952004 passed."
         ]
       }
     },
@@ -1100,8 +1098,8 @@
       "branch": "feature/codex-support-release-readiness",
       "worktree": "/Users/jason/gitclone/hc-repo/worktrees/Claude-Usage-Tracker/phase-05-release-readiness",
       "worker": "root with b05_p17_gate_preparation",
-      "commit_sha": "8cd3f2ba49eb30a4bc5bfab90648f0bd7fc7bc51",
-      "local_matrix_sha": "8b6a3c2ebd780ed4bed8a90b089edd9fbbf84500",
+      "commit_sha": "54ce0d12afa844ec77a75a2d7a16622ab223ad00",
+      "local_matrix_sha": "54ce0d12afa844ec77a75a2d7a16622ab223ad00",
       "started_at": "2026-07-30T21:14:58Z",
       "completed_at": null,
       "depends_on": [
@@ -1143,24 +1141,22 @@
           "Local keychain has a currently valid Developer ID Application identity for team 6BQW433AYV.",
           "Integrated B05 has no runtime or workflow consumer of inherited gh-pages.",
           "Exact inherited gh-pages SHA and a leased post-merge backup/delete procedure are verified.",
-          "Exact source 8b6a3c2: installed Codex 0.145.0 account/rate-limit live smoke passed 1/1 through the official app-server with a zero residual app-server/fixture-process census.",
+          "Exact source 54ce0d1: installed Codex 0.145.0 account/rate-limit live smoke passed 1/1 through the official app-server with a zero residual app-server/fixture-process census.",
           "Central production gate and explicit disabled paths are integrated; focused source validation passed 70/70 and the disabled diagnostics/UI correction passed 67/67.",
-          "Exact source 8b6a3c2: full application suite passed 610/610 in both serial and parallel modes with zero failures, skips, or expected failures.",
-          "Exact source 8b6a3c2: UsageKit Debug and Release each passed 80 tests with one intentional opt-in live-smoke skip; the same smoke passed separately.",
-          "Exact source 8b6a3c2: localization 9x994, 15/15 validator fixtures, Debug, universal Release, and UI build-for-testing gates passed.",
-          "Exact source 8b6a3c2: 43/43 workflow blocks, 5/5 release scripts, distribution/YAML, forbidden-runtime, fixture-provenance, and credential scans passed.",
+          "Exact source 54ce0d1: full application suite passed 631/631 in both serial and parallel modes with zero failures, skips, or expected failures.",
+          "Exact source 54ce0d1: UsageKit Debug and Release each passed 80 tests with one intentional opt-in live-smoke skip; the same smoke passed separately.",
+          "Exact source 54ce0d1: localization 9x998, 15/15 validator fixtures, Debug, universal Release, and UI build-for-testing gates passed.",
+          "Exact source 54ce0d1: 47/47 workflow blocks, 6/6 repository shell scripts, distribution/YAML, forbidden-runtime, fixture-provenance, and credential scans passed.",
           "Independent exact-head review is CLEAN after replacing the conditional diagnostics PID assertion with a mandatory bounded handshake and unconditional exit proof.",
           "D158 merge-safe synthetic Claude/mixed-provider UAT is green; real authentication, notification, VoiceOver, migration, and localized visual UAT remains mandatory before the first public release.",
-          "Hosted Distribution Validation passes after removing the ripgrep dependency and pinning all validation workflows to Xcode 26.0.1; the local workflow matrix covers 46 embedded shell blocks.",
-          "Hosted Build/Test at 5acc2ec passed UsageKit 80 with one intentional skip, app 610/610, Debug, and Release; Distribution Validation also passed.",
-          "Hosted Build/Test and Distribution Validation pass through 869ada4; its UI job proved direct /tmp writes are denied to Xcode's sandboxed UI runner.",
-          "Hosted-path corrections through 8cd3f2b pass all 21 parser/security tests plus app and dedicated UI builds-for-testing with a CLEAN exact three-file independent review.",
-          "Prerequisite PR #12 merged as 16b2a87 and was merged into B05 at 5448504, reducing the canonical reviewer diff to 99 files."
+          "Hosted CI run 30607952002 passed UsageKit 80 with one intentional skip, app 631/631, Debug, Release, and Codex UI 11/11 with zero failures/skips/expected failures.",
+          "Hosted Distribution Validation run 30607952004 passed.",
+          "All prerequisite PRs #12–#15 merged into main; final PR #11 is rebuilt as 42 files and 6,054 changed lines in one implementation commit."
         ],
         "external_release_blockers": [
           "Repository release environment, required Actions variables, and required Actions secrets are not configured.",
           "Apple notarization credentials, Sparkle private key, and a narrow Homebrew tap write token are unavailable.",
-          "Hosted macOS XCUITest execution must pass because local Developer Mode/TCC blocks runtime automation."
+          "D158 real official-authentication, notification/sound, VoiceOver, migration, and localized visual UAT remains mandatory in a backed-up disposable user or VM before the first public release."
         ]
       }
     }

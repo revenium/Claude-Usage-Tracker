@@ -15,39 +15,28 @@ refresh, diagnostics, and UI composition roots. An explicit
 emergency controls can prove that disabled operation fails closed before home,
 executable, or provider dependencies run.
 
-This audit is maintained on the B05 integration branch. The complete local
-matrix remains bound to exact source commit
-`8b6a3c2ebd780ed4bed8a90b089edd9fbbf84500`. Hosted CI then exposed a
-portable temporary-root canonicalization edge case; the focused seven-test
-correction and independent review are bound to
-`5acc2ec5e501870dfe7c9e36bd9d15f80967ec6e`. That rerun proved the runner
-and launched application receive different process-local temporary roots on
-hosted macOS. Commit `869ada4bc21d9c9aae1ec2440f2e4318c4ae4da5`
-strengthened the root contract, but its hosted run proved Xcode's sandboxed UI
-runner cannot write directly under `/tmp`. The final sandbox-aware correction,
-21-test focused gate, app and UI-testing builds, and exact-diff review are
-bound to `8cd3f2ba49eb30a4bc5bfab90648f0bd7fc7bc51`. PR #12 moved the
-16 unchanged synthetic localization fixtures and inherited funding-link
-deletion into `main` as `16b2a8764e0b1e9d83e98c983a14b5a1a7e244c7`;
-B05 merged that base at `5448504`, leaving an exact 99-file reviewer diff.
-Hosted CI on the resulting final PR head remains the authoritative integration
-gate. At the current checkpoint:
+This audit was reconciled after all prerequisite workstreams squash-merged.
+The final implementation tree is bound to
+`54ce0d12afa844ec77a75a2d7a16622ab223ad00`, one auditable PRODUCT-2290
+commit directly atop merged `main`. It is byte-for-byte identical to the
+previously reconciled aggregate tree but reduces PR #11 to 42 files and 6,054
+changed lines. This evidence reconciliation is documentation-only; GitHub
+branch protection re-runs the complete hosted matrix on its descendant before
+merge. At the current checkpoint:
 
 - P01–P16 have completed implementation and independent acceptance evidence.
-- P15 is complete at the integrated source: all nine catalogs contain exactly
-  994 keys, all 15 localization-validator fixtures pass, the 11-test native UI
-  suite builds, no test is skipped or marked as an expected failure, and the
-  independent exact-head review is clean. Hosted execution remains a mandatory
-  PR gate because this workstation blocks UI automation at the Developer
-  Mode/TCC boundary before the first test body.
-- P14 is final at integrated commit `f574aaa`, including the complete
-  redaction/process corrections. The final saturated-host regression now
-  requires a bounded PID-file handshake and unconditional exact-process exit
-  proof at `8b6a3c2`; its exact-head independent review is clean.
+- P13–P16 are complete and merged through PRs #13–#15.
+- P15 is complete at the final implementation source: all nine catalogs
+  contain exactly 998 keys, all 15 localization-validator fixtures pass, and
+  the isolated native UI suite executed 11/11 on hosted macOS with zero
+  failures, skips, or expected failures.
+- P14 is complete in merged `main`, including fail-closed redaction, bounded
+  diagnostics, a required PID-file handshake, and unconditional exact-process
+  exit proof. The exact implementation source passes all 38 diagnostics tests.
 - P17 production enablement, explicit disabled-path hardening, local exact-head
-  gates, merge-safe synthetic Claude/mixed-provider UAT, and the installed
-  Codex live smoke are complete. Hosted UI CI and the ship audit remain the
-  code-merge gates.
+  gates, merge-safe synthetic Claude/mixed-provider UAT, the installed Codex
+  live smoke, and hosted CI are complete. The Tessie review latch, final ship
+  audits, and exact-head merge remain the code-merge gates.
 
 Accordingly, this document is a complete coverage map and gate checklist, not
 permission to publish a release tag by itself.
@@ -100,11 +89,11 @@ hosted gates still required before the B05 merge.
 | P10 — onboarding/profiles/settings | `PRODUCT-2283` | Provider choice, zero-profile setup, home link/relink, official login, mixed CRUD, health/account state, typed settings routing, unlink/delete semantics | Integrated B04 focused matrix 100/100 and full app 519/519; setup/settings semantic review clean | Complete, merged in PR #10 |
 | P11 — normalized popover | `PRODUCT-2287` | Dynamic groups/windows, plan, credits, optional summaries, resets/pace, loading/stale/empty/error/unsupported states, Claude shell parity | Integrated B04 focused 100/100 and full app 519/519; independent Claude-shell and cross-integration reviews clean | Complete, merged in PR #10 |
 | P12 — menus/status/icons | `PRODUCT-2284` | All status-item and menu actions, mixed-profile switching, provider-aware metrics/thresholds/display/appearance/error state | Provider menu presentation 37/37; integrated B04 focused 100/100 and full app 519/519; independent semantic review clean | Complete, merged in PR #10 |
-| P13 — history/export/notifications/automation | `PRODUCT-2293` | Provider-tagged normalized history/export, dynamic-window threshold/reset deduplication, restart safety, Claude-only capability gates | Focused 28/28 plus independent reviewer matrix 111/111; full app 550/550; UsageKit Debug/Release passed; universal Release contains arm64+x86_64 | Complete in B05 |
-| P14 — errors/redaction/health/diagnostics | `PRODUCT-2289` | Actionable recovery, CLI/app-server/auth/usage health, safe support diagnostics, token/path/environment redaction, bounded diagnostic process lifecycle | Integrated `f574aaa`: 31/31 diagnostics tests; 50/50 repeated adversarial checks; zero residual fixtures; strict full/protocol-relative URL and local-path redaction; identity-bound PID-reuse traversal; exact-PID late reaping; identical source/integrated patch and blobs | Complete in B05; independent exact-head review CLEAN |
-| P15 — localization/accessibility/docs/UI tests | `PRODUCT-2291` | Exact nine-locale parity, placeholder/source validation, accessibility/focus/keyboard semantics, setup/login/mixed/menu/settings/error/refresh/unlink automation, support docs | Exact source `8b6a3c2`: 9×994 catalog keys; 15/15 validator fixtures; 11 UI test methods with no skips/expected failures; UI `build-for-testing` passed; 610/610 app tests in serial and parallel modes; independent exact-head review CLEAN. Hosted corrections culminate at `8cd3f2b`: 21 parser/security tests plus app and UI `build-for-testing` passed; exact-diff review CLEAN. | Complete in B05; hosted 11/11 runtime rerun is the PR gate |
-| P16 — Revenium distribution | `PRODUCT-2292` | Revenium destinations, identity compatibility, signed/notarized cohesive ZIP/checksum/appcast/Homebrew automation, explicit missing-secret failure | Exact source `8b6a3c2`: distribution/YAML, 43 workflow shell blocks, and five release scripts passed; Debug/universal Release passed. The ripgrep-free validator and Xcode 26.0.1 pin subsequently passed 46 workflow shell blocks and hosted Distribution Validation. Cohesive release unit, Sparkle 2.9.4 tools, temporary-tap audit, token isolation, optimistic-SHA publication, owned-draft recovery, and remote byte identity independently reviewed clean. | Complete in B05; protected release execution externally blocked |
-| P17 — final audit/UAT/ship | `PRODUCT-2290` | Evidence reconciliation, production enablement, full current-tree gates, live installed-Codex smoke, mixed/Claude UAT, distribution proof, forbidden-behavior audit | Exact source `8b6a3c2`: 610/610 app tests serial and parallel; UsageKit Debug/Release 80 tests with one intentional opt-in live skip; Debug/universal Release and UI test build passed; installed Codex 0.145.0 smoke passed 1/1; zero residual app-server/fixture processes; static/forbidden audit and independent review clean. PR #12 merged exact static prerequisites and restored a 99-file Tessie-reviewable B05 diff. | **Pending exact-head hosted 11/11 UI CI, reviewer gate, and ship audit** |
+| P13 — history/export/notifications/automation | `PRODUCT-2293` | Provider-tagged normalized history/export, dynamic-window threshold/reset deduplication, restart safety, Claude-only capability gates | Focused 28/28 plus independent reviewer matrix 111/111; final full app 631/631; UsageKit Debug/Release passed; universal Release contains arm64+x86_64 | Complete, merged in PR #13 |
+| P14 — errors/redaction/health/diagnostics | `PRODUCT-2289` | Actionable recovery, CLI/app-server/auth/usage health, safe support diagnostics, token/path/environment redaction, bounded diagnostic process lifecycle | Final implementation source: 38/38 diagnostics tests; 50/50 repeated adversarial checks; zero residual fixtures; strict URL/path/environment redaction; identity-bound PID traversal; exact-PID late reaping | Complete, merged in PR #14 |
+| P15 — localization/accessibility/docs/UI tests | `PRODUCT-2291` | Exact nine-locale parity, placeholder/source validation, accessibility/focus/keyboard semantics, setup/login/mixed/menu/settings/error/refresh/unlink automation, support docs | Final implementation source: 9×998 catalog keys; 15/15 validator fixtures; UI `build-for-testing`; exactly 11 hosted UI tests passed with zero failures/skips/expected failures; 631/631 app tests in serial and parallel modes | Complete, merged in PR #15 |
+| P16 — Revenium distribution | `PRODUCT-2292` | Revenium destinations, identity compatibility, signed/notarized cohesive ZIP/checksum/appcast/Homebrew automation, explicit missing-secret failure | Final implementation source: distribution policy, six workflow YAML files, 47 embedded workflow shell blocks, and six repository shell scripts pass syntax and ShellCheck; Debug/universal Release pass; hosted Distribution Validation passes | Complete, merged in PR #15; protected publication externally blocked |
+| P17 — final audit/UAT/ship | `PRODUCT-2290` | Evidence reconciliation, production enablement, full current-tree gates, live installed-Codex smoke, mixed/Claude UAT, distribution proof, forbidden-behavior audit | Implementation source `54ce0d1`: app 631/631 serial and parallel; UsageKit Debug/Release 80 with one intentional opt-in live skip; installed Codex 0.145.0 smoke 1/1; Debug/universal Release/UI build pass; hosted UI 11/11; distribution/static/security gates and zero-process census pass | **Pending Tessie latch, final ship audits, and merge** |
 
 ## P17 production-gate proof
 
@@ -370,15 +359,15 @@ commit-bound evidence:
 | Gate | Required verdict |
 |---|---|
 | P14 corrective integration and independent exact-head audit | PASS — `f574aaa`; 31/31 focused, 50/50 adversarial, zero fixtures, exact-patch/blob review CLEAN |
-| P15 independent integrated review | PASS — exact source `8b6a3c2`; P15 patch provenance exact; final corrections and mandatory process handshake reviewed CLEAN; hosted-path corrections through `8cd3f2b` independently reviewed CLEAN |
-| Localization validator and fixture suite | PASS — 9×994 keys and 15/15 fixtures at `8b6a3c2` |
+| P15 independent integrated review | PASS — prerequisite PR #15 shipped through Tessie and Greptile 5/5; final implementation remains within the audited architecture |
+| Localization validator and fixture suite | PASS — 9×998 keys and 15/15 fixtures at `54ce0d1` |
 | UsageKit Debug and Release suites | PASS — 80 total, 0 failures, 1 intentional opt-in live-smoke skip in each configuration |
-| Full application suite | PASS — 610/610, zero failures/skips/expected failures in both serial and parallel modes |
-| Debug and universal Release builds | PASS — zero build errors; universal executable contains `arm64` and `x86_64` |
-| Hosted Codex UI parity suite | PENDING exact-head rerun after sandbox-aware correction `8cd3f2b` |
-| Installed Codex live smoke and zero-process census | PASS — exact source `8b6a3c2`, Codex 0.145.0, 1/1, zero residual app-server/fixture processes |
+| Full application suite | PASS — 631/631, zero failures/skips/expected failures in both serial and parallel modes at `54ce0d1` |
+| Debug and universal Release builds | PASS — zero build errors; all six executable Mach-O files in the app bundle contain `arm64` and `x86_64` |
+| Hosted Codex UI parity suite | PASS — run `30607952002`, 11/11, zero failures/skips/expected failures |
+| Installed Codex live smoke and zero-process census | PASS — exact source `54ce0d1`, Codex 0.145.0, 1/1, zero residual app-server/fixture processes |
 | Claude-only and mixed-provider UAT | PASS FOR MERGE — exact synthetic matrix green; D158 real interactive UAT remains mandatory before first public release |
-| Distribution/static/forbidden-behavior gates | PASS — 43/43 source workflow blocks at `8b6a3c2`; 46/46 after portable validator and Xcode 26.0.1 workflow corrections; 5/5 scripts and distribution/YAML/locales/synthetic-fixture/forbidden-runtime scans clean |
+| Distribution/static/forbidden-behavior gates | PASS — 47/47 workflow blocks, 6/6 scripts, six workflow YAML files, distribution/localization/synthetic-fixture/credential/forbidden-runtime scans clean; hosted run `30607952004` passed |
 | `$codex-ship-pr skip-review` review, CI, and final audit | PENDING |
 | Public signed/notarized release | BLOCKED — credentials/environment absent |
 
