@@ -99,6 +99,7 @@ contains 'repos/revenium/homebrew-tap/contents/Casks/claude-usage\.rb' \
     '.github/workflows/update-homebrew-cask.yml' \
     || fail 'Homebrew workflow does not target the Revenium tap'
 homebrew_workflow='.github/workflows/update-homebrew-cask.yml'
+appcast_workflow='.github/workflows/generate-appcast.yml'
 release_workflow='.github/workflows/release.yml'
 if contains 'workflow_dispatch' "$homebrew_workflow"; then
     fail 'Homebrew tap token workflow must not have a manual tag-owned entry point'
@@ -115,6 +116,19 @@ contains 'merge-base --is-ancestor "\$source_commit" FETCH_HEAD' "$homebrew_work
     || fail 'Homebrew publication does not require source containment in main'
 contains 'current_sha' "$homebrew_workflow" \
     || fail 'Homebrew Contents API update lacks an optimistic blob-SHA guard'
+
+contains 'fetch-depth: 0' "$appcast_workflow" \
+    || fail 'manual appcast verification must fetch complete source history'
+contains 'metadata_commit=\$\(plutil -extract commit raw -o -' "$appcast_workflow" \
+    || fail 'manual appcast verification does not read release source metadata'
+contains 'source_commit=\$\(git rev-parse HEAD\)' "$appcast_workflow" \
+    || fail 'manual appcast verification does not resolve the checked-out tag commit'
+contains 'metadata_commit == "\$source_commit"' "$appcast_workflow" \
+    || fail 'manual appcast verification does not bind metadata to the checked-out tag'
+contains 'git fetch --no-tags origin main' "$appcast_workflow" \
+    || fail 'manual appcast verification does not fetch the authoritative main branch'
+contains 'merge-base --is-ancestor "\$source_commit" FETCH_HEAD' "$appcast_workflow" \
+    || fail 'manual appcast verification does not require source containment in main'
 
 contains 'revenium-release-workflow:\$GITHUB_SHA' "$release_workflow" \
     || fail 'release drafts do not carry exact-commit ownership provenance'
