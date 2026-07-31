@@ -581,7 +581,9 @@ struct SettingsView: View {
 
                 // Profile Settings
                 case .appearance:
-                    AppearanceSettingsView()
+                    AppearanceSettingsView(
+                        profileManager: dependencies.profileManager
+                    )
                 case .general:
                     GeneralSettingsView(
                         dependencies: dependencies

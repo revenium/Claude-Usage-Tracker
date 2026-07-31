@@ -1,6 +1,8 @@
 import XCTest
 
 final class CodexParityUITests: XCTestCase {
+    private static let codexProfileID =
+        "00000000-0000-0000-0000-000000000101"
     private var temporaryRoots: [URL] = []
     private var launchedApplications: [XCUIApplication] = []
     private var lastHomeURL: URL?
@@ -231,6 +233,18 @@ final class CodexParityUITests: XCTestCase {
         )
         XCTAssertTrue(
             element(app, identifier: "settings.profile.picker").exists
+        )
+        element(app, identifier: "settings.section.appearance").click()
+        let appearanceSurface = element(
+            app,
+            identifier: "settings.appearance.surface"
+        )
+        XCTAssertTrue(
+            appearanceSurface.waitForExistence(timeout: 5)
+        )
+        XCTAssertEqual(
+            accessibilityText(appearanceSurface),
+            "\(Self.codexProfileID)|codex"
         )
         app.terminate()
 
@@ -463,6 +477,16 @@ final class CodexParityUITests: XCTestCase {
         identifier: String
     ) -> XCUIElement {
         app.descendants(matching: .any)[identifier]
+    }
+
+    private func accessibilityText(
+        _ element: XCUIElement
+    ) -> String {
+        if let value = element.value as? String,
+           !value.isEmpty {
+            return value
+        }
+        return element.label
     }
 
     private func shellQuote(_ value: String) -> String {

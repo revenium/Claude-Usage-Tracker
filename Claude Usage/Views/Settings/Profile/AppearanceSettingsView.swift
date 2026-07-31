@@ -10,7 +10,7 @@ import UsageCore
 
 /// Menu bar icon appearance and customization with multi-metric support
 struct AppearanceSettingsView: View {
-    @ObservedObject private var profileManager = ProfileManager.shared
+    @ObservedObject private var profileManager: ProfileManager
     @ObservedObject private var catalogStore =
         ProviderMenuCatalogStore.shared
     @State private var configuration: MenuBarIconConfiguration = .default
@@ -19,9 +19,13 @@ struct AppearanceSettingsView: View {
         ((Profile) -> [ProviderMetricDescriptor])?
 
     init(
+        profileManager: ProfileManager = .shared,
         metricCatalogProvider:
             ((Profile) -> [ProviderMetricDescriptor])? = nil
     ) {
+        _profileManager = ObservedObject(
+            wrappedValue: profileManager
+        )
         self.metricCatalogProvider = metricCatalogProvider
     }
 
@@ -31,6 +35,16 @@ struct AppearanceSettingsView: View {
 
     private var activeProfile: Profile? {
         profileManager.activeProfile
+    }
+
+    private var activeProfileAccessibilityValue: String {
+        guard let activeProfile else {
+            return "none|none"
+        }
+        return [
+            activeProfile.id.uuidString.lowercased(),
+            activeProfile.providerID.rawValue
+        ].joined(separator: "|")
     }
 
     private var isProviderNeutralCatalog: Bool {
@@ -197,6 +211,8 @@ struct AppearanceSettingsView: View {
             }
             .padding()
         }
+        .accessibilityIdentifier("settings.appearance.surface")
+        .accessibilityValue(activeProfileAccessibilityValue)
         .onAppear {
             // Load configuration from active profile
             if let activeProfile = profileManager.activeProfile {

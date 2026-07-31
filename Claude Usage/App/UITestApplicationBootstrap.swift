@@ -12,6 +12,9 @@ import CodexUsageProvider
 /// `UITestLaunchConfiguration`.
 @MainActor
 enum UITestApplicationBootstrap {
+    static let codexProfileID = UUID(
+        uuidString: "00000000-0000-0000-0000-000000000101"
+    )!
     static let evaluation = UITestLaunchConfiguration.evaluate(
         arguments: CommandLine.arguments,
         environment: ProcessInfo.processInfo.environment,
@@ -109,7 +112,7 @@ enum UITestApplicationBootstrap {
         )
         seed(
             configuration: configuration,
-            profileManager: profileManager
+            profileStore: profileStore
         )
         profileManager.loadProfiles()
 
@@ -132,23 +135,40 @@ enum UITestApplicationBootstrap {
 
     private static func seed(
         configuration: UITestLaunchConfiguration,
-        profileManager: ProfileManager
+        profileStore: ProfileStore
     ) {
         guard configuration.seed != .firstRun,
               let home = configuration.codexHomeURL else {
             return
         }
         do {
-            _ = try profileManager.createInitialCodexProfile(
+            let canonicalHome = try CodexHomeCanonicalizer()
+                .canonicalize(home.path)
+            let timestamp = Date(timeIntervalSince1970: 1_700_000_000)
+            let codex = Profile(
+                id: codexProfileID,
                 name: "Codex Pro",
-                linkedHomePath: home.path
+                providerConfiguration: .codex(
+                    .init(linkedHome: canonicalHome)
+                ),
+                createdAt: timestamp,
+                lastUsedAt: timestamp
             )
+            try profileStore.createInitialProfile(codex)
             if configuration.seed == .mixedProviders {
-                _ = try profileManager.createProfileThrowing(
+                let claude = Profile(
+                    id: UUID(),
                     name: "Claude Team",
-                    providerConfiguration: .claude
+                    providerConfiguration: .claude,
+                    createdAt: timestamp,
+                    lastUsedAt: timestamp
+                )
+                try profileStore.appendProfile(
+                    claude,
+                    expectedExistingIDs: [codex.id]
                 )
             }
+            profileStore.saveActiveProfileId(codex.id)
         } catch {
             assertionFailure(
                 "Unable to seed isolated UI-test profiles: \(error)"
