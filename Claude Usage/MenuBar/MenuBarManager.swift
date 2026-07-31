@@ -2055,8 +2055,15 @@ class MenuBarManager: NSObject, ObservableObject {
     }
 
     @objc private func contextMenuQuit() {
-        guard let target = contextMenuTarget else { return }
-        capturedTargetRouter().route(.quit, target: target)
+        Self.performContextMenuQuit {
+            NSApplication.shared.terminate(nil)
+        }
+    }
+
+    nonisolated static func performContextMenuQuit(
+        terminate: () -> Void
+    ) {
+        terminate()
     }
 
     private func currentProfile(

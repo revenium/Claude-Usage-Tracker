@@ -116,6 +116,16 @@ final class MenuReliabilityTests: HostedAppTestCase {
         XCTAssertEqual(quit.keyEquivalentModifierMask, .command)
     }
 
+    func testContextMenuQuitDoesNotDependOnCapturedProfileIdentity() {
+        var didTerminate = false
+
+        MenuBarManager.performContextMenuQuit {
+            didTerminate = true
+        }
+
+        XCTAssertTrue(didTerminate)
+    }
+
     func testStatusButtonWiringAndContextEventUseProductionContract()
         throws
     {
