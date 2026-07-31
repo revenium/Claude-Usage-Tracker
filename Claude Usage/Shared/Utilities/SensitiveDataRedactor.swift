@@ -34,14 +34,15 @@ nonisolated enum SensitiveDataRedactor {
             return redactedRPC
         }
         var result = value
+        result = replacingPrivateKeyBlocks(in: result)
         result = replacingEmbeddedURLs(in: result)
         result = replacing(
-            #"(?im)\b([A-Z][A-Z0-9_]*(?:HOME|PATH|DIR|DIRECTORY)[A-Z0-9_]*)\s*=\s*["']?[^\r\n"']+"#,
+            #"(?im)\b((?=[A-Z])[A-Z0-9_]*(?:HOME|PATH|DIR|DIRECTORY)[A-Z0-9_]*)\s*=\s*(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\r\n]+)"#,
             in: result,
             with: "$1=\(redactedPath)"
         )
         result = replacing(
-            #"(?im)\b([A-Z][A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSCODE|CREDENTIAL|AUTH|COOKIE|SESSION|API_KEY|APIKEY|ACCESS_KEY|ACCESSKEY|PRIVATE_KEY|PRIVATEKEY|SIGNING_KEY|SIGNINGKEY)[A-Z0-9_]*)\s*=\s*["']?[^\r\n"']+"#,
+            #"(?im)\b((?=[A-Z])[A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSCODE|CREDENTIAL|AUTH|COOKIE|SESSION|API_KEY|APIKEY|ACCESS_KEY|ACCESSKEY|PRIVATE_KEY|PRIVATEKEY|SIGNING_KEY|SIGNINGKEY)[A-Z0-9_]*)\s*=\s*(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\r\n]+)"#,
             in: result,
             with: "$1=\(redactedValue)"
         )
@@ -56,7 +57,7 @@ nonisolated enum SensitiveDataRedactor {
             with: "$1 \(redactedValue)"
         )
         result = replacing(
-            #"(?i)\b(session[_-]?key|session[_-]?token|access[_-]?token|refresh[_-]?token|api[_-]?key|client[_-]?secret|password|credential)["']?\s*[:=]\s*["']?[^"'\s,;}\]]+"#,
+            #"(?i)\b(session[_-]?key|session[_-]?token|access[_-]?token|refresh[_-]?token|api[_-]?key|client[_-]?secret|password|credential)["']?\s*[:=]\s*(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|"[^\r\n]*|'[^\r\n]*|[^"'\s,;}\]]+)"#,
             in: result,
             with: "$1=\(redactedValue)"
         )
@@ -94,7 +95,10 @@ nonisolated enum SensitiveDataRedactor {
         guard var components = URLComponents(string: value),
               components.scheme != nil
                 || components.host != nil else {
-            return redact(value)
+            // Malformed URLs are untrusted opaque values. Returning a marker
+            // both avoids rediscovering the same embedded URL recursively and
+            // prevents unknown userinfo, query, or path syntax from escaping.
+            return redactedValue
         }
         if components.scheme?.lowercased() == "file" {
             return redactedPath
@@ -226,7 +230,8 @@ nonisolated enum SensitiveDataRedactor {
         guard lowercased.contains("\"jsonrpc\"")
                 || lowercased.contains("\"method\"")
                 || lowercased.contains("\"params\"")
-                || lowercased.contains("\"result\"") else {
+                || lowercased.contains("\"result\"")
+                || lowercased.contains("\"error\"") else {
             return false
         }
         return lowercased.contains("\"id\"")
@@ -285,7 +290,8 @@ nonisolated enum SensitiveDataRedactor {
 
     private static func replacingEmbeddedURLs(in value: String) -> String {
         guard let expression = try? NSRegularExpression(
-            pattern: #"https?://[^\s"'<>]+"#,
+            pattern:
+                #"[A-Za-z][A-Za-z0-9+.-]*://[^\s"'<>]+"#,
             options: [.caseInsensitive]
         ) else {
             return value
@@ -320,25 +326,39 @@ nonisolated enum SensitiveDataRedactor {
         )
     }
 
+    private static func replacingPrivateKeyBlocks(
+        in value: String
+    ) -> String {
+        replacing(
+            #"(?is)-----BEGIN [^-\r\n]*PRIVATE KEY(?: BLOCK)?-----.*?(?:-----END [^-\r\n]*PRIVATE KEY(?: BLOCK)?-----|\z)"#,
+            in: value,
+            with: redactedValue
+        )
+    }
+
     private static func replacingLocalPaths(
         in value: String
     ) -> String {
+        var result = replacing(
+            #""/(?!/)[^"\r\n]+"|'/(?!/)[^'\r\n]+'|\(/(?!/)[^)\r\n]+\)|\[/(?!/)[^\]\r\n]+\]"#,
+            in: value,
+            with: redactedPath
+        )
         guard let pathExpression = try? NSRegularExpression(
             pattern: localPathPattern
         ),
         let routeExpression = try? NSRegularExpression(
             pattern: safeAPIRoutePattern
         ) else {
-            return value
+            return result
         }
-        var result = value
-        let fullRange = NSRange(value.startIndex..., in: value)
+        let fullRange = NSRange(result.startIndex..., in: result)
         let safeRouteRanges = routeExpression.matches(
-            in: value,
+            in: result,
             range: fullRange
         ).map(\.range)
         let pathMatches = pathExpression.matches(
-            in: value,
+            in: result,
             range: fullRange
         )
         for match in pathMatches.reversed() {

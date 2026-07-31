@@ -229,9 +229,13 @@ struct ProviderErrorPresentation: Equatable, Sendable {
 
 nonisolated enum ProviderErrorMapper {
     static func presentation(
-        for error: Error
+        for error: Error,
+        providerID: ProviderID? = nil
     ) -> ProviderErrorPresentation? {
-        category(for: error).map(ProviderErrorPresentation.make)
+        category(
+            for: error,
+            providerID: providerID
+        ).map(ProviderErrorPresentation.make)
     }
 
     static func presentation(
@@ -246,11 +250,17 @@ nonisolated enum ProviderErrorMapper {
         category(for: failure).map(ProviderErrorPresentation.make)
     }
 
-    static func category(for error: Error) -> ProviderErrorCategory? {
+    static func category(
+        for error: Error,
+        providerID: ProviderID? = nil
+    ) -> ProviderErrorCategory? {
         if let transportError = error as? CodexTransportError {
             return categoryForTransportError(transportError)
         }
         if let providerError = error as? UsageProviderError {
+            guard providerID == .codex else {
+                return nil
+            }
             return categoryForUsageProviderError(providerError)
         }
         if let factoryError = error as? CodexProviderFactoryError {
@@ -270,10 +280,30 @@ nonisolated enum ProviderErrorMapper {
         }
         if let configurationError =
             error as? ProfileProviderConfigurationError {
-            if case .duplicateCodexHome = configurationError {
+            switch configurationError {
+            case .duplicateCodexHome:
                 return .duplicateHome
+            case .invalidCanonicalHome,
+                 .codexHomeChangeRequiresLink,
+                 .claudeStateOnCodexProfile,
+                 .codexProfileRequired,
+                 .codexInitialHomeRequiresDedicatedCreation,
+                 .codexConfigurationMutationFailed,
+                 .codexConfigurationRollbackFailed,
+                 .codexConfigurationMarkerVerificationFailed:
+                return .invalidHome
+            case .claudeProfileRequired:
+                return nil
+            case .invalidTaggedShape,
+                 .providerChangeNotAllowed,
+                 .providerRevisionChangeNotAllowed,
+                 .providerRevisionExhausted,
+                 .initialProfileAlreadyExists,
+                 .duplicateProfileID,
+                 .profileSetChanged,
+                 .deletionStateChangeRequiresLifecycle:
+                return providerID == .codex ? .invalidHome : nil
             }
-            return .invalidHome
         }
         if let captureError = error as? UsageProviderCaptureError {
             switch captureError {
@@ -283,10 +313,11 @@ nonisolated enum ProviderErrorMapper {
                 return .missingExecutable
             case .codexHomeUnlinked, .codexHomeUnavailable:
                 return .invalidHome
-            case .providerConstructionFailed:
-                return .launchFailure
+            case .providerConstructionFailed(let capturedProviderID):
+                return capturedProviderID == .codex
+                    ? .launchFailure : nil
             case .claudeCredentialsUnavailable:
-                return .loggedOut
+                return nil
             }
         }
         return nil

@@ -175,7 +175,7 @@ final class ProviderDiagnosticsService {
         }
 
         let codexVersion = await versionProbe(executableURL).flatMap {
-            Self.safeVersion($0)
+            CodexVersionSanitizer.sanitize($0)
         }
         guard codexProviderFactory.isEnabled else {
             return baseSnapshot(
@@ -243,7 +243,7 @@ final class ProviderDiagnosticsService {
             executableStatus:
                 providerID == .codex ? .available : .notApplicable,
             codexVersion:
-                codexVersion.flatMap(Self.safeVersion),
+                codexVersion.flatMap(CodexVersionSanitizer.sanitize),
             appServerCapability:
                 providerID == .codex
                 ? Self.capability(for: health) : .notApplicable,
@@ -291,7 +291,10 @@ final class ProviderDiagnosticsService {
         for error: Error,
         checkedAt: Date
     ) -> ProviderHealth {
-        switch ProviderErrorMapper.category(for: error) {
+        switch ProviderErrorMapper.category(
+            for: error,
+            providerID: .codex
+        ) {
         case .missingExecutable:
             return ProviderHealth(
                 status: .unavailable,
@@ -378,7 +381,23 @@ final class ProviderDiagnosticsService {
         }.joined()
     }
 
-    private static func safeVersion(_ value: String) -> String? {
+    private static func durationMilliseconds(
+        from start: Date,
+        to end: Date
+    ) -> Int {
+        max(0, Int(end.timeIntervalSince(start) * 1_000))
+    }
+
+}
+
+private extension Optional where Wrapped == String {
+    func unwrap(or fallback: String) -> String {
+        self ?? fallback
+    }
+}
+
+private nonisolated enum CodexVersionSanitizer {
+    static func sanitize(_ value: String) -> String? {
         let trimmed = value.trimmingCharacters(
             in: .whitespacesAndNewlines
         )
@@ -392,20 +411,6 @@ final class ProviderDiagnosticsService {
         let redacted = SensitiveDataRedactor.redact(trimmed)
         return redacted == SensitiveDataRedactor.redactedRPC
             ? nil : redacted
-    }
-
-    private static func durationMilliseconds(
-        from start: Date,
-        to end: Date
-    ) -> Int {
-        max(0, Int(end.timeIntervalSince(start) * 1_000))
-    }
-
-}
-
-private extension Optional where Wrapped == String {
-    func unwrap(or fallback: String) -> String {
-        self ?? fallback
     }
 }
 
@@ -550,19 +555,7 @@ nonisolated enum CodexVersionProbe {
               let value = String(data: data, encoding: .utf8) else {
             return nil
         }
-        let trimmed = value.trimmingCharacters(
-            in: .whitespacesAndNewlines
-        )
-        guard !trimmed.isEmpty,
-              trimmed.count <= 128,
-              trimmed.unicodeScalars.allSatisfy({
-                  !CharacterSet.controlCharacters.contains($0)
-              }) else {
-            return nil
-        }
-        let redacted = SensitiveDataRedactor.redact(trimmed)
-        return redacted == SensitiveDataRedactor.redactedRPC
-            ? nil : redacted
+        return CodexVersionSanitizer.sanitize(value)
     }
 
     private struct SpawnedProcess {

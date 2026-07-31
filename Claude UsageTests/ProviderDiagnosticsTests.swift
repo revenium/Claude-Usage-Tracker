@@ -572,6 +572,143 @@ final class ProviderDiagnosticsTests: HostedAppTestCase {
         XCTAssertFalse(tracker.containmentReliable)
     }
 
+    func testMalformedEmbeddedURLFallbackDoesNotReenterRedactor() {
+        let malformedSecret = "p14MalformedURLSecret123456"
+        let malformedQuery = "p14MalformedQuerySecret123456"
+        let malformedURL =
+            "https://alice:\(malformedSecret)@[bad/path"
+            + "?token=\(malformedQuery)"
+        let output = SensitiveDataRedactor.redact(
+            "Request failed for \(malformedURL)"
+        )
+
+        XCTAssertEqual(
+            output,
+            "Request failed for "
+                + SensitiveDataRedactor.redactedValue
+        )
+        XCTAssertEqual(
+            SensitiveDataRedactor.redact(url: malformedURL),
+            SensitiveDataRedactor.redactedValue
+        )
+        XCTAssertFalse(output.contains("alice"))
+        XCTAssertFalse(output.contains(malformedSecret))
+        XCTAssertFalse(output.contains(malformedQuery))
+    }
+
+    func testRedactorCoversRPCEnvironmentAndQuotedSecretGaps() {
+        let rpcErrorSecret = "p14RPCErrorSecret123456"
+        let rpcOutput = SensitiveDataRedactor.redact(
+            #"RPC failed: {"id":1,"error":{"data":"\#(rpcErrorSecret)"}}"#
+        )
+        XCTAssertEqual(
+            rpcOutput,
+            SensitiveDataRedactor.redactedRPC
+        )
+        XCTAssertFalse(rpcOutput.contains(rpcErrorSecret))
+
+        for key in [
+            "TOKEN",
+            "SECRET",
+            "ACCESS_KEY",
+            "PRIVATE_KEY",
+            "SESSION"
+        ] {
+            let output = SensitiveDataRedactor.redact(
+                "\(key)=\(environmentSecret)"
+            )
+            XCTAssertTrue(
+                output.contains(
+                    SensitiveDataRedactor.redactedValue
+                ),
+                key
+            )
+            XCTAssertFalse(output.contains(environmentSecret), key)
+        }
+
+        let passphrase = "correct horse battery staple"
+        for key in ["password", "credential", "api_key"] {
+            let output = SensitiveDataRedactor.redact(
+                #"\#(key)="\#(passphrase)""#
+            )
+            XCTAssertTrue(
+                output.contains(
+                    SensitiveDataRedactor.redactedValue
+                ),
+                key
+            )
+            XCTAssertFalse(output.contains(passphrase), key)
+            XCTAssertFalse(output.contains("horse battery"), key)
+        }
+    }
+
+    func testRedactorRemovesPrivateKeyBlocksAndDelimitedPaths() {
+        let privateKeyBody = "p14PrivateKeyBodySecret123456"
+        let privateKeyBlocks = [
+            """
+            -----BEGIN PRIVATE KEY-----
+            \(privateKeyBody)
+            -----END PRIVATE KEY-----
+            """,
+            """
+            -----BEGIN OPENSSH PRIVATE KEY-----
+            \(privateKeyBody)
+            -----END OPENSSH PRIVATE KEY-----
+            """
+        ]
+        for block in privateKeyBlocks {
+            let output = SensitiveDataRedactor.redact(
+                "PRIVATE_KEY=\(block)"
+            )
+            XCTAssertTrue(
+                output.contains(
+                    SensitiveDataRedactor.redactedValue
+                )
+            )
+            XCTAssertFalse(output.contains(privateKeyBody))
+            XCTAssertFalse(output.contains("BEGIN"))
+            XCTAssertFalse(output.contains("END"))
+        }
+
+        let privatePath =
+            "/Users/p14-sensitive/My Private/config.toml"
+        let pathMessages = [
+            "failed (\(privatePath))",
+            "failed [\(privatePath)]",
+            "failed '\(privatePath)'",
+            #"failed "\#(privatePath)""#
+        ]
+        for message in pathMessages {
+            let output = SensitiveDataRedactor.redact(message)
+            XCTAssertTrue(
+                output.contains(
+                    SensitiveDataRedactor.redactedPath
+                ),
+                message
+            )
+            XCTAssertFalse(output.contains("p14-sensitive"), message)
+            XCTAssertFalse(output.contains("My Private"), message)
+        }
+    }
+
+    func testRedactorStripsUserInfoFromGenericEmbeddedURLs() {
+        let uriPassword = "p14URISecret123456"
+        let output = SensitiveDataRedactor.redact(
+            "Clone failed: "
+                + "ssh://alice:\(uriPassword)@example.test/repo"
+        )
+
+        XCTAssertTrue(
+            output.hasPrefix(
+                "Clone failed: ssh://example.test/"
+            )
+        )
+        XCTAssertTrue(output.contains("redacted-path"))
+        XCTAssertFalse(output.contains("alice"))
+        XCTAssertFalse(output.contains(uriPassword))
+        XCTAssertFalse(output.contains("/repo"))
+    }
+
     func testEveryLoggingEntryPointUsesCentralRedactionBoundary() {
         var output: [String] = []
         let logger = retain(
@@ -1033,6 +1170,136 @@ final class ProviderDiagnosticsTests: HostedAppTestCase {
         )
     }
 
+    func testUnsafeLegacyCaptureBlocksLoggingUntilVerifiedRetrySucceeds()
+        throws
+    {
+        struct StorageFailure: Error {}
+
+        let storageURL = URL(
+            fileURLWithPath: "/tmp/p14-network-logs.json"
+        )
+        var persistedData: Data? = Data(
+            #"{"TOKEN":"p14UnsafeLegacySecret123456"}"#.utf8
+        )
+        var allowWrite = false
+        var writeAttempts = 0
+        let logger = retain(
+            NetworkLoggerService(
+                storageURL: storageURL,
+                loggingService: LoggingService(),
+                storageOperations: NetworkLogStorageOperations(
+                    fileExists: { _ in persistedData != nil },
+                    read: { _ in
+                        guard let persistedData else {
+                            throw StorageFailure()
+                        }
+                        return persistedData
+                    },
+                    writeAtomically: { data, _ in
+                        writeAttempts += 1
+                        guard allowWrite else {
+                            throw StorageFailure()
+                        }
+                        persistedData = data
+                    },
+                    remove: { _ in
+                        throw StorageFailure()
+                    }
+                )
+            )
+        )
+
+        XCTAssertEqual(
+            logger.storageFailure,
+            .unsafeLegacyCaptureRetained
+        )
+        logger.startLogging(duration: 60)
+        logger.logRequest(
+            url: "https://example.test",
+            method: "GET",
+            requestBody: nil,
+            responseData: nil,
+            statusCode: 200,
+            duration: 0.1,
+            error: nil
+        )
+        XCTAssertFalse(logger.session.isActive)
+        XCTAssertTrue(logger.session.logs.isEmpty)
+        XCTAssertEqual(writeAttempts, 0)
+
+        XCTAssertFalse(logger.retryUnsafeLegacyCaptureCleanup())
+        XCTAssertEqual(
+            logger.storageFailure,
+            .unsafeLegacyCaptureRetained
+        )
+
+        allowWrite = true
+        XCTAssertTrue(logger.retryUnsafeLegacyCaptureCleanup())
+        XCTAssertNil(logger.storageFailure)
+        XCTAssertTrue(logger.session.logs.isEmpty)
+        let safeData = try XCTUnwrap(persistedData)
+        let safeSession = try JSONDecoder().decode(
+            NetworkLoggingSession.self,
+            from: safeData
+        )
+        XCTAssertTrue(safeSession.logs.isEmpty)
+        XCTAssertFalse(
+            String(decoding: safeData, as: UTF8.self)
+                .contains("p14UnsafeLegacySecret123456")
+        )
+
+        logger.startLogging(duration: 60)
+        XCTAssertTrue(logger.session.isActive)
+    }
+
+    func testUnsafeLegacyCaptureRetryFallsBackToVerifiedRemoval()
+        throws
+    {
+        struct StorageFailure: Error {}
+
+        let storageURL = URL(
+            fileURLWithPath: "/tmp/p14-network-logs-fallback.json"
+        )
+        var persistedData: Data? = Data(
+            #"{"TOKEN":"p14UnsafeFallbackSecret123456"}"#.utf8
+        )
+        var allowRemove = false
+        let logger = retain(
+            NetworkLoggerService(
+                storageURL: storageURL,
+                loggingService: LoggingService(),
+                storageOperations: NetworkLogStorageOperations(
+                    fileExists: { _ in persistedData != nil },
+                    read: { _ in
+                        guard let persistedData else {
+                            throw StorageFailure()
+                        }
+                        return persistedData
+                    },
+                    writeAtomically: { _, _ in
+                        throw StorageFailure()
+                    },
+                    remove: { _ in
+                        guard allowRemove else {
+                            throw StorageFailure()
+                        }
+                        persistedData = nil
+                    }
+                )
+            )
+        )
+
+        XCTAssertEqual(
+            logger.storageFailure,
+            .unsafeLegacyCaptureRetained
+        )
+        allowRemove = true
+        XCTAssertTrue(logger.retryUnsafeLegacyCaptureCleanup())
+        XCTAssertNil(logger.storageFailure)
+        XCTAssertNil(persistedData)
+        XCTAssertTrue(logger.session.logs.isEmpty)
+    }
+
     func testProviderErrorTaxonomyMapsTitlesActionsAndAppErrors() {
         let duplicateID = UUID()
         let cases:
@@ -1148,7 +1415,8 @@ final class ProviderDiagnosticsTests: HostedAppTestCase {
         )
         for fixture in cases {
             let presentation = ProviderErrorMapper.presentation(
-                for: fixture.error
+                for: fixture.error,
+                providerID: .codex
             )
             XCTAssertEqual(
                 presentation?.category,
@@ -1167,7 +1435,10 @@ final class ProviderDiagnosticsTests: HostedAppTestCase {
                 presentation?.explanation.isEmpty ?? true
             )
 
-            let appError = AppError.wrap(fixture.error)
+            let appError = AppError.wrap(
+                fixture.error,
+                providerID: .codex
+            )
             XCTAssertEqual(
                 appError.providerCategory,
                 fixture.category
@@ -1187,15 +1458,52 @@ final class ProviderDiagnosticsTests: HostedAppTestCase {
         }
     }
 
+    func testProviderPresentationRequiresCodexContextForGenericErrors() {
+        let genericErrors: [Error] = [
+            UsageProviderError.unauthenticated,
+            UsageProviderCaptureError.claudeCredentialsUnavailable,
+            ProfileProviderConfigurationError
+                .claudeProfileRequired(UUID())
+        ]
+
+        for error in genericErrors {
+            XCTAssertNil(
+                ProviderErrorMapper.presentation(for: error)
+            )
+            let appError = AppError.wrap(error)
+            XCTAssertNil(appError.providerCategory)
+            XCTAssertFalse(appError.message.contains("Codex"))
+            XCTAssertFalse(
+                (appError.technicalDetails ?? "").contains("Codex")
+            )
+        }
+
+        XCTAssertEqual(
+            ProviderErrorMapper.presentation(
+                for: UsageProviderError.unauthenticated,
+                providerID: .codex
+            )?.category,
+            .loggedOut
+        )
+        XCTAssertEqual(
+            ProviderErrorMapper.presentation(
+                for: CodexTransportError.launchFailed
+            )?.category,
+            .launchFailure
+        )
+    }
+
     func testProviderRetryPolicyOnlyRetriesTransientCases() {
         let transient = AppError.wrap(
-            UsageProviderError.transportFailure
+            UsageProviderError.transportFailure,
+            providerID: .codex
         )
         let missing = AppError.wrap(
             CodexProviderFactoryError.executableMissing
         )
         let cancelled = AppError.wrap(
-            UsageProviderError.cancelled
+            UsageProviderError.cancelled,
+            providerID: .codex
         )
 
         if case .retryAfter = ErrorRecovery.shared.shouldRetry(
@@ -1419,7 +1727,10 @@ final class ProviderDiagnosticsTests: HostedAppTestCase {
     func testDiagnosticFixturesCoverEveryHealthClassSafely() {
         let logger = ErrorLogger()
         logger.log(
-            AppError.wrap(UsageProviderError.timedOut)
+            AppError.wrap(
+                UsageProviderError.timedOut,
+                providerID: .codex
+            )
         )
         let service = retain(
             ProviderDiagnosticsService(

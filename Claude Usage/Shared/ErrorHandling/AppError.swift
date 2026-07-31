@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import UsageCore
 
 /// Unified error system with error codes for debugging and user support
 struct AppError: Error, LocalizedError, CustomStringConvertible {
@@ -400,14 +401,21 @@ extension AppError {
 
     // MARK: - Wrapping Errors
 
-    static func wrap(_ error: Error, file: String = #file, line: Int = #line, function: String = #function) -> AppError {
+    static func wrap(
+        _ error: Error,
+        providerID: ProviderID? = nil,
+        file: String = #file,
+        line: Int = #line,
+        function: String = #function
+    ) -> AppError {
         // If already an AppError, return as-is
         if let appError = error as? AppError {
             return appError
         }
 
         if let presentation = ProviderErrorMapper.presentation(
-            for: error
+            for: error,
+            providerID: providerID
         ) {
             return provider(
                 presentation,

@@ -119,6 +119,14 @@ final class NetworkLoggerService: ObservableObject {
     // MARK: - Public API
 
     func startLogging(duration: TimeInterval) {
+        guard storageFailure == nil else {
+            loggingService.logStorageError(
+                "startNetworkLogging",
+                error: NetworkLogStorageError.cleanupRequired
+            )
+            return
+        }
+
         let now = Date()
         session.isActive = true
         session.startTime = now
@@ -143,16 +151,96 @@ final class NetworkLoggerService: ObservableObject {
     }
 
     func clearLogs() {
+        guard storageFailure == nil else {
+            loggingService.logStorageError(
+                "clearNetworkLogs",
+                error: NetworkLogStorageError.cleanupRequired
+            )
+            return
+        }
+
         session.logs.removeAll()
         saveSession()
 
         loggingService.logDebug("Network logs cleared")
     }
 
+    @discardableResult
+    func retryUnsafeLegacyCaptureCleanup() -> Bool {
+        guard storageFailure == .unsafeLegacyCaptureRetained else {
+            return true
+        }
+
+        let cleanSession = NetworkLoggingSession()
+        let cleanData: Data
+        do {
+            cleanData = try JSONEncoder().encode(cleanSession)
+        } catch {
+            loggingService.logStorageError(
+                "retryLegacyNetworkLogCleanup",
+                error: NetworkLogStorageError.safeReplacementEncodingFailed
+            )
+            return false
+        }
+
+        if !storageOperations.fileExists(storageURL) {
+            completeUnsafeLegacyCaptureCleanup(
+                with: cleanSession
+            )
+            return true
+        }
+
+        do {
+            // Prefer an atomic replacement so a file that cannot be removed
+            // may still be made safe. Verify the exact safe payload before
+            // clearing the blocking failure state.
+            try storageOperations.writeAtomically(
+                cleanData,
+                storageURL
+            )
+            let persistedData = try storageOperations.read(
+                storageURL
+            )
+            guard persistedData == cleanData else {
+                throw NetworkLogStorageError.replacementNotVerified
+            }
+
+            completeUnsafeLegacyCaptureCleanup(
+                with: cleanSession
+            )
+            return true
+        } catch {
+            // If replacement cannot be verified, fall back to removal. Never
+            // decode or publish the retained file's contents.
+            do {
+                if storageOperations.fileExists(storageURL) {
+                    try storageOperations.remove(storageURL)
+                }
+                guard !storageOperations.fileExists(storageURL) else {
+                    throw NetworkLogStorageError.removalNotVerified
+                }
+
+                completeUnsafeLegacyCaptureCleanup(
+                    with: cleanSession
+                )
+                return true
+            } catch {
+                storageFailure = .unsafeLegacyCaptureRetained
+                loggingService.logStorageError(
+                    "retryLegacyNetworkLogCleanup",
+                    error: NetworkLogStorageError.removalNotVerified
+                )
+                return false
+            }
+        }
+    }
+
     func logRequest(url: String, method: String, requestBody: Data?,
                     responseData: Data?, statusCode: Int?,
                     duration: TimeInterval?, error: Error?) {
-        guard session.isActive else { return }
+        guard storageFailure == nil, session.isActive else {
+            return
+        }
 
         // Check if session has expired
         if let endTime = session.endTime, Date() > endTime {
@@ -206,6 +294,18 @@ final class NetworkLoggerService: ObservableObject {
 
     // MARK: - Private Helpers
 
+    private func completeUnsafeLegacyCaptureCleanup(
+        with cleanSession: NetworkLoggingSession
+    ) {
+        timer?.invalidate()
+        timer = nil
+        session = cleanSession
+        storageFailure = nil
+        loggingService.logDebug(
+            "Unsafe legacy network diagnostics were securely cleared"
+        )
+    }
+
     private func scheduleAutoStop(until endTime: Date) {
         timer?.invalidate()
         timer = Timer(fire: endTime, interval: 0, repeats: false) { [weak self] _ in
@@ -217,6 +317,14 @@ final class NetworkLoggerService: ObservableObject {
     }
 
     private func saveSession() {
+        guard storageFailure == nil else {
+            loggingService.logStorageError(
+                "saveNetworkLogs",
+                error: NetworkLogStorageError.cleanupRequired
+            )
+            return
+        }
+
         do {
             let data = try JSONEncoder().encode(session)
 
@@ -336,16 +444,29 @@ private enum NetworkLogLoadResult {
 }
 
 private enum NetworkLogStorageError: LocalizedError {
+    case cleanupRequired
     case legacyDataRejected
+    case replacementNotVerified
+    case safeReplacementEncodingFailed
     case rewriteFailed
     case removalNotVerified
 
     var errorDescription: String? {
         switch self {
+        case .cleanupRequired:
+            "Unsafe legacy network diagnostics must be cleared "
+                + "before logging can continue."
         case .legacyDataRejected:
             "Legacy network diagnostics were rejected and discarded."
+        case .replacementNotVerified:
+            "The safe network diagnostics replacement could not "
+                + "be verified."
+        case .safeReplacementEncodingFailed:
+            "The safe network diagnostics replacement could not "
+                + "be prepared."
         case .rewriteFailed:
-            "Sanitized network diagnostics could not be committed; the raw capture was discarded."
+            "Sanitized network diagnostics could not be committed; "
+                + "the raw capture was discarded."
         case .removalNotVerified:
             "Unsafe legacy network diagnostics could not be removed."
         }
