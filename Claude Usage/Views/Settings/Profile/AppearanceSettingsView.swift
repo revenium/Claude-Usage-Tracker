@@ -18,13 +18,14 @@ struct AppearanceSettingsView: View {
     private let metricCatalogProvider:
         ((Profile) -> [ProviderMetricDescriptor])?
 
+    @MainActor
     init(
-        profileManager: ProfileManager = .shared,
+        profileManager: ProfileManager? = nil,
         metricCatalogProvider:
             ((Profile) -> [ProviderMetricDescriptor])? = nil
     ) {
         _profileManager = ObservedObject(
-            wrappedValue: profileManager
+            wrappedValue: profileManager ?? .shared
         )
         self.metricCatalogProvider = metricCatalogProvider
     }
