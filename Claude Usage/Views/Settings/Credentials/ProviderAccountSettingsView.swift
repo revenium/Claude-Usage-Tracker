@@ -248,9 +248,6 @@ struct ProviderAccountSettingsView: View {
                 spacing: DesignTokens.Spacing.medium
             ) {
                 accountStateView
-                    .accessibilityIdentifier(
-                        ProviderUIAccessibility.accountStatus
-                    )
 
                 HStack {
                     Button {
@@ -332,11 +329,17 @@ struct ProviderAccountSettingsView: View {
                 )
             )
             .foregroundColor(.secondary)
+            .accessibilityIdentifier(
+                ProviderUIAccessibility.accountStatus
+            )
         case .loading:
             HStack {
                 ProgressView()
                 Text(text("codex.account.checking", "Checking Codex…"))
             }
+            .accessibilityIdentifier(
+                ProviderUIAccessibility.accountStatus
+            )
         case .linked(let snapshot):
             VStack(alignment: .leading, spacing: 6) {
                 statusRow(
@@ -366,6 +369,9 @@ struct ProviderAccountSettingsView: View {
                     )
                 }
             }
+            .accessibilityIdentifier(
+                ProviderUIAccessibility.accountStatus
+            )
         case .unauthenticated(let health):
             statusRow(
                 title: text("codex.account.status", "Status"),
@@ -428,6 +434,9 @@ struct ProviderAccountSettingsView: View {
                             "Complete sign-in in the browser. This app never receives or stores your Codex credentials."
                         )
                     )
+                    .accessibilityIdentifier(
+                        ProviderUIAccessibility.loginBrowserWaiting
+                    )
                 case .deviceCode(let verificationURL, let userCode):
                     Text(
                         text(
@@ -477,6 +486,9 @@ struct ProviderAccountSettingsView: View {
                 systemImage: "checkmark.circle.fill"
             )
             .foregroundColor(.green)
+            .accessibilityIdentifier(
+                ProviderUIAccessibility.loginSucceeded
+            )
         case .failed(let message):
             capabilityMessage(message, color: .red)
         }
@@ -621,6 +633,7 @@ enum ProviderUIAccessibility {
     static let homePath = "codex.home.path"
     static let profileName = "codex.profile.name"
     static let setupTitle = "codex.setup.title"
+    static let setupBack = "codex.setup.back"
     static let homePicker = "codex.home.picker"
     static let homeLink = "codex.home.link"
     static let loginStartBrowser = "codex.login.browser.start"
@@ -629,6 +642,9 @@ enum ProviderUIAccessibility {
     static let loginDeviceCode = "codex.login.device.code"
     static let loginOpenVerification =
         "codex.login.device.open_verification"
+    static let loginBrowserWaiting =
+        "codex.login.browser.waiting"
+    static let loginSucceeded = "codex.login.succeeded"
     static let accountStatus = "codex.account.status"
     static let accountRefresh = "codex.account.refresh"
     static let unlink = "codex.home.unlink"
@@ -642,9 +658,13 @@ enum ProviderUIAccessibility {
     static let historySurface = "history.surface"
     static let historyTimeScale = "history.time_scale"
     static let historyExport = "history.export"
-    static let profileCreate = "profile.create"
+    static let profileCreateOpen = "profile.create.open"
+    static let profileCreateConfirmation = "profile.create.confirm"
     static let profileRename = "profile.rename"
     static let profileActivate = "profile.activate"
     static let profileDelete = "profile.delete"
+    static let profileDeleteConfirmation = "profile.delete.confirm"
+    static let profileDeleteCancel = "profile.delete.cancel"
+    static let profileDeleteRetry = "profile.delete.retry"
     static let capabilityDisabled = "provider.capability.unavailable"
 }

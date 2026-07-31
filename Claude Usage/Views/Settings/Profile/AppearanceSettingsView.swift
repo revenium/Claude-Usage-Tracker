@@ -76,8 +76,9 @@ struct AppearanceSettingsView: View {
                 if isMultiProfileMode {
                     MultiProfileModeWarningCard(
                         onDisableMultiProfile: {
-                            profileManager.updateDisplayMode(.single)
-                            NotificationCenter.default.post(name: .displayModeChanged, object: nil)
+                            Self.disableMultiProfile {
+                                profileManager.updateDisplayMode(.single)
+                            }
                         }
                     )
                 }
@@ -350,6 +351,19 @@ struct AppearanceSettingsView: View {
             set: { newValue in
                 configuration.updateConfig(newValue)
             }
+        )
+    }
+
+    static func disableMultiProfile(
+        updateDisplayMode: () -> Void,
+        queue: DispatchQueue = .main,
+        center: NotificationCenter = .default
+    ) {
+        updateDisplayMode()
+        MenuBarNotificationDelivery.enqueue(
+            .displayModeChanged,
+            queue: queue,
+            center: center
         )
     }
 

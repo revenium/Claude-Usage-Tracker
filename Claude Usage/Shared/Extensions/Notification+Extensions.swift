@@ -7,6 +7,21 @@
 
 import Foundation
 
+/// Delivers menu-bar notifications after ProfileManager's pending main-queue
+/// mutation. DispatchQueue preserves FIFO ordering for work enqueued on the
+/// same serial queue.
+enum MenuBarNotificationDelivery {
+    static func enqueue(
+        _ name: Notification.Name,
+        queue: DispatchQueue = .main,
+        center: NotificationCenter = .default
+    ) {
+        queue.async {
+            center.post(name: name, object: nil)
+        }
+    }
+}
+
 extension Notification.Name {
     /// Posted when the menu bar icon configuration changes (metrics enabled/disabled, order, styling, etc.)
     static let menuBarIconConfigChanged = Notification.Name("menuBarIconConfigChanged")

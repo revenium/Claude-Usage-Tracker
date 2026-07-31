@@ -86,6 +86,9 @@ struct ManageProfilesView: View {
                 ) {
                     showingCreateProfile = true
                 }
+                .accessibilityIdentifier(
+                    ProviderUIAccessibility.profileCreateOpen
+                )
 
                 // Multi-Profile Display Section
                 SettingsSectionCard(
@@ -102,7 +105,7 @@ struct ManageProfilesView: View {
                                 get: { profileManager.displayMode == .multi },
                                 set: { enabled in
                                     profileManager.updateDisplayMode(enabled ? .multi : .single)
-                                    Self.enqueueMenuBarNotification(.displayModeChanged)
+                                    MenuBarNotificationDelivery.enqueue(.displayModeChanged)
                                 }
                             )
                         )
@@ -129,7 +132,7 @@ struct ManageProfilesView: View {
                                                 return
                                             }
                                             profileManager.toggleProfileSelection(profile.id)
-                                            Self.enqueueMenuBarNotification(.multiProfileConfigChanged)
+                                            MenuBarNotificationDelivery.enqueue(.multiProfileConfigChanged)
                                         }
                                     )
                                 }
@@ -163,7 +166,7 @@ struct ManageProfilesView: View {
                                         var config = profileManager.multiProfileConfig
                                         config.iconStyle = newStyle
                                         profileManager.updateMultiProfileConfig(config)
-                                        Self.enqueueMenuBarNotification(.multiProfileConfigChanged)
+                                        MenuBarNotificationDelivery.enqueue(.multiProfileConfigChanged)
                                     }
                                 )) {
                                     ForEach(MultiProfileIconStyle.allCases, id: \.self) { style in
@@ -185,7 +188,7 @@ struct ManageProfilesView: View {
                                         var config = profileManager.multiProfileConfig
                                         config.showWeek = showWeek
                                         profileManager.updateMultiProfileConfig(config)
-                                        Self.enqueueMenuBarNotification(.multiProfileConfigChanged)
+                                        MenuBarNotificationDelivery.enqueue(.multiProfileConfigChanged)
                                     }
                                 )
                             )
@@ -200,7 +203,7 @@ struct ManageProfilesView: View {
                                         var config = profileManager.multiProfileConfig
                                         config.showProfileLabel = showLabel
                                         profileManager.updateMultiProfileConfig(config)
-                                        Self.enqueueMenuBarNotification(.multiProfileConfigChanged)
+                                        MenuBarNotificationDelivery.enqueue(.multiProfileConfigChanged)
                                     }
                                 )
                             )
@@ -215,7 +218,7 @@ struct ManageProfilesView: View {
                                         var config = profileManager.multiProfileConfig
                                         config.useSystemColor = useSystemColor
                                         profileManager.updateMultiProfileConfig(config)
-                                        Self.enqueueMenuBarNotification(.multiProfileConfigChanged)
+                                        MenuBarNotificationDelivery.enqueue(.multiProfileConfigChanged)
                                     }
                                 )
                             )
@@ -230,7 +233,7 @@ struct ManageProfilesView: View {
                                         var config = profileManager.multiProfileConfig
                                         config.showTimeMarker = showMarker
                                         profileManager.updateMultiProfileConfig(config)
-                                        Self.enqueueMenuBarNotification(.multiProfileConfigChanged)
+                                        MenuBarNotificationDelivery.enqueue(.multiProfileConfigChanged)
                                     }
                                 )
                             )
@@ -245,7 +248,7 @@ struct ManageProfilesView: View {
                                         var config = profileManager.multiProfileConfig
                                         config.showPaceMarker = showPace
                                         profileManager.updateMultiProfileConfig(config)
-                                        Self.enqueueMenuBarNotification(.multiProfileConfigChanged)
+                                        MenuBarNotificationDelivery.enqueue(.multiProfileConfigChanged)
                                     }
                                 )
                             )
@@ -260,7 +263,7 @@ struct ManageProfilesView: View {
                                         var config = profileManager.multiProfileConfig
                                         config.usePaceColoring = usePace
                                         profileManager.updateMultiProfileConfig(config)
-                                        Self.enqueueMenuBarNotification(.multiProfileConfigChanged)
+                                        MenuBarNotificationDelivery.enqueue(.multiProfileConfigChanged)
                                     }
                                 )
                             )
@@ -275,7 +278,7 @@ struct ManageProfilesView: View {
                                         var config = profileManager.multiProfileConfig
                                         config.showRemainingPercentage = showRemaining
                                         profileManager.updateMultiProfileConfig(config)
-                                        Self.enqueueMenuBarNotification(.multiProfileConfigChanged)
+                                        MenuBarNotificationDelivery.enqueue(.multiProfileConfigChanged)
                                     }
                                 )
                             )
@@ -372,19 +375,6 @@ struct ManageProfilesView: View {
         }
     }
 
-    /// ProfileManager deliberately publishes settings on the next main-queue turn.
-    /// Enqueueing the notification after its mutation preserves FIFO ordering so
-    /// MenuBarManager always reads the newly persisted state.
-    static func enqueueMenuBarNotification(
-        _ name: Notification.Name,
-        queue: DispatchQueue = .main,
-        center: NotificationCenter = .default
-    ) {
-        queue.async {
-            center.post(name: name, object: nil)
-        }
-    }
-
     private func createNewProfile() {
         let name = newProfileName.isEmpty ? nil : newProfileName
         do {
@@ -440,10 +430,15 @@ struct ProfileRow: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 if isEditing {
-                    TextField("Profile Name", text: $editedName, onCommit: {
-                        saveProfileName()
-                    })
+                    TextField(
+                        "profiles.rename_name_placeholder".localized,
+                        text: $editedName,
+                        onCommit: {
+                            saveProfileName()
+                        }
+                    )
                     .textFieldStyle(.roundedBorder)
+                    .accessibilityIdentifier("profile.rename.field")
                 } else {
                     HStack(spacing: 8) {
                         Text(profile.name)
@@ -529,6 +524,7 @@ struct ProfileRow: View {
                             .foregroundColor(.green)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityIdentifier("profile.rename.save")
 
                     // Cancel Button
                     Button(action: {
@@ -539,36 +535,57 @@ struct ProfileRow: View {
                             .foregroundColor(.red)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityIdentifier("profile.rename.cancel")
                 }
             }
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(
-            "profile.row.\(profile.providerID.rawValue)."
-                + profile.id.uuidString.lowercased()
+            "profile.row.\(profile.id.uuidString)"
         )
-        .alert(item: $deletionAlert) { alert in
+        .alert(
+            "profiles.delete_title".localized,
+            isPresented: deletionAlertPresented,
+            presenting: deletionAlert
+        ) { alert in
             switch alert {
             case .confirmation:
-                return Alert(
-                    title: Text("profiles.delete_title".localized),
-                    message: Text(
-                        String(format: "profiles.delete_confirm".localized, profile.name)
-                    ),
-                    primaryButton: .destructive(Text("common.delete".localized)) {
-                        deleteProfile()
-                    },
-                    secondaryButton: .cancel(Text("common.cancel".localized))
+                Button(
+                    "common.delete".localized,
+                    role: .destructive
+                ) {
+                    deleteProfile()
+                }
+                .accessibilityIdentifier(
+                    ProviderUIAccessibility.profileDeleteConfirmation
+                )
+                Button("common.cancel".localized, role: .cancel) {}
+                    .accessibilityIdentifier(
+                        ProviderUIAccessibility.profileDeleteCancel
+                    )
+            case .failure:
+                Button("common.retry".localized) {
+                    deleteProfile()
+                }
+                .accessibilityIdentifier(
+                    ProviderUIAccessibility.profileDeleteRetry
+                )
+                Button("common.cancel".localized, role: .cancel) {}
+                    .accessibilityIdentifier(
+                        ProviderUIAccessibility.profileDeleteCancel
+                    )
+            }
+        } message: { alert in
+            switch alert {
+            case .confirmation:
+                Text(
+                    String(
+                        format: "profiles.delete_confirm".localized,
+                        profile.name
+                    )
                 )
             case .failure(let presentation):
-                return Alert(
-                    title: Text("profiles.delete_title".localized),
-                    message: Text(presentation.message),
-                    primaryButton: .default(Text("common.retry".localized)) {
-                        deleteProfile()
-                    },
-                    secondaryButton: .cancel(Text("common.cancel".localized))
-                )
+                Text(presentation.message)
             }
         }
         .alert(item: $renameAlert) { alert in
@@ -602,6 +619,17 @@ struct ProfileRow: View {
         return parts.joined(separator: " • ")
     }
 
+    private var deletionAlertPresented: Binding<Bool> {
+        Binding(
+            get: { deletionAlert != nil },
+            set: { isPresented in
+                if !isPresented {
+                    deletionAlert = nil
+                }
+            }
+        )
+    }
+
     private var profileIcon: String {
         ProviderProfilePresentation(
             profile: profile
@@ -609,9 +637,14 @@ struct ProfileRow: View {
     }
 
     private var profileAccessibilityLabel: String {
-        let active =
+        let active = ProviderUILocalization.text(
             profileManager.activeProfile?.id == profile.id
-            ? "active" : "inactive"
+                ? "profiles.accessibility.active"
+                : "profiles.accessibility.inactive",
+            fallback: profileManager.activeProfile?.id == profile.id
+                ? "active"
+                : "inactive"
+        )
         return "\(profile.name), \(profileInfo), \(active)"
     }
 
@@ -684,8 +717,12 @@ enum ProfileRowMutation: Equatable {
 }
 
 struct ProfileRenameErrorPresentation: Equatable {
-    static let genericMessage =
-        "Unable to rename this profile. Please try again."
+    static var genericMessage: String {
+        ProviderUILocalization.text(
+            "profiles.rename_failed_message",
+            fallback: "Unable to rename this profile. Please try again."
+        )
+    }
 
     let message: String
 
@@ -716,7 +753,12 @@ enum ProfileDeletionAlert: Identifiable {
 }
 
 struct ProfileDeletionErrorPresentation: Equatable {
-    static let genericMessage = "Unable to delete this profile. Please try again."
+    static var genericMessage: String {
+        ProviderUILocalization.text(
+            "profiles.delete_failed_message",
+            fallback: "Unable to delete this profile. Please try again."
+        )
+    }
 
     let message: String
 
@@ -773,8 +815,10 @@ struct CreateProfileSheet: View {
                 .foregroundColor(.secondary)
 
                 Picker("", selection: $provider) {
-                    Text("Claude").tag(ProfileProviderKind.claude)
-                    Text("Codex").tag(ProfileProviderKind.codex)
+                    Text("setup.provider.claude_title".localized)
+                        .tag(ProfileProviderKind.claude)
+                    Text("setup.provider.codex_title".localized)
+                        .tag(ProfileProviderKind.codex)
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
@@ -853,7 +897,7 @@ struct CreateProfileSheet: View {
                             || codexHomePath.isEmpty)
                 )
                 .accessibilityIdentifier(
-                    ProviderUIAccessibility.profileCreate
+                    ProviderUIAccessibility.profileCreateConfirmation
                 )
             }
         }

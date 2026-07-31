@@ -3,6 +3,84 @@ import SwiftUI
 import Combine
 import UsageCore
 
+@MainActor
+enum ProviderPopoverDetachmentLifecycle {
+    static func shouldDetach() -> Bool { true }
+
+    static func makeWindow(
+        contentViewController: NSViewController,
+        delegate: NSWindowDelegate?
+    ) -> NSPanel {
+        let window = NSPanel(
+            contentRect: NSRect(
+                x: 0,
+                y: 0,
+                width: 280,
+                height: 600
+            ),
+            styleMask: [
+                .titled,
+                .closable,
+                .nonactivatingPanel,
+                .hudWindow,
+            ],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentViewController = contentViewController
+        window.title = ""
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.isMovableByWindowBackground = true
+        window.setContentSize(NSSize(width: 280, height: 600))
+        window.isReleasedWhenClosed = false
+        window.level = .floating
+        window.collectionBehavior.insert(.fullScreenAuxiliary)
+        window.isRestorable = false
+        window.delegate = delegate
+        window.backgroundColor = .clear
+        return window
+    }
+
+    static func closedRetainedWindow(
+        _ closingWindow: NSWindow?,
+        retainedWindow: NSWindow?
+    ) -> Bool {
+        guard let closingWindow, let retainedWindow else {
+            return false
+        }
+        return closingWindow === retainedWindow
+    }
+
+    static func shouldCloseDetachedWindow(
+        target: ProviderStatusItemIdentity?,
+        profiles: [Profile],
+        activatedProfileID: UUID? = nil,
+        changedProfileID: UUID? = nil,
+        displayModeChanged: Bool = false,
+        selectedProfileIDs: Set<UUID>? = nil
+    ) -> Bool {
+        guard let target else { return true }
+        if displayModeChanged { return true }
+        if let selectedProfileIDs,
+           !selectedProfileIDs.contains(target.profileID) {
+            return true
+        }
+        if let activatedProfileID,
+           activatedProfileID != target.profileID {
+            return true
+        }
+        if let changedProfileID,
+           changedProfileID != target.profileID {
+            return false
+        }
+        return !ProviderMenuPresentationBuilder.isStillCurrent(
+            target,
+            profiles: profiles
+        )
+    }
+}
+
 nonisolated struct RefreshTimingPolicy: Equatable, Sendable {
     struct TimerFire: Equatable, Sendable {
         let occurredAt: Date
@@ -312,6 +390,8 @@ class MenuBarManager: NSObject, ObservableObject {
 
     // Track which button is currently showing the popover
     private weak var currentPopoverButton: NSStatusBarButton?
+    private var currentPopoverTarget:
+        ProviderStatusItemIdentity?
     private var contextMenuTarget: ProviderStatusItemIdentity?
 
     private let dataStore = DataStore.shared
@@ -1256,6 +1336,7 @@ class MenuBarManager: NSObject, ObservableObject {
         statusBarUIManager?.cleanup()
         statusBarUIManager = nil
         contextMenuTarget = nil
+        currentPopoverTarget = nil
 
         // Clean up history tracking dictionaries to prevent memory leaks
         lastKnownSessionResetTime.removeAll()
@@ -1328,31 +1409,30 @@ class MenuBarManager: NSObject, ObservableObject {
                 // Mark that we've handled at least one profile switch
                 self.hasHandledFirstProfileSwitch = true
 
-                Task { @MainActor in
-                    await self.handleProfileSwitch(to: profile)
-                }
+                self.handleProfileSwitch(to: profile)
             }
             .store(in: &cancellables)
 
         LoggingService.shared.log("MenuBarManager: Observing profile changes (initial: \(initialProfileId?.uuidString ?? "nil"))")
     }
 
-    private func handleProfileSwitch(to profile: Profile) async {
+    private func handleProfileSwitch(to profile: Profile) {
         LoggingService.shared.log("MenuBarManager: Handling profile switch to: \(profile.name)")
+        closeDetachedWindowIfInvalidated(
+            activatedProfileID: profile.id
+        )
 
         // 1. Load saved data from new profile (for immediate display)
-        await MainActor.run {
-            if let savedUsage = profile.claudeUsage {
-                self.usage = savedUsage
-            } else {
-                self.usage = .empty
-            }
+        if let savedUsage = profile.claudeUsage {
+            usage = savedUsage
+        } else {
+            usage = .empty
+        }
 
-            if let savedAPIUsage = profile.apiUsage {
-                self.apiUsage = savedAPIUsage
-            } else {
-                self.apiUsage = nil
-            }
+        if let savedAPIUsage = profile.apiUsage {
+            apiUsage = savedAPIUsage
+        } else {
+            apiUsage = nil
         }
 
         // 2. Update refresh interval with profile's setting
@@ -1406,6 +1486,36 @@ class MenuBarManager: NSObject, ObservableObject {
         LoggingService.shared.log("MenuBarManager: Popover recreated for profile switch")
     }
 
+    private func closeDetachedWindowIfInvalidated(
+        activatedProfileID: UUID? = nil,
+        changedProfileID: UUID? = nil,
+        displayModeChanged: Bool = false,
+        selectedProfileIDs: Set<UUID>? = nil
+    ) {
+        let hasPresentedSurface =
+            detachedWindow != nil || popover?.isShown == true
+        guard hasPresentedSurface,
+              ProviderPopoverDetachmentLifecycle
+                .shouldCloseDetachedWindow(
+                    target: currentPopoverTarget,
+                    profiles: profileManager.profiles,
+                    activatedProfileID: activatedProfileID,
+                    changedProfileID: changedProfileID,
+                    displayModeChanged: displayModeChanged,
+                    selectedProfileIDs: selectedProfileIDs
+                ) else {
+            return
+        }
+        if popover?.isShown == true {
+            closePopover()
+        }
+        if let detachedWindow {
+            detachedWindow.close()
+            self.detachedWindow = nil
+        }
+        currentPopoverTarget = nil
+    }
+
     private func updateMenuBarDisplay(with config: MenuBarIconConfiguration) {
         // Skip if in multi-profile mode - this method is for single profile mode only
         guard profileManager.displayMode == .single else {
@@ -1450,6 +1560,12 @@ class MenuBarManager: NSObject, ObservableObject {
             action: #selector(togglePopover),
             config: displayConfig
         )
+        if let activeProfile = profileManager.activeProfile,
+           activeProfile.providerID == .claude {
+            // Retained legacy buttons must capture the newly active identity
+            // before the next run-loop turn can accept a click.
+            statusBarUIManager?.bindLegacySingleProfile(activeProfile)
+        }
 
         // Defer icon update to next run loop iteration to let NSStatusBar finalize layout
         DispatchQueue.main.async { [weak self] in
@@ -1539,6 +1655,9 @@ class MenuBarManager: NSObject, ObservableObject {
     }
 
     private func popoverActionTarget() -> ProviderStatusItemIdentity? {
+        if let currentPopoverTarget {
+            return currentPopoverTarget
+        }
         let profileID = profileManager.displayMode == .multi
             ? clickedProfileId ?? profileManager.activeProfile?.id
             : profileManager.activeProfile?.id
@@ -1559,46 +1678,39 @@ class MenuBarManager: NSObject, ObservableObject {
     private func refreshPopover(
         target: ProviderStatusItemIdentity?
     ) {
-        guard let target,
-              let profile = currentProfile(for: target) else {
-            return
-        }
-        lastRefreshTriggerTime = Date()
-        refreshRuntime.refresh(profiles: [profile], trigger: .manual)
+        guard let target else { return }
+        capturedTargetRouter().route(.refresh, target: target)
     }
 
     private func openPopoverSettings(
         target: ProviderStatusItemIdentity?
     ) {
-        guard let target,
-              currentProfile(for: target) != nil else {
-            return
-        }
-        navigateToSettings(
-            Self.popoverSettingsDestination(for: target)
+        guard let target else { return }
+        capturedTargetRouter().route(
+            .popoverSettings,
+            target: target
         )
     }
 
     private func openPopoverManageProfiles(
         target: ProviderStatusItemIdentity?
     ) {
-        guard let target,
-              currentProfile(for: target) != nil else {
-            return
-        }
-        navigateToSettings(.manageProfiles)
+        guard let target else { return }
+        capturedTargetRouter().route(
+            .manageProfiles,
+            target: target
+        )
     }
 
     nonisolated static func popoverSettingsDestination(
         for target: ProviderStatusItemIdentity
     ) -> SettingsNavigationDestination {
-        target.providerID == .claude
-            ? .defaultView
-            : .providerAccount(profileID: target.profileID)
+        ProviderCapturedTargetActionRouter
+            .popoverSettingsDestination(for: target)
     }
 
     @objc private func togglePopover(_ sender: Any?) {
-        if NSApp.currentEvent?.type == .rightMouseUp {
+        if Self.isContextMenuEvent(NSApp.currentEvent?.type) {
             showContextMenu(for: sender as? NSStatusBarButton)
             return
         }
@@ -1618,26 +1730,43 @@ class MenuBarManager: NSObject, ObservableObject {
         }
 
         guard let button = clickedButton else { return }
-        if let identity = statusBarUIManager?.statusIdentity(for: button),
-           !ProviderMenuPresentationBuilder.isStillCurrent(
-                identity,
-                profiles: profileManager.profiles
-           ) {
+        guard let identity =
+                ProviderStatusItemReconciliation.resolvedIdentity(
+                    captured:
+                        statusBarUIManager?.statusIdentity(for: button),
+                    fallbackProfile: profileManager.activeProfile
+                ) else {
+            return
+        }
+        let routed = capturedTargetRouter(
+            openPopover: { [weak self] target, profile in
+                self?.toggleValidatedPopover(
+                    from: button,
+                    target: target,
+                    profile: profile
+                )
+            }
+        ).route(.openPopover, target: identity)
+        if !routed {
             LoggingService.shared.logWarning(
                 "Ignored status-item action for stale provider identity"
             )
-            return
         }
+    }
 
+    private func toggleValidatedPopover(
+        from button: NSStatusBarButton,
+        target: ProviderStatusItemIdentity,
+        profile: Profile
+    ) {
         // In multi-profile mode, determine which profile was clicked
         if statusBarUIManager?.isInMultiProfileMode == true,
-           let profileId =
-                statusBarUIManager?.statusIdentity(for: button)?.profileID
-                    ?? statusBarUIManager?.profileId(for: button),
-           let profile = profileManager.profiles.first(where: { $0.id == profileId }) {
-            clickedProfileId = profileId
+           profileManager.profiles.contains(where: {
+               $0.id == profile.id
+           }) {
+            clickedProfileId = profile.id
             let snapshot = refreshRuntime.presentationStore.snapshot(
-                for: profileId
+                for: profile.id
             )
             clickedProfileUsage = snapshot?.claudeUsage
             clickedProfileAPIUsage = snapshot?.claudeAPIUsage
@@ -1654,6 +1783,7 @@ class MenuBarManager: NSObject, ObservableObject {
             window.close()
             detachedWindow = nil
             currentPopoverButton = nil
+            currentPopoverTarget = nil
             return
         }
 
@@ -1673,6 +1803,7 @@ class MenuBarManager: NSObject, ObservableObject {
                     NSApp.activate(ignoringOtherApps: true)
                     popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
                     currentPopoverButton = button
+                    currentPopoverTarget = target
                     startMonitoringForOutsideClicks()
                 }
             } else {
@@ -1693,9 +1824,16 @@ class MenuBarManager: NSObject, ObservableObject {
                 NSApp.activate(ignoringOtherApps: true)
                 popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
                 currentPopoverButton = button
+                currentPopoverTarget = target
                 startMonitoringForOutsideClicks()
             }
         }
+    }
+
+    nonisolated static func isContextMenuEvent(
+        _ eventType: NSEvent.EventType?
+    ) -> Bool {
+        eventType == .rightMouseUp
     }
 
     static func shouldSuppressPopoverOpen(
@@ -1769,7 +1907,7 @@ class MenuBarManager: NSObject, ObservableObject {
             $0.kind == .activate
         }) {
             let activate = NSMenuItem(
-                title: "Make Active",
+                title: "menu.provider.make_active".localized,
                 action: activateAction,
                 keyEquivalent: ""
             )
@@ -1786,21 +1924,24 @@ class MenuBarManager: NSObject, ObservableObject {
         menu.addItem(.separator())
 
         let account = NSMenuItem(
-            title: "\(presentation.appearance.displayName) Account…",
+            title: String(
+                format: "menu.provider.account".localized,
+                presentation.appearance.displayName
+            ),
             action: accountSettingsAction,
             keyEquivalent: ""
         )
         account.target = target
         menu.addItem(account)
         let appearance = NSMenuItem(
-            title: "Appearance…",
+            title: "menu.provider.appearance".localized,
             action: appearanceAction,
             keyEquivalent: ""
         )
         appearance.target = target
         menu.addItem(appearance)
         let profiles = NSMenuItem(
-            title: "Manage Profiles…",
+            title: "menu.provider.manage_profiles".localized,
             action: manageProfilesAction,
             keyEquivalent: ""
         )
@@ -1826,16 +1967,12 @@ class MenuBarManager: NSObject, ObservableObject {
 
     private func showContextMenu(for button: NSStatusBarButton?) {
         guard let button, let window = button.window else { return }
-        let fallbackProfile = profileManager.activeProfile
-        let identity = statusBarUIManager?.statusIdentity(for: button)
-            ?? fallbackProfile.map {
-                ProviderStatusItemIdentity(
-                    profileID: $0.id,
-                    providerID: $0.providerID,
-                    providerRevision: $0.providerRevision,
-                    metricID: nil
-                )
-            }
+        let identity =
+            ProviderStatusItemReconciliation.resolvedIdentity(
+                captured:
+                    statusBarUIManager?.statusIdentity(for: button),
+                fallbackProfile: profileManager.activeProfile
+            )
         guard let identity,
               let profile = currentProfile(for: identity) else {
             return
@@ -1854,7 +1991,7 @@ class MenuBarManager: NSObject, ObservableObject {
                 target: self,
                 refreshAction: #selector(contextMenuRefresh),
                 settingsAction: #selector(contextMenuLegacySettings),
-                quitAction: #selector(quitClicked)
+                quitAction: #selector(contextMenuQuit)
             )
         } else {
             menu = Self.makeProviderContextMenu(
@@ -1867,7 +2004,7 @@ class MenuBarManager: NSObject, ObservableObject {
                 appearanceAction: #selector(contextMenuAppearance),
                 manageProfilesAction:
                     #selector(contextMenuManageProfiles),
-                quitAction: #selector(quitClicked)
+                quitAction: #selector(contextMenuQuit)
             )
         }
         let buttonRect = button.convert(button.bounds, to: nil)
@@ -1876,70 +2013,133 @@ class MenuBarManager: NSObject, ObservableObject {
     }
 
     @objc private func contextMenuRefresh() {
-        guard let target = contextMenuTarget,
-              let profile = currentProfile(for: target) else {
-            return
-        }
-        lastRefreshTriggerTime = Date()
-        refreshRuntime.refresh(profiles: [profile], trigger: .manual)
+        guard let target = contextMenuTarget else { return }
+        capturedTargetRouter().route(.refresh, target: target)
     }
 
     @objc private func contextMenuActivate() {
-        guard let target = contextMenuTarget,
-              currentProfile(for: target) != nil else {
-            return
-        }
-        Task { @MainActor [weak self] in
-            guard let self,
-                  self.currentProfile(for: target) != nil else {
-                return
-            }
-            await self.profileManager.activateProfile(target.profileID)
-        }
+        guard let target = contextMenuTarget else { return }
+        capturedTargetRouter().route(.activate, target: target)
     }
 
     @objc private func contextMenuProviderSettings() {
-        guard let target = contextMenuTarget,
-              currentProfile(for: target) != nil else {
-            return
-        }
-        navigateToSettings(
-            .providerAccount(profileID: target.profileID)
+        guard let target = contextMenuTarget else { return }
+        capturedTargetRouter().route(
+            .providerAccount,
+            target: target
         )
     }
 
     @objc private func contextMenuLegacySettings() {
-        guard let target = contextMenuTarget,
-              currentProfile(for: target) != nil else {
-            return
-        }
-        preferencesClicked()
+        guard let target = contextMenuTarget else { return }
+        capturedTargetRouter().route(
+            .legacySettings,
+            target: target
+        )
     }
 
     @objc private func contextMenuAppearance() {
-        guard let target = contextMenuTarget,
-              currentProfile(for: target) != nil else {
-            return
-        }
-        navigateToSettings(.appearance(profileID: target.profileID))
+        guard let target = contextMenuTarget else { return }
+        capturedTargetRouter().route(
+            .appearance,
+            target: target
+        )
     }
 
     @objc private func contextMenuManageProfiles() {
-        guard let target = contextMenuTarget,
-              currentProfile(for: target) != nil else {
-            return
-        }
-        navigateToSettings(.manageProfiles)
+        guard let target = contextMenuTarget else { return }
+        capturedTargetRouter().route(
+            .manageProfiles,
+            target: target
+        )
+    }
+
+    @objc private func contextMenuQuit() {
+        guard let target = contextMenuTarget else { return }
+        capturedTargetRouter().route(.quit, target: target)
     }
 
     private func currentProfile(
         for target: ProviderStatusItemIdentity
     ) -> Profile? {
-        profileManager.profiles.first {
-            $0.id == target.profileID
-                && $0.providerID == target.providerID
-                && $0.providerRevision == target.providerRevision
-                && !$0.deletionInProgress
+        capturedTargetRouter().currentProfile(for: target)
+    }
+
+    private func capturedTargetRouter(
+        openPopover:
+            ProviderCapturedTargetActionRouter.TargetSink? = nil,
+        detachPopover:
+            ProviderCapturedTargetActionRouter.TargetSink? = nil
+    ) -> ProviderCapturedTargetActionRouter {
+        ProviderCapturedTargetActionRouter(
+            profiles: { [weak self] in
+                guard let self else { return [] }
+                return Self.capturedActionProfiles(
+                    displayMode: self.profileManager.displayMode,
+                    activeProfile:
+                        self.profileManager.activeProfile,
+                    profiles: self.profileManager.profiles
+                )
+            },
+            sinks: .init(
+                openPopover: openPopover ?? { _, _ in },
+                detachPopover: detachPopover ?? { _, _ in },
+                refresh: { [weak self] _, profile in
+                    guard let self else { return }
+                    self.lastRefreshTriggerTime = Date()
+                    ProviderManualRefreshDispatcher {
+                        [weak self] profiles, trigger in
+                        self?.refreshRuntime.refresh(
+                            profiles: profiles,
+                            trigger: trigger
+                        )
+                    }.dispatch(profile: profile)
+                },
+                activate: { [weak self] target, _ in
+                    Task { @MainActor [weak self] in
+                        guard let self,
+                              self.capturedTargetRouter()
+                                .currentProfile(for: target) != nil else {
+                            return
+                        }
+                        await self.profileManager.activateProfile(
+                            target.profileID
+                        )
+                    }
+                },
+                settings: {
+                    [weak self] destination, _, _ in
+                    self?.navigateToSettings(destination)
+                },
+                quit: { _, _ in
+                    NSApp.terminate(nil)
+                }
+            )
+        )
+    }
+
+    static func capturedActionProfiles(
+        displayMode: ProfileDisplayMode,
+        activeProfile: Profile?,
+        profiles: [Profile]
+    ) -> [Profile] {
+        switch displayMode {
+        case .single:
+            guard let activeProfile,
+                  !activeProfile.deletionInProgress else {
+                return []
+            }
+            return [activeProfile]
+        case .multi:
+            let selectedProfiles = profiles.filter {
+                $0.isSelectedForDisplay && !$0.deletionInProgress
+            }
+            if selectedProfiles.isEmpty,
+               let activeProfile,
+               !activeProfile.deletionInProgress {
+                return [activeProfile]
+            }
+            return selectedProfiles
         }
     }
 
@@ -1954,6 +2154,7 @@ class MenuBarManager: NSObject, ObservableObject {
         stopMonitoringForOutsideClicks()
         lastPopoverCloseButton = currentPopoverButton
         currentPopoverButton = nil
+        currentPopoverTarget = nil
         lastPopoverCloseDate = Date()
     }
 
@@ -2294,6 +2495,9 @@ class MenuBarManager: NSObject, ObservableObject {
                     guard let self, let profileID else {
                         return
                     }
+                    self.closeDetachedWindowIfInvalidated(
+                        changedProfileID: profileID
+                    )
                     ProviderMenuCatalogStore.shared.publish(
                         profiles: self.profileManager.profiles,
                         snapshots: self.profileUsagePresentations
@@ -2335,6 +2539,9 @@ class MenuBarManager: NSObject, ObservableObject {
                     guard let self, let profileID else {
                         return
                     }
+                    self.closeDetachedWindowIfInvalidated(
+                        changedProfileID: profileID
+                    )
                     ProviderMenuCatalogStore.shared.invalidate(
                         profileID: profileID
                     )
@@ -2342,6 +2549,9 @@ class MenuBarManager: NSObject, ObservableObject {
                         profileID: profileID
                     )
                     self.cleanupProfile(profileID)
+                    if self.profileManager.displayMode == .multi {
+                        self.updateMultiProfileDisplay()
+                    }
                 }
             }
 
@@ -2365,6 +2575,9 @@ class MenuBarManager: NSObject, ObservableObject {
                         profileID: profileID
                     )
                     self.activateRefreshPresentation()
+                    if self.profileManager.displayMode == .multi {
+                        self.updateMultiProfileDisplay()
+                    }
                 }
             }
     }
@@ -2491,6 +2704,12 @@ class MenuBarManager: NSObject, ObservableObject {
         ) { [weak self] _ in
             guard let self else { return }
             Task { @MainActor in
+                self.closeDetachedWindowIfInvalidated(
+                    selectedProfileIDs: Set(
+                        self.profileManager.getSelectedProfiles()
+                            .map(\.id)
+                    )
+                )
                 self.activateRefreshPresentation()
                 self.updateMultiProfileDisplay()
                 self.refreshUsage(trigger: .displayChanged)
@@ -2517,6 +2736,9 @@ class MenuBarManager: NSObject, ObservableObject {
         let displayMode = profileManager.displayMode
 
         LoggingService.shared.log("MenuBarManager: Display mode changed to \(displayMode.rawValue)")
+        closeDetachedWindowIfInvalidated(
+            displayModeChanged: true
+        )
         activateRefreshPresentation()
 
         if displayMode == .multi {
@@ -3152,8 +3374,7 @@ class MenuBarManager: NSObject, ObservableObject {
 // MARK: - NSPopoverDelegate
 extension MenuBarManager: NSPopoverDelegate {
     func popoverShouldDetach(_ popover: NSPopover) -> Bool {
-        // Allow popover to be detached by dragging
-        return true
+        ProviderPopoverDetachmentLifecycle.shouldDetach()
     }
 
     func popoverDidClose(_ notification: Notification) {
@@ -3162,58 +3383,50 @@ extension MenuBarManager: NSPopoverDelegate {
     }
 
     func detachableWindow(for popover: NSPopover) -> NSWindow? {
-        // Stop monitoring for outside clicks when detaching
-        stopMonitoringForOutsideClicks()
+        guard let target = popoverActionTarget() else { return nil }
+        var createdWindow: NSPanel?
+        capturedTargetRouter(
+            detachPopover: { [weak self] _, _ in
+                guard let self else { return }
+                self.stopMonitoringForOutsideClicks()
 
-        // Use a controller without the popover's preferredContentSize options;
-        // those constraints conflict with a detached window's content sizing.
-        let contentView = PopoverContentView(
-            manager: self,
-            profileManager: profileManager,
-            onRefresh: { [weak self] in
-                guard let self else { return }
-                self.refreshPopover(
-                    target: self.popoverActionTarget()
+                // A detached panel owns a fresh controller without popover
+                // preferred-size constraints.
+                let contentView = PopoverContentView(
+                    manager: self,
+                    profileManager: self.profileManager,
+                    onRefresh: { [weak self] in
+                        self?.refreshPopover(target: target)
+                    },
+                    onManageProfiles: { [weak self] in
+                        self?.openPopoverManageProfiles(target: target)
+                    },
+                    onPreferences: { [weak self] in
+                        self?.openPopoverSettings(target: target)
+                    }
                 )
-            },
-            onManageProfiles: { [weak self] in
-                guard let self else { return }
-                self.openPopoverManageProfiles(
-                    target: self.popoverActionTarget()
+                let hostingController = NSHostingController(
+                    rootView: contentView
                 )
-            },
-            onPreferences: { [weak self] in
-                guard let self else { return }
-                self.openPopoverSettings(
-                    target: self.popoverActionTarget()
+                let window = Self.makeDetachedPopoverWindow(
+                    contentViewController: hostingController,
+                    delegate: self
                 )
+                self.detachedWindow = window
+                createdWindow = window
             }
+        ).route(.detachPopover, target: target)
+        return createdWindow
+    }
+
+    static func makeDetachedPopoverWindow(
+        contentViewController: NSViewController,
+        delegate: NSWindowDelegate?
+    ) -> NSPanel {
+        ProviderPopoverDetachmentLifecycle.makeWindow(
+            contentViewController: contentViewController,
+            delegate: delegate
         )
-        let hostingController = NSHostingController(rootView: contentView)
-
-        let window = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 280, height: 600),
-            styleMask: [.titled, .closable, .nonactivatingPanel, .hudWindow],
-            backing: .buffered,
-            defer: false
-        )
-        window.contentViewController = hostingController
-        window.title = ""
-        window.titlebarAppearsTransparent = true
-        window.titleVisibility = .hidden
-        window.isMovableByWindowBackground = true
-        window.setContentSize(NSSize(width: 280, height: 600))
-        window.isReleasedWhenClosed = false
-        window.level = .floating
-        window.collectionBehavior.insert(.fullScreenAuxiliary)
-        window.isRestorable = false
-        window.delegate = self
-        window.backgroundColor = .clear
-
-        // Store reference to the detached window
-        detachedWindow = window
-
-        return window
     }
 }
 
@@ -3239,9 +3452,14 @@ extension MenuBarManager: NSWindowDelegate {
                 NSApp.setActivationPolicy(.accessory)
                 settingsController = nil
                 settingsWindow = nil
-            } else if window == detachedWindow {
+            } else if ProviderPopoverDetachmentLifecycle
+                .closedRetainedWindow(
+                    window,
+                    retainedWindow: detachedWindow
+                ) {
                 // Clear detached window reference when closed
                 detachedWindow = nil
+                currentPopoverTarget = nil
             } else if window == githubPromptWindow {
                 // Hide dock icon again when GitHub prompt window closes
                 NSApp.setActivationPolicy(.accessory)

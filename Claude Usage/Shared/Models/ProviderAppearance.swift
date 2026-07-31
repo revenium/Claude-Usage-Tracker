@@ -66,12 +66,36 @@ enum ProviderMetricDisplayState: String, Equatable, Sendable {
 
     var accessibilityText: String {
         switch self {
-        case .ready: return "ready"
-        case .loading: return "loading usage"
-        case .stale: return "stale usage"
-        case .degraded: return "degraded; showing cached usage"
-        case .error: return "usage error"
-        case .noData: return "no usage data"
+        case .ready:
+            return ProviderUILocalization.text(
+                "menubar.accessibility.state.ready",
+                fallback: "ready"
+            )
+        case .loading:
+            return ProviderUILocalization.text(
+                "menubar.accessibility.state.loading",
+                fallback: "loading usage"
+            )
+        case .stale:
+            return ProviderUILocalization.text(
+                "menubar.accessibility.state.stale",
+                fallback: "stale usage"
+            )
+        case .degraded:
+            return ProviderUILocalization.text(
+                "menubar.accessibility.state.degraded",
+                fallback: "degraded; showing cached usage"
+            )
+        case .error:
+            return ProviderUILocalization.text(
+                "menubar.accessibility.state.error",
+                fallback: "usage error"
+            )
+        case .noData:
+            return ProviderUILocalization.text(
+                "menubar.accessibility.state.no_data",
+                fallback: "no usage data"
+            )
         }
     }
 }
@@ -111,25 +135,24 @@ struct ProviderMetricPresentation: Equatable, Identifiable, Sendable {
     }
 
     var modeText: String {
-        showRemaining ? "remaining" : "used"
+        showRemaining
+            ? ProviderUILocalization.text(
+                "popover.normalized.value.remaining",
+                fallback: "remaining"
+            )
+            : ProviderUILocalization.text(
+                "popover.normalized.value.used",
+                fallback: "used"
+            )
     }
 
     var accessibilityLabel: String {
         let provider = ProviderAppearance.forProvider(
             descriptor.providerID
         )
-        let stateText: String
-        switch state {
-        case .ready: stateText = ""
-        case .loading: stateText = ", loading"
-        case .stale: stateText = ", stale"
-        case .degraded: stateText = ", degraded"
-        case .error: stateText = ", error"
-        case .noData: stateText = ", no data"
-        }
         return "\(provider.displayName), \(descriptor.groupName), "
             + "\(descriptor.metricName), \(percentageText) \(modeText)"
-            + stateText
+            + ", \(state.accessibilityText)"
     }
 }
 
@@ -169,6 +192,190 @@ struct ProviderMenuPresentation: Equatable, Identifiable, Sendable {
 
     var id: UUID { identity.profileID }
     var metric: ProviderMetricPresentation? { metrics.first }
+}
+
+struct ProviderStatusItemReconciliationEntry:
+    Equatable,
+    Sendable
+{
+    let statusMetricID: MenuBarMetricID
+    let identity: ProviderStatusItemIdentity
+}
+
+/// Pure identity reconciliation shared by the native status-item adapter and
+/// isolated UI automation. It is the single source of truth for the profile,
+/// provider revision, and concrete metric captured by a rendered status item.
+enum ProviderStatusItemReconciliation {
+    static func resolvedIdentity(
+        captured: ProviderStatusItemIdentity?,
+        fallbackProfile: Profile?
+    ) -> ProviderStatusItemIdentity? {
+        if let captured { return captured }
+        guard let fallbackProfile,
+              !fallbackProfile.deletionInProgress else {
+            return nil
+        }
+        return ProviderStatusItemIdentity(
+            profileID: fallbackProfile.id,
+            providerID: fallbackProfile.providerID,
+            providerRevision: fallbackProfile.providerRevision,
+            metricID: nil
+        )
+    }
+
+    static func singleEntries(
+        for presentation: ProviderMenuPresentation
+    ) -> [ProviderStatusItemReconciliationEntry] {
+        let metricIDs = presentation.metrics.map(\.id)
+        let renderedIDs = metricIDs.isEmpty
+            ? [
+                MenuBarMetricID.providerPlaceholder(
+                    presentation.identity.providerID
+                )
+            ]
+            : metricIDs
+        return renderedIDs.map { statusMetricID in
+            ProviderStatusItemReconciliationEntry(
+                statusMetricID: statusMetricID,
+                identity: ProviderStatusItemIdentity(
+                    profileID: presentation.identity.profileID,
+                    providerID: presentation.identity.providerID,
+                    providerRevision:
+                        presentation.identity.providerRevision,
+                    metricID: metricIDs.contains(statusMetricID)
+                        ? statusMetricID
+                        : nil
+                )
+            )
+        }
+    }
+
+    static func multiIdentity(
+        for presentation: ProviderMenuPresentation
+    ) -> ProviderStatusItemIdentity {
+        let metricID = presentation.metrics.first?.id
+        return ProviderStatusItemIdentity(
+            profileID: presentation.identity.profileID,
+            providerID: presentation.identity.providerID,
+            providerRevision: presentation.identity.providerRevision,
+            metricID: metricID
+        )
+    }
+}
+
+/// Validates a captured status/menu identity immediately before dispatch and
+/// routes every provider-sensitive action to injected production adapters.
+/// This closes the menu-open/action-select race without coupling the pure
+/// routing policy to AppKit, refresh runtimes, or application termination.
+@MainActor
+struct ProviderCapturedTargetActionRouter {
+    enum Action: Equatable {
+        case openPopover
+        case detachPopover
+        case refresh
+        case activate
+        case providerAccount
+        case appearance
+        case manageProfiles
+        case legacySettings
+        case popoverSettings
+        case quit
+    }
+
+    typealias TargetSink =
+        @MainActor (ProviderStatusItemIdentity, Profile) -> Void
+    typealias SettingsSink =
+        @MainActor (
+            SettingsNavigationDestination,
+            ProviderStatusItemIdentity,
+            Profile
+        ) -> Void
+
+    struct Sinks {
+        let openPopover: TargetSink
+        let detachPopover: TargetSink
+        let refresh: TargetSink
+        let activate: TargetSink
+        let settings: SettingsSink
+        let quit: TargetSink
+    }
+
+    let profiles: @MainActor () -> [Profile]
+    let sinks: Sinks
+
+    nonisolated static func popoverSettingsDestination(
+        for target: ProviderStatusItemIdentity
+    ) -> SettingsNavigationDestination {
+        target.providerID == .claude
+            ? .defaultView
+            : .providerAccount(profileID: target.profileID)
+    }
+
+    func currentProfile(
+        for target: ProviderStatusItemIdentity
+    ) -> Profile? {
+        profiles().first {
+            $0.id == target.profileID
+                && $0.providerID == target.providerID
+                && $0.providerRevision == target.providerRevision
+                && !$0.deletionInProgress
+        }
+    }
+
+    @discardableResult
+    func route(
+        _ action: Action,
+        target: ProviderStatusItemIdentity
+    ) -> Bool {
+        guard let profile = currentProfile(for: target) else {
+            return false
+        }
+        switch action {
+        case .openPopover:
+            sinks.openPopover(target, profile)
+        case .detachPopover:
+            sinks.detachPopover(target, profile)
+        case .refresh:
+            sinks.refresh(target, profile)
+        case .activate:
+            sinks.activate(target, profile)
+        case .providerAccount:
+            sinks.settings(
+                .providerAccount(profileID: target.profileID),
+                target,
+                profile
+            )
+        case .appearance:
+            sinks.settings(
+                .appearance(profileID: target.profileID),
+                target,
+                profile
+            )
+        case .manageProfiles:
+            sinks.settings(.manageProfiles, target, profile)
+        case .legacySettings:
+            sinks.settings(.defaultView, target, profile)
+        case .popoverSettings:
+            sinks.settings(
+                Self.popoverSettingsDestination(for: target),
+                target,
+                profile
+            )
+        case .quit:
+            sinks.quit(target, profile)
+        }
+        return true
+    }
+}
+
+@MainActor
+struct ProviderManualRefreshDispatcher {
+    let dispatch:
+        @MainActor ([Profile], UsageRefreshTrigger) -> Void
+
+    func dispatch(profile: Profile) {
+        dispatch([profile], .manual)
+    }
 }
 
 /// Retains the last known provider catalog for settings. A transient missing,
@@ -262,14 +469,24 @@ final class ProviderMenuCatalogStore: ObservableObject {
             return ProviderMetricDescriptor(
                 id: metricID,
                 providerID: .claude,
-                groupName: "API",
-                metricName: "Credits",
+                groupName: ProviderUILocalization.text(
+                    "appearance.metric.group.api",
+                    fallback: "API"
+                ),
+                metricName: ProviderUILocalization.text(
+                    "appearance.metric.name.credits",
+                    fallback: "Credits"
+                ),
                 resetAt: nil,
                 duration: nil,
                 usedPercentage: nil,
                 isUsable: false,
                 unavailableReason:
-                    "Saved metric is not in the latest provider response."
+                    ProviderUILocalization.text(
+                        "appearance.metric.saved_unavailable",
+                        fallback:
+                            "Saved metric is not in the latest provider response."
+                    )
             )
         }
         guard let components = metricID.usageWindowComponents,
@@ -286,7 +503,11 @@ final class ProviderMenuCatalogStore: ObservableObject {
             usedPercentage: nil,
             isUsable: false,
             unavailableReason:
-                "Saved metric is not in the latest provider response."
+                ProviderUILocalization.text(
+                    "appearance.metric.saved_unavailable",
+                    fallback:
+                        "Saved metric is not in the latest provider response."
+                )
         )
     }
 }
@@ -399,7 +620,13 @@ enum ProviderMenuPresentationBuilder {
         )
         var actions: [ProviderMenuAction] = [
             ProviderMenuAction(
-                title: "Open \(profile.name)",
+                title: String(
+                    format: ProviderUILocalization.text(
+                        "menu.provider.open_profile",
+                        fallback: "Open %@"
+                    ),
+                    profile.name
+                ),
                 target: identity,
                 kind: .openPopover
             )
@@ -407,7 +634,10 @@ enum ProviderMenuPresentationBuilder {
         if !isActive {
             actions.append(
                 ProviderMenuAction(
-                    title: "Make Active",
+                    title: ProviderUILocalization.text(
+                        "menu.provider.make_active",
+                        fallback: "Make Active"
+                    ),
                     target: identity,
                     kind: .activate
                 )
@@ -415,35 +645,55 @@ enum ProviderMenuPresentationBuilder {
         }
         actions.append(
             ProviderMenuAction(
-                title: "Refresh",
+                title: ProviderUILocalization.text(
+                    "common.refresh",
+                    fallback: "Refresh"
+                ),
                 target: identity,
                 kind: .refresh
             )
         )
         actions.append(
             ProviderMenuAction(
-                title: "\(ProviderAppearance.forProvider(profile.providerID).displayName) Account…",
+                title: String(
+                    format: ProviderUILocalization.text(
+                        "menu.provider.account",
+                        fallback: "%@ Account…"
+                    ),
+                    ProviderAppearance.forProvider(
+                        profile.providerID
+                    ).displayName
+                ),
                 target: identity,
                 kind: .settings(.providerAccount(profileID: profile.id))
             )
         )
         actions.append(
             ProviderMenuAction(
-                title: "Appearance…",
+                title: ProviderUILocalization.text(
+                    "menu.provider.appearance",
+                    fallback: "Appearance…"
+                ),
                 target: identity,
                 kind: .settings(.appearance(profileID: profile.id))
             )
         )
         actions.append(
             ProviderMenuAction(
-                title: "Manage Profiles…",
+                title: ProviderUILocalization.text(
+                    "menu.provider.manage_profiles",
+                    fallback: "Manage Profiles…"
+                ),
                 target: identity,
                 kind: .settings(.manageProfiles)
             )
         )
         actions.append(
             ProviderMenuAction(
-                title: "Quit",
+                title: ProviderUILocalization.text(
+                    "common.quit",
+                    fallback: "Quit"
+                ),
                 target: identity,
                 kind: .quit
             )
@@ -517,8 +767,14 @@ enum ProviderMenuPresentationBuilder {
             ProviderMetricDescriptor(
                 id: .claudeSession,
                 providerID: .claude,
-                groupName: "Subscription",
-                metricName: "Session",
+                groupName: ProviderUILocalization.text(
+                    "appearance.metric.group.subscription",
+                    fallback: "Subscription"
+                ),
+                metricName: ProviderUILocalization.text(
+                    "appearance.metric.name.session",
+                    fallback: "Session"
+                ),
                 resetAt: usage?.sessionResetTime,
                 duration: Constants.sessionWindow,
                 usedPercentage: sanitize(
@@ -526,33 +782,55 @@ enum ProviderMenuPresentationBuilder {
                 ),
                 isUsable: usage != nil,
                 unavailableReason: usage == nil
-                    ? "Session usage is not available yet."
+                    ? ProviderUILocalization.text(
+                        "appearance.metric.claude_session_unavailable",
+                        fallback: "Session usage is not available yet."
+                    )
                     : nil
             ),
             ProviderMetricDescriptor(
                 id: .claudeWeek,
                 providerID: .claude,
-                groupName: "Subscription",
-                metricName: "Week",
+                groupName: ProviderUILocalization.text(
+                    "appearance.metric.group.subscription",
+                    fallback: "Subscription"
+                ),
+                metricName: ProviderUILocalization.text(
+                    "appearance.metric.name.week",
+                    fallback: "Week"
+                ),
                 resetAt: usage?.weeklyResetTime,
                 duration: Constants.weeklyWindow,
                 usedPercentage: sanitize(usage?.weeklyPercentage),
                 isUsable: usage != nil,
                 unavailableReason: usage == nil
-                    ? "Weekly usage is not available yet."
+                    ? ProviderUILocalization.text(
+                        "appearance.metric.claude_week_unavailable",
+                        fallback: "Weekly usage is not available yet."
+                    )
                     : nil
             ),
             ProviderMetricDescriptor(
                 id: .claudeAPI,
                 providerID: .claude,
-                groupName: "API",
-                metricName: "Credits",
+                groupName: ProviderUILocalization.text(
+                    "appearance.metric.group.api",
+                    fallback: "API"
+                ),
+                metricName: ProviderUILocalization.text(
+                    "appearance.metric.name.credits",
+                    fallback: "Credits"
+                ),
                 resetAt: apiUsage?.resetsAt,
                 duration: nil,
                 usedPercentage: sanitize(apiUsage?.usagePercentage),
                 isUsable: apiUsage != nil,
                 unavailableReason: apiUsage == nil
-                    ? "API billing is not linked for this profile."
+                    ? ProviderUILocalization.text(
+                        "appearance.metric.claude_api_unavailable",
+                        fallback:
+                            "API billing is not linked for this profile."
+                    )
                     : nil
             )
         ]
@@ -589,7 +867,11 @@ enum ProviderMenuPresentationBuilder {
                     usedPercentage: used,
                     isUsable: used != nil,
                     unavailableReason: used == nil
-                        ? "This limit has no percentage or finite quantity."
+                        ? ProviderUILocalization.text(
+                            "appearance.metric.provider_no_value",
+                            fallback:
+                                "This limit has no percentage or finite quantity."
+                        )
                         : nil
                 )
             }
@@ -654,20 +936,48 @@ enum ProviderMenuPresentationBuilder {
             notice = nil
         case .loading:
             notice = used == nil
-                ? "Loading usage."
-                : "Refreshing; showing the last value."
+                ? ProviderUILocalization.text(
+                    "menubar.notice.loading",
+                    fallback: "Loading usage."
+                )
+                : ProviderUILocalization.text(
+                    "menubar.notice.refreshing_cached",
+                    fallback: "Refreshing; showing the last value."
+                )
         case .stale:
-            notice = "Showing stale usage."
+            notice = ProviderUILocalization.text(
+                "menubar.notice.stale",
+                fallback: "Showing stale usage."
+            )
         case .degraded:
             notice = used == nil
-                ? "Usage is temporarily unavailable."
-                : "Provider degraded; showing the last value."
+                ? ProviderUILocalization.text(
+                    "menubar.notice.unavailable",
+                    fallback: "Usage is temporarily unavailable."
+                )
+                : ProviderUILocalization.text(
+                    "menubar.notice.degraded_cached",
+                    fallback: "Provider degraded; showing the last value."
+                )
         case .error:
             notice = snapshot?.currentFailure.map {
-                "Usage error: \(String(describing: $0.kind))."
-            } ?? "Usage is unavailable."
+                String(
+                    format: ProviderUILocalization.text(
+                        "menubar.notice.error_format",
+                        fallback: "Usage error: %@."
+                    ),
+                    String(describing: $0.kind)
+                )
+            } ?? ProviderUILocalization.text(
+                "menubar.notice.unavailable",
+                fallback: "Usage is temporarily unavailable."
+            )
         case .noData:
-            notice = descriptor.unavailableReason ?? "No usage data."
+            notice = descriptor.unavailableReason
+                ?? ProviderUILocalization.text(
+                    "menubar.notice.no_data",
+                    fallback: "No usage data."
+                )
         }
         return ProviderMetricPresentation(
             descriptor: descriptor,

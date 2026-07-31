@@ -3,10 +3,10 @@
   "project": "Claude Usage Desktop App Codex Support",
   "slug": "claude-usage-desktop-app-codex-support",
   "created_at": "2026-07-30T05:19:19Z",
-  "last_updated": "2026-07-30T17:50:36Z",
+  "last_updated": "2026-07-31T00:25:25Z",
   "status": "active",
-  "current_batch": "B04",
-  "current_phase": "P12",
+  "current_batch": "B05",
+  "current_phase": "P17",
   "feature_branch": "feature/codex-subscription-support",
   "feature_branch_role": "Durable project-control branch; delivery code uses sequential batch branches targeting upstream/main.",
   "repository": {
@@ -65,7 +65,7 @@
     "require_previous_batch_merged": true,
     "require_fresh_upstream_main": true,
     "greptile_max_reviews_per_pr": 2,
-    "feature_flag": "Codex remains disabled for normal users until P17 passes",
+    "feature_flag": "The centralized Codex production gate is enabled; B05 remains unmergeable until hosted UI and ship gates pass.",
     "slack_updates_required": false
   },
   "shared_file_policy": {
@@ -134,27 +134,27 @@
     },
     "W04": {
       "name": "Provider-aware UI parity",
-      "status": "parallel_in_progress",
+      "status": "completed",
       "phases": ["P10", "P11", "P12"],
       "parallel": true,
       "parallel_safety": "P10 owns onboarding/settings, P11 owns popover presentation, and P12 owns status-item/menu/icon presentation."
     },
     "W05A": {
       "name": "Cross-cutting parity and distribution",
-      "status": "pending",
+      "status": "completed",
       "phases": ["P13", "P14", "P16"],
       "parallel": true,
       "parallel_safety": "P13 owns history/notification/automation, P14 owns error/diagnostic files, and P16 owns release/update infrastructure."
     },
     "W05B": {
       "name": "Localization, accessibility, and UI automation",
-      "status": "pending",
+      "status": "completed",
       "phases": ["P15"],
       "parallel": false
     },
     "W05C": {
       "name": "Final parity and ship audit",
-      "status": "pending",
+      "status": "in_progress",
       "phases": ["P17"],
       "parallel": false
     }
@@ -246,18 +246,18 @@
     },
     "B04": {
       "name": "Provider-aware UI parity",
-      "status": "ready_to_ship",
+      "status": "merged",
       "branch": "feature/codex-support-ui-parity",
       "worktree": "/Users/jason/gitclone/hc-repo/worktrees/Claude-Usage-Tracker/phase-04-ui-parity",
       "target": "upstream/main",
       "depends_on": ["B03"],
       "phases": ["P10", "P11", "P12"],
       "primary_linear_issue": "PRODUCT-2283",
-      "pr_number": null,
-      "pr_url": null,
-      "head_sha": "8f90c669637f17b4fb7f049b3334cde9bc13d5fa",
+      "pr_number": 10,
+      "pr_url": "https://github.com/revenium/Claude-Usage-Tracker/pull/10",
+      "head_sha": "e44e15b18021b931f0c18e5d15b7ff83c29fc01f",
       "started_at": "2026-07-30T15:45:45Z",
-      "merged_at": null,
+      "merged_at": "2026-07-30T18:06:45Z",
       "bootstrap": {
         "status": "completed",
         "commit_sha": "cefea32cbfaeabd7dcb14d1cb07f4d4a2f681807",
@@ -280,7 +280,7 @@
       },
       "integration": {
         "status": "verified",
-        "commit_sha": "8f90c669637f17b4fb7f049b3334cde9bc13d5fa",
+        "commit_sha": "e44e15b18021b931f0c18e5d15b7ff83c29fc01f",
         "completed_at": "2026-07-30T17:50:36Z",
         "guarantees": [
           "Provider-aware onboarding, profile CRUD, account health/login, and one retained typed settings window preserve one provider per profile and same-provider setup targets.",
@@ -297,24 +297,35 @@
           "All nine localization catalogs parse; the known baseline keyset drift remains assigned to P15.",
           "Diff, source parse, XML, shell, fixture JSON, secret/auth-access, and zero-process checks passed."
         ],
-        "pending_gates": [
-          "Push, PR review/CI iteration, final audit, and merge through codex-ship-pr."
+        "ship_evidence": [
+          "PR #10 exact-head Greptile review: 5/5, Reviews (1), no findings.",
+          "Canonical reviewer gate: valid and latched for explicit Greptile score threshold 4.",
+          "Audits 6.0, 6a, and 6b passed; all review surfaces were clear.",
+          "PR #10 squash-merged as 64047219d03ba1aa11401dfc94fa38f89c4add32 after an immutable head guard."
         ]
       }
     },
     "B05": {
       "name": "Release readiness and final parity",
-      "status": "pending",
+      "status": "active",
       "branch": "feature/codex-support-release-readiness",
-      "worktree": null,
+      "worktree": "/Users/jason/gitclone/hc-repo/worktrees/Claude-Usage-Tracker/phase-05-release-readiness",
       "target": "upstream/main",
       "depends_on": ["B04"],
       "phases": ["P13", "P14", "P15", "P16", "P17"],
-      "primary_linear_issue": null,
-      "pr_number": null,
-      "pr_url": null,
-      "head_sha": null,
-      "started_at": null,
+      "primary_linear_issue": "PRODUCT-2293",
+      "pr_number": 11,
+      "pr_url": "https://github.com/revenium/Claude-Usage-Tracker/pull/11",
+      "head_sha": "8cd3f2ba49eb30a4bc5bfab90648f0bd7fc7bc51",
+      "source_sha": "8cd3f2ba49eb30a4bc5bfab90648f0bd7fc7bc51",
+      "local_matrix_sha": "8b6a3c2ebd780ed4bed8a90b089edd9fbbf84500",
+      "base_update_merge_sha": "5448504b5bf45241159ea96b124ff4f89dd596d1",
+      "review_size_prerequisite": {
+        "pr_number": 12,
+        "merge_sha": "16b2a8764e0b1e9d83e98c983a14b5a1a7e244c7",
+        "resulting_changed_file_count": 99
+      },
+      "started_at": "2026-07-30T18:08:14Z",
       "merged_at": null
     }
   },
@@ -874,13 +885,13 @@
       "linear_issue_id": null,
       "batch": "B05",
       "wave": "W05A",
-      "status": "pending",
+      "status": "completed",
       "branch": "work/codex-release-history-notifications",
-      "worktree": null,
-      "worker": null,
-      "commit_sha": null,
-      "started_at": null,
-      "completed_at": null,
+      "worktree": "/Users/jason/gitclone/hc-repo/worktrees/Claude-Usage-Tracker/phase-05-history-notifications",
+      "worker": "b05_p13_history_notifications",
+      "commit_sha": "0670bdd755a9d7500d265b443dec4d7eb4ad70e3",
+      "started_at": "2026-07-30T18:08:14Z",
+      "completed_at": "2026-07-30T19:53:37Z",
       "depends_on": ["P03", "P09", "P10", "P11", "P12"],
       "owns_files": [
         "Claude UsageTests/ProviderHistoryNotificationTests.swift"
@@ -901,7 +912,20 @@
         "Threshold and reset notifications work for dynamic Codex windows without duplicates.",
         "Claude-only automation is capability-gated for Codex.",
         "Retention, migration, export, notification deduplication, and capability tests pass."
-      ]
+      ],
+      "current_validation": {
+        "verified": [
+          "Provider history/notification focused suite: 28 passed, 0 failed.",
+          "Full app suite at corrective head: 550 passed, 0 failed, 0 skipped.",
+          "UsageKit Debug and Release: 80 tests in each configuration, 0 failures, 1 expected opt-in live-smoke skip.",
+          "Universal Release executable: arm64 and x86_64."
+        ],
+        "pending": [],
+        "review": [
+          "Exact corrective follow-up review: CLEAN at 0670bdd.",
+          "Independent focused review run: 111 passed, 0 failed."
+        ]
+      }
     },
     "P14": {
       "ticket_number": 14,
@@ -910,13 +934,13 @@
       "linear_issue_id": null,
       "batch": "B05",
       "wave": "W05A",
-      "status": "pending",
+      "status": "completed",
       "branch": "work/codex-release-diagnostics",
-      "worktree": null,
-      "worker": null,
-      "commit_sha": null,
-      "started_at": null,
-      "completed_at": null,
+      "worktree": "/Users/jason/gitclone/hc-repo/worktrees/Claude-Usage-Tracker/phase-05-diagnostics",
+      "worker": "b05_p14_final_corrections",
+      "commit_sha": "f574aaac6e791cc82744d160130fa91866b4676d",
+      "started_at": "2026-07-30T18:08:14Z",
+      "completed_at": "2026-07-30T21:25:07Z",
       "depends_on": ["P08", "P09", "P10", "P11", "P12"],
       "owns_files": [
         "Claude Usage/Shared/Models/ProviderHealth.swift",
@@ -938,7 +962,19 @@
         "Logs never expose auth.json, tokens, API keys, credential JSON, or sensitive environment values.",
         "Copyable diagnostics contain useful non-secret versions and state.",
         "Redaction and recovery tests pass."
-      ]
+      ],
+      "current_validation": {
+        "verified": [
+          "Integrated ProviderDiagnostics suite: 31 passed, 0 failed.",
+          "Five independent adversarial sessions: 50 checks passed with a zero fixture-process census.",
+          "Strict URL-path and protocol-relative redaction, punctuation-bound local paths, exact-PID late reaping, and identity-bound same-refresh PID-reuse traversal regressions pass."
+        ],
+        "pending": [],
+        "review": [
+          "Independent exact-source and integrated follow-up review: CLEAN at f574aaa.",
+          "Source/integrated patch IDs and all three changed file blobs are identical."
+        ]
+      }
     },
     "P15": {
       "ticket_number": 15,
@@ -947,13 +983,13 @@
       "linear_issue_id": null,
       "batch": "B05",
       "wave": "W05B",
-      "status": "pending",
+      "status": "completed",
       "branch": "work/codex-release-localization-ui-tests",
-      "worktree": null,
-      "worker": null,
-      "commit_sha": null,
-      "started_at": null,
-      "completed_at": null,
+      "worktree": "/Users/jason/gitclone/hc-repo/worktrees/Claude-Usage-Tracker/phase-05-localization-ui-tests",
+      "worker": "b05_p15_readiness_audit with b05_p15_independent_review",
+      "commit_sha": "194d9e53e620558e65d49686241f13f2e17c2b3f",
+      "started_at": "2026-07-30T20:08:19Z",
+      "completed_at": "2026-07-30T23:06:40Z",
       "depends_on": ["P10", "P11", "P12", "P13", "P14", "P16"],
       "owns_files": [
         "Claude UsageUITests/CodexSetupUITests.swift",
@@ -979,7 +1015,23 @@
         "Provider controls and dynamic usage have useful accessibility labels, values, focus, and keyboard behavior.",
         "UI automation covers setup, login, mixed profiles, menus, settings, errors, refresh, and unlink.",
         "Documentation covers supported subscriptions, CLI, CODEX_HOME, login, privacy, troubleshooting, and exclusions."
-      ]
+      ],
+      "current_validation": {
+        "verified": [
+          "Isolated UI automation bootstrap commit 03649aa.",
+          "Double-gated launch parser tests: 5 passed, 0 failed.",
+          "Exact source 8b6a3c2: UITesting arm64 build-for-testing succeeded with a separate bundle/defaults/data domain and no production startup services.",
+          "Exact source 8b6a3c2: all nine catalogs contain 994 keys; 15/15 validator fixtures, placeholder parity, and production source-call validation pass.",
+          "CodexParityUITests contains exactly 11 test methods covering setup, both login modes, mixed profiles, menus/status/popover lifecycle, settings/history, all nine locales, and fail-closed launch; no skips or expected failures exist.",
+          "Exact source 8b6a3c2: full application suite passed 610/610 in both serial and parallel modes; UsageKit Debug and Release passed 80 tests with only the intentional opt-in live-smoke skip.",
+          "Independent exact-head review is CLEAN; P15 source/integration stable patch IDs are identical and no production P15 source drift exists.",
+          "Hosted-path corrections through 8cd3f2b: all 21 parser/security tests plus app and dedicated UI builds-for-testing passed; exact three-file independent review CLEAN.",
+          "Prerequisite PR #12 merged 16 exact synthetic fixture files as 16b2a87; B05 now has an exact 99-file reviewer diff."
+        ],
+        "pending": [
+          "Hosted macOS CI must execute all 11 UI methods with zero failures, skips, or expected failures before the B05 merge."
+        ]
+      }
     },
     "P16": {
       "ticket_number": 16,
@@ -988,13 +1040,13 @@
       "linear_issue_id": null,
       "batch": "B05",
       "wave": "W05A",
-      "status": "pending",
+      "status": "completed",
       "branch": "work/codex-release-distribution",
-      "worktree": null,
-      "worker": null,
-      "commit_sha": null,
-      "started_at": null,
-      "completed_at": null,
+      "worktree": "/Users/jason/gitclone/hc-repo/worktrees/Claude-Usage-Tracker/phase-05-distribution",
+      "worker": "b05_p16_distribution; PM completed and independently audited corrective release hardening",
+      "commit_sha": "49e0f78",
+      "started_at": "2026-07-30T18:08:14Z",
+      "completed_at": "2026-07-30T20:46:32Z",
       "depends_on": ["P01", "P04", "P12"],
       "owns_files": [],
       "touches_files": [
@@ -1016,7 +1068,26 @@
         "App name, bundle identifier, preferences domain, and migration compatibility remain intact.",
         "Release automation supports signed/notarized ZIP, checksum, appcast, and Homebrew publication.",
         "Missing secrets or repository permissions are explicit blockers rather than silently bypassed."
-      ]
+      ],
+      "current_validation": {
+        "verified": [
+          "Distribution validator and duplicate-YAML positive/negative test pass.",
+          "Source P16 commit 752a4bd integrated as 500d743 with a clean diff.",
+          "UsageKit Debug: 80 tests, 0 failures, 1 expected opt-in live-smoke skip.",
+          "Debug and universal Release builds passed; bundle/app-group/macOS identities were preserved and local feed/key values were empty.",
+          "A cohesive ad-hoc ZIP, appcast, checksum, and metadata unit passed the release verifier.",
+          "Pinned Sparkle 2.9.4 generate_appcast/sign_update and a strict temporary-tap Homebrew cask audit passed.",
+          "Independent review found and corrective 9bac28c closed the ungated tag-owned Homebrew token path and public partial-release retry failure.",
+          "Corrective 9f1508e confines the tap token to the isolated cask-publisher handoff and final publish step.",
+          "Corrective 49e0f78 byte-binds all four remotely downloaded draft assets to the locally signed and verified unit before publication.",
+          "Corrected workflows pass YAML, duplicate-key, embedded shell syntax, diff, expanded distribution-policy validation, and a clean independent exact-head review."
+        ],
+        "pending": [],
+        "combined_validation": [
+          "Exact B05 source 8b6a3c2 passed distribution validation, duplicate-YAML validation, 43/43 embedded workflow shell blocks, and bash plus ShellCheck validation for all five release/localization scripts.",
+          "Exact B05 source 8b6a3c2 passed Debug and universal Release builds; the Release executable contains arm64 and x86_64."
+        ]
+      }
     },
     "P17": {
       "ticket_number": 17,
@@ -1025,12 +1096,13 @@
       "linear_issue_id": null,
       "batch": "B05",
       "wave": "W05C",
-      "status": "pending",
+      "status": "in_progress",
       "branch": "feature/codex-support-release-readiness",
-      "worktree": null,
-      "worker": null,
-      "commit_sha": null,
-      "started_at": null,
+      "worktree": "/Users/jason/gitclone/hc-repo/worktrees/Claude-Usage-Tracker/phase-05-release-readiness",
+      "worker": "root with b05_p17_gate_preparation",
+      "commit_sha": "8cd3f2ba49eb30a4bc5bfab90648f0bd7fc7bc51",
+      "local_matrix_sha": "8b6a3c2ebd780ed4bed8a90b089edd9fbbf84500",
+      "started_at": "2026-07-30T21:14:58Z",
       "completed_at": null,
       "depends_on": [
         "P01",
@@ -1063,7 +1135,34 @@
         "Distribution artifact validation passes where required credentials are available.",
         "No forbidden credential or billing behavior exists.",
         "Only after all gates pass is Codex enabled and B05 shipped."
-      ]
+      ],
+      "preflight": {
+        "verified": [
+          "Installed /opt/homebrew/bin/codex is codex-cli 0.145.0 and matches checked-in schema provenance.",
+          "Official login status classifies the default home as ChatGPT without reading auth.json.",
+          "Local keychain has a currently valid Developer ID Application identity for team 6BQW433AYV.",
+          "Integrated B05 has no runtime or workflow consumer of inherited gh-pages.",
+          "Exact inherited gh-pages SHA and a leased post-merge backup/delete procedure are verified.",
+          "Exact source 8b6a3c2: installed Codex 0.145.0 account/rate-limit live smoke passed 1/1 through the official app-server with a zero residual app-server/fixture-process census.",
+          "Central production gate and explicit disabled paths are integrated; focused source validation passed 70/70 and the disabled diagnostics/UI correction passed 67/67.",
+          "Exact source 8b6a3c2: full application suite passed 610/610 in both serial and parallel modes with zero failures, skips, or expected failures.",
+          "Exact source 8b6a3c2: UsageKit Debug and Release each passed 80 tests with one intentional opt-in live-smoke skip; the same smoke passed separately.",
+          "Exact source 8b6a3c2: localization 9x994, 15/15 validator fixtures, Debug, universal Release, and UI build-for-testing gates passed.",
+          "Exact source 8b6a3c2: 43/43 workflow blocks, 5/5 release scripts, distribution/YAML, forbidden-runtime, fixture-provenance, and credential scans passed.",
+          "Independent exact-head review is CLEAN after replacing the conditional diagnostics PID assertion with a mandatory bounded handshake and unconditional exit proof.",
+          "D158 merge-safe synthetic Claude/mixed-provider UAT is green; real authentication, notification, VoiceOver, migration, and localized visual UAT remains mandatory before the first public release.",
+          "Hosted Distribution Validation passes after removing the ripgrep dependency and pinning all validation workflows to Xcode 26.0.1; the local workflow matrix covers 46 embedded shell blocks.",
+          "Hosted Build/Test at 5acc2ec passed UsageKit 80 with one intentional skip, app 610/610, Debug, and Release; Distribution Validation also passed.",
+          "Hosted Build/Test and Distribution Validation pass through 869ada4; its UI job proved direct /tmp writes are denied to Xcode's sandboxed UI runner.",
+          "Hosted-path corrections through 8cd3f2b pass all 21 parser/security tests plus app and dedicated UI builds-for-testing with a CLEAN exact three-file independent review.",
+          "Prerequisite PR #12 merged as 16b2a87 and was merged into B05 at 5448504, reducing the canonical reviewer diff to 99 files."
+        ],
+        "external_release_blockers": [
+          "Repository release environment, required Actions variables, and required Actions secrets are not configured.",
+          "Apple notarization credentials, Sparkle private key, and a narrow Homebrew tap write token are unavailable.",
+          "Hosted macOS XCUITest execution must pass because local Developer Mode/TCC blocks runtime automation."
+        ]
+      }
     }
   },
   "quality_gates": {
@@ -1106,7 +1205,13 @@
     "last_self_check_at": null,
     "next_self_check_at": null
   },
-  "blockers": [],
+  "blockers": [
+    {
+      "scope": "first Revenium public release, not code merge",
+      "status": "external",
+      "detail": "Protected release environment plus Apple notarization, Sparkle signing, certificate export, and narrow Homebrew tap credentials are not configured; do not create a release tag until supplied."
+    }
+  ],
   "notes": [
     "Original upstream contains no Codex implementation; do not wholesale merge or rebase its feature work.",
     "Selectively adapt file persistence, Keychain, bounded process, and approved menu/window reliability ideas only.",

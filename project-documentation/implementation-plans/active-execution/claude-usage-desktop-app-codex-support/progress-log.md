@@ -6,12 +6,15 @@
 - Linear project: `Claude Usage Desktop App Codex Support` (`8fd871e1416e`)
 - Umbrella: `PRODUCT-2276`
 - Tracking wave: W00 — complete
-- Current delivery batch: B04 — Provider-aware UI parity
-- Current phases: P10 setup/settings, P11 popover, and P12 menu/status/icons complete
-- Shared UI bootstrap commit: `cefea32`
-- Integrated B04 head: `8f90c66`
-- Current validation: 519 app tests; 80 UsageKit tests in Debug and Release with one expected opt-in live-smoke skip; strict-concurrency Debug and universal Release builds; three clean semantic reviews; zero-process and safety gates
-- Next action: update Linear, push B04, and run `$codex-ship-pr skip-review --auto-merge --linear PRODUCT-2283`
+- Current delivery batch: B05 — Release readiness and final parity
+- Current phase: P17 final hosted/ship gate; P13–P16 implementation and local acceptance are complete
+- B04 merged: PR [#10](https://github.com/revenium/Claude-Usage-Tracker/pull/10), squash `64047219d03ba1aa11401dfc94fa38f89c4add32`
+- B05 base: `64047219d03ba1aa11401dfc94fa38f89c4add32`
+- B05 complete local-matrix source: `8b6a3c2ebd780ed4bed8a90b089edd9fbbf84500`
+- B05 hosted correction source: `8cd3f2ba49eb30a4bc5bfab90648f0bd7fc7bc51`
+- Current validation: 610/610 app tests in serial and parallel modes; 80 UsageKit tests in Debug and Release with one intentional opt-in live-smoke skip; installed Codex 0.145.0 smoke 1/1; 9×994 localization keys and 15/15 fixtures; Debug/universal Release and UI build-for-testing; static/forbidden audit and independent exact-head review clean. Hosted app and distribution CI pass through `869ada4`; the sandbox-aware runner-container correction passes 21/21 parser/security tests, app and dedicated UI `build-for-testing`, diff hygiene, and exact independent review at `8cd3f2b`.
+- Review-size prerequisite: PR [#12](https://github.com/revenium/Claude-Usage-Tracker/pull/12) merged as `16b2a87`; B05 merged that base at `5448504` and now changes exactly 99 files.
+- Next action: push the final tracking head, require hosted `Codex UI parity` 11/11 plus app/distribution CI, complete the canonical Tessie and `$codex-ship-pr skip-review` audits, merge, then archive/delete inherited `gh-pages` by exact SHA and reconcile Linear
 
 ## Repository State at Initialization
 
@@ -48,10 +51,10 @@
 | W03B | Transport and profile model | P06, P07 | Complete |
 | W03C | Codex provider | P08 | Complete |
 | W03D | Refresh integration | P09 | Complete |
-| W04 | Provider-aware UI parity | P10, P11, P12 | Complete — ship gate |
-| W05A | Cross-cutting parity and distribution | P13, P14, P16 | Pending |
-| W05B | Localization/accessibility/UI automation | P15 | Pending |
-| W05C | Final parity and ship audit | P17 | Pending |
+| W04 | Provider-aware UI parity | P10, P11, P12 | Complete — merged |
+| W05A | Cross-cutting parity and distribution | P13, P14, P16 | Complete |
+| W05B | Localization/accessibility/UI automation | P15 | Complete — hosted runtime remains a B05 merge gate |
+| W05C | Final parity and ship audit | P17 | In progress — hosted CI and ship audit |
 
 ## Delivery PRs
 
@@ -60,8 +63,8 @@
 | B01 Baseline | `feature/codex-support-baseline` | [#7](https://github.com/revenium/Claude-Usage-Tracker/pull/7) | Success | Tessie clean + Greptile 5/5 | `29c7fe1` | Merged |
 | B02 Foundations | `feature/codex-support-foundations` | [#8](https://github.com/revenium/Claude-Usage-Tracker/pull/8) | Equivalent exact-head gate passed | All findings fixed; reviewer limits documented | `ab70776` | Merged |
 | B03 Provider core | `feature/codex-support-provider-core` | [#9](https://github.com/revenium/Claude-Usage-Tracker/pull/9) | Exact-head local matrix passed; fork-wide hosted-CI exception audited | Greptile 5/5 at `728d84e`; latch valid; Tessie size limit documented | `2fd330f` | Merged |
-| B04 UI parity | `feature/codex-support-ui-parity` | — | 519 app / 80 package Debug+Release / strict+universal builds | Three independent semantic reviews clean | — | Ready to ship |
-| B05 Release readiness | `feature/codex-support-release-readiness` | — | — | — | — | Pending |
+| B04 UI parity | `feature/codex-support-ui-parity` | [#10](https://github.com/revenium/Claude-Usage-Tracker/pull/10) | 519 app / 80 package Debug+Release / strict+universal builds | Greptile 5/5; exact-head latch valid | `6404721` | Merged |
+| B05 Release readiness | `feature/codex-support-release-readiness` | [#11](https://github.com/revenium/Claude-Usage-Tracker/pull/11) | Exact local matrix green; hosted-only canonicalization, process-root, and runner-sandbox boundaries corrected through `8cd3f2b`; exact-head rerun pending | Independent source and all focused correction reviews CLEAN; Tessie pending on 99-file diff | — | Active — ship gate running |
 
 ## Completed Phases
 
@@ -76,9 +79,13 @@
 | P07 | PRODUCT-2286 | provider_profile_model | `728d84e` final PR head | #9 | 2026-07-30 | Provider-tagged profiles bind canonical Codex homes to device/inode identity; exact-path relink upgrades legacy unresolved links and captures same-path replacements |
 | P08 | PRODUCT-2285 | codex_provider | `728d84e` final PR head | #9 | 2026-07-30 | Dynamic and legacy limits, optional-usage partial success, supported/unsupported account modes, complete typed login outcomes, scoped cleanup, and live installed-Codex proof |
 | P09 | PRODUCT-2288 | refresh_engine | `728d84e` final PR head | #9 | 2026-07-30 | Profile-keyed latest-wins runtime separates durable commit from presentation and fences same-profile pending work, cross-profile concurrency, dispatch, stale/deleted/shutdown results, and overlapping timers |
-| P10 | PRODUCT-2283 | b04_p10_setup_settings | `a3915b8` integrated | B04 pending | 2026-07-30 | Provider-aware onboarding, mixed-profile CRUD, canonical home linking/relinking, official login, account health, capability gating, and one typed settings window |
-| P11 | PRODUCT-2287 | b04_p11_popover | `b89425e` integrated | B04 pending | 2026-07-30 | Arbitrary dynamic groups/windows, plan, credits, daily usage, reset/pace controls, normalized error states, and preserved Claude shell behavior |
-| P12 | PRODUCT-2284 | b04_p12_menu_icons | `1ebb3c2` integrated | B04 pending | 2026-07-30 | Stable provider/window menu metrics, compatible legacy persistence, dynamic status items/icons, exact action fences, and provider-aware appearance |
+| P10 | PRODUCT-2283 | b04_p10_setup_settings | `e44e15b` final PR head | #10 | 2026-07-30 | Provider-aware onboarding, mixed-profile CRUD, canonical home linking/relinking, official login, account health, capability gating, and one typed settings window |
+| P11 | PRODUCT-2287 | b04_p11_popover | `e44e15b` final PR head | #10 | 2026-07-30 | Arbitrary dynamic groups/windows, plan, credits, daily usage, reset/pace controls, normalized error states, and preserved Claude shell behavior |
+| P12 | PRODUCT-2284 | b04_p12_menu_icons | `e44e15b` final PR head | #10 | 2026-07-30 | Stable provider/window menu metrics, compatible legacy persistence, dynamic status items/icons, exact action fences, and provider-aware appearance |
+| P13 | PRODUCT-2293 | b05_p13_history_notifications | `0670bdd` source, integrated in B05 | B05 | 2026-07-30 | Provider-tagged history/export, dynamic-window restart-safe notification ledger, threshold/reset deduplication, and capability-gated Claude automation |
+| P14 | PRODUCT-2289 | b05_p14_final_corrections | `f574aaa` integrated, final test proof at `8b6a3c2` | B05 | 2026-07-30 | Provider recovery, fail-closed redaction, bounded diagnostics, stable process identity, exact-PID late reaping, and adversarial cleanup proof |
+| P15 | PRODUCT-2291 | b05_p15_readiness_audit | `194d9e5` integrated, exact review at `8b6a3c2` | B05 | 2026-07-30 | Nine 994-key catalogs, 15-case validator, accessibility/focus/keyboard work, docs, isolated 11-method native UI automation, and CI enforcement |
+| P16 | PRODUCT-2292 | b05_p16_distribution | `49e0f78` integrated in B05 | B05 | 2026-07-30 | Revenium release/update destinations, fail-closed signed/notarized cohesive release unit, recoverable draft publication, and narrow Homebrew token scope |
 
 ## Completed B04 Parallel Phases
 
@@ -98,7 +105,7 @@
 - Codex provider reads required account and rate-limit data in one scoped session. Missing, unsupported, or malformed optional token usage preserves the usable report and records typed degraded health.
 - Refresh orchestration owns concurrency by profile UUID. Provider identity, provider revision, input generation, invocation order, presentation context, deletion tombstones, and terminal shutdown fence persistence and UI publication.
 - Durable accepted events and current-context presented events are distinct. Claude history/API commits can complete independently, while notifications, statusline writes, alerts, success feedback, and auto-switching run only for current eligible Claude presentation.
-- Codex remains disabled for normal production use until P17. Production code does not read, copy, mutate, delete, or log `auth.json`, and unlink/disconnect does not log out Codex or alter shell state.
+- The centralized Codex production gate is enabled after P15 parity and the local P17 matrix passed; the branch still cannot merge until hosted UI and ship gates pass. Production code does not read, copy, mutate, delete, or log `auth.json`, and unlink/disconnect does not log out Codex or alter shell state.
 
 ## Latest Acceptance Work by Ticket
 
@@ -171,9 +178,9 @@
 
 ## Blockers
 
-- No product or architecture decision is blocking B04 shipping.
-- The pre-existing non-English keyset mismatch is unchanged and remains assigned to P15, where all nine locales stabilize after B04 UI strings.
-- Release signing, notarization, Pages/appcast, and Homebrew publication may require Revenium secrets or repository permissions; verify during P16.
+- No product or architecture decision blocks the B05 code merge.
+- Hosted macOS CI must execute all 11 Codex UI tests with zero failures, skips, or expected failures before merge; the local host cannot run the suite because Developer Mode/TCC blocks automation before the first test body.
+- The first public release remains blocked on protected release variables/secrets and D158 human UAT in a backed-up disposable user or VM. No public release tag will be created during B05 shipping.
 
 ## Decisions
 
@@ -227,3 +234,38 @@
 - Started P10, P11, and P12 concurrently in isolated Revenium worktrees with non-overlapping production ownership; the PM retains localization, project tracking, and integration files.
 - Integrated P10, P11, and P12 in dependency order, then closed cross-workstream gaps in production settings routing, same-provider setup defaults, Claude popover parity, dynamic accessibility identity, time/pace presentation, and hosted-test dependency lifetime.
 - Froze B04 implementation at `8f90c66` after 100/100 focused and 519/519 full app tests, 80-test UsageKit Debug and Release runs, strict-concurrency and universal Release builds, static/safety scans, and three clean independent semantic reviews.
+- Shipped B04 through `$codex-ship-pr skip-review`: the exact-head Greptile review was 5/5 with no findings, the canonical score-4 latch validated, all review surfaces and commit intent passed audit, and PR #10 squash-merged as `6404721`; PRODUCT-2283, PRODUCT-2287, and PRODUCT-2284 are Done.
+- Created B05 from the freshly fetched B04 merge and started P13, P14, and P16 concurrently in isolated Revenium worktrees with non-overlapping production ownership; the PM retains project tracking and final integration.
+- Integrated P13 history, versioned mixed-provider export, dynamic-window notifications, and automation gating, then corrected seven independent-review findings with a versioned restart-safe per-window delivery ledger, high-water threshold semantics, bounded missing-window retention, capability-driven settings normalization, provider-aware automation visibility, and profile-scoped chart identity.
+- Verified final P13 correction `0670bdd` with 550/550 app tests, UsageKit Debug and Release runs of 80 tests with the one expected opt-in live-smoke skip, focused crash/restart/in-flight/profile-deletion regressions, diff hygiene, and an `arm64` + `x86_64` universal Release build; an exact-commit independent follow-up review is active.
+- Reopened P14 after its first independent review found raw standalone JWT/custom-path leakage, a continuous-writer timeout escape, overstated process-group containment, ambiguous census handling, unverified raw-log deletion, and an A→B→A diagnostics-result race; a dedicated corrective worker now owns the diagnostics worktree while P16 continues independently.
+- Closed the P13 follow-up findings with threshold-settings reconciliation, future-ledger preservation, tokenized in-flight reservations, pre-finalization notification cleanup, runtime capability gates, and schema-v3 exact date encoding; the complete corrective focused matrix passed before the exact-source full suite.
+- Froze P13 at `0670bdd` after an independent clean exact-commit audit and 111/111 reviewer-focused tests; all history/export/notification/automation acceptance criteria are complete, while the Linear ticket remains In Progress until the B05 delivery PR merges.
+- Integrated P14 commits through `9ce3065`; the combined P13/P14 focused matrix passes 89/89 and a fresh exact-source P14 follow-up review is active.
+- Verified the combined P13/P14 integration with 574/574 full app tests and a successful universal Release build containing `arm64` and `x86_64`.
+- The exact-source P14 follow-up kept the workstream open after finding four residual gaps: punctuation-bound custom paths, fail-open PID-identity fallback, destructive API-route redaction, and missing event-driven late-child reaping. It independently passed 52 combined focused tests plus three repetitions each of continuous-writer, `setsid`, and stubborn-tree containment before handing the four corrections to a separate worker.
+- Integrated P16 as `500d743` from source commit `752a4bd`: Revenium-owned fail-closed Sparkle configuration, signed/notarized cohesive GitHub Release automation, release-asset appcast, Homebrew tap publication, operational-link rehoming, distribution validation, and release runbooks. The worker validated 9/9 focused configuration tests, 80 UsageKit tests with the one expected opt-in skip, both app configurations, a universal executable, real pinned Sparkle signing tools, a strict temporary-tap cask audit, and an ad-hoc cohesive release unit; independent exact-commit review is active.
+- Completed the read-only P15 inventory: all nine expected catalogs parse, but key parity, duplicate definitions, approximately 188 untranslated provider call-site keys, one Korean placeholder signature, accessibility semantics, keyboard focus, and the complete absence of an isolated XCUITest target/harness remain real acceptance gaps.
+- Started P15 from the integrated P13/P14/P16 head in `phase-05-localization-ui-tests`, with explicit `UITesting` isolation, full catalog/validator repair, scenario-complete provider UI automation, accessibility/focus semantics, CI enforcement, and Codex support documentation as the serialized scope.
+- P16's exact-commit review found two release-security defects: an ungated manual Homebrew path could expose the cross-repository token to tag-owned code, and direct publication could strand a public partial release that retries refused to repair. Corrective `9bac28c` removes manual dispatch, proves source/metadata/main ancestry before rendering, exposes the tap token only to one optimistic-SHA Contents API write, and publishes through a provenance-owned draft that is re-downloaded and fully verified before going public; expanded distribution validators pass.
+- P15 checkpoint `03649aa` establishes a compile-time plus explicit-argument-gated UI automation boundary with isolated defaults/data/bundle identity and no production migration, Keychain, updates, notifications, prompts, browser, monitor, or retry startup. Its parser suite passes 5/5 and the `UITesting` arm64 app builds; project/UI-test wiring continues while a separate worker owns validator fixtures and all nine catalogs.
+- Completed P15's isolated localization lane and integrated it into the P15 worktree as `a81de2f`: every shipped catalog now has the same 937 unique keys, all nine pass `plutil`, the 14-case validator fixture matrix passes, source localization helpers are covered, placeholder signatures match, obsolete Korean-only keys have no source consumers, and the inherited Korean `%@` defect is repaired.
+- Closed the remaining P16 release-security follow-up in `9f1508e` and `49e0f78`: the Homebrew tap token is no longer injected into the main release job, and all four remotely downloaded draft assets must be byte-identical to the locally signed and verified release unit before publication.
+- An independent exact-head P16 review is clean after distribution, YAML, duplicate-key, embedded-shell, diff, token-scope, ancestry, optimistic-SHA, owned-draft, exact-asset, remote-byte-identity, and no-`gh-pages`-consumer checks. P16 is implementation-complete; only the combined B05 full-app/distribution gate remains.
+- Native P15 UI automation is structurally buildable, but this workstation blocks the runner before the first test body because Developer Mode/TCC automation access is disabled. Per D149, machine-wide security was not changed while Jason is offline; successful hosted macOS CI runtime execution remains a non-waivable merge gate.
+- Completed a read-only P17 preflight: installed Codex 0.145.0, checked-in schema provenance, app-server availability, and official ChatGPT login classification are ready for the opt-in live smoke without reading `auth.json`; the centralized production gate remains off. A valid local Developer ID identity exists, but the repository has no protected release environment, variables, or secrets and Apple notarization/Sparkle/Homebrew publication credentials are unavailable, so D151 permits the audited code merge but prohibits a public release tag. Per D152, the exact inherited `gh-pages` SHA will be backed up and deleted only after B05 merges, when remote `main` no longer consumes it.
+- Completed P14 at integrated `f574aaa` after two rounds of independent security follow-up: strict full/protocol-relative URL-path redaction, punctuation-bound local-path redaction, stable-identity descendant traversal, exact-PID late reaping, and same-refresh PID reuse now fail closed. The integrated focused suite passed 31/31, the author repeated 50 adversarial checks with zero residual fixtures, and the final exact-patch/blob audit is CLEAN.
+- Integrated P17 production enablement and the 17-workstream parity audit as `3957daf`; the centralized gate is on while explicit disabled setup/registry/refresh paths remain covered. Its source-focused selection passed 70/70.
+- Executed the opt-in installed Codex 0.145.0 account/rate-limit smoke through the official app-server against the existing ChatGPT-authenticated home: 1/1 passed without reading `auth.json`, and the post-test app-server/diagnostics fixture census was zero. P17 remains active until P15 menu/localization corrections, exact-head gates, hosted XCUITest, ship audit, and merge complete.
+- Integrated final P15 parity at `194d9e5`: all nine catalogs now contain exactly 994 keys, 15/15 validator fixtures pass, and the isolated native UI suite contains exactly 11 test methods spanning setup, both login modes, mixed profiles, menus/status/popover lifecycle, settings/history, all nine locales, and fail-closed startup.
+- Closed the final production-on test assumptions at `6b38053`, then reopened one saturated-host diagnostics regression when independent review found its conditional PID assertion could mask a fixture that never launched.
+- Superseded D160 with D161 and committed `8b6a3c2`: the continuous writer must reach a bounded PID-file handshake or fail, after which the exact PID must exit. The focused test passed once plus five repetitions and the independent exact-head review is CLEAN.
+- Verified exact source `8b6a3c2` with 610/610 app tests in both serial and parallel modes; 80 UsageKit tests in Debug and Release with one intentional opt-in live-smoke skip; a separate installed Codex 0.145.0 smoke at 1/1; zero residual app-server/fixture processes; Debug and universal Release builds; an `arm64` + `x86_64` executable; and a successful UI `build-for-testing`.
+- Final exact-source static gates pass: 9×994 localization keys, 15/15 fixtures, distribution and all six workflow YAML files, 43/43 embedded workflow shell blocks, five release/localization scripts under `bash -n` and ShellCheck, project/scheme parsing, synthetic-fixture provenance, and forbidden credential/billing/shell/`gh-pages` runtime scans.
+- Per D158, merge-safe synthetic Claude/mixed-provider UAT is green. Real official login, notification permission/sound, VoiceOver, migration, and localized visual UAT remains mandatory before the first public release in a backed-up disposable macOS user or VM; it does not waive the hosted 11/11 merge gate.
+- Opened and shipped prerequisite PR #12 through the canonical Tessie gate, Build/Test, all three review-surface audit, and an exact-head squash merge as `16b2a87`. It moves 16 byte-identical synthetic validator fixtures and removes the inherited funding link from the B05 diff without changing runtime behavior.
+- Hosted Distribution Validation first exposed an unavailable `rg` dependency and then a runner/Xcode mismatch. Corrections `519c8d2` and `050be58` make the validator portable and pin all release-validation workflows to Xcode 26.0.1; the hosted distribution job passes and the local workflow matrix now covers 46 embedded shell blocks.
+- The first hosted app/UI run executed the intended gates and exposed one trailing-slash unit mismatch plus a fail-closed UI fixture-root rejection. Correction `5acc2ec` uses strict canonical path-component ancestry, passes all seven parser tests and UI `build-for-testing`, and received a CLEAN focused independent review.
+- Merged the freshly fetched PR #12 `main` commit into B05 at `5448504`; the resulting PR diff is exactly 99 files, restoring canonical Tessie review eligibility before the final CI/review run.
+- The `5acc2ec` hosted rerun passed Build/Test (UsageKit 80 with one opt-in skip, app 610/610, Debug and Release) and Distribution Validation, then proved that the XCUITest runner and launched application receive different process-local temporary roots. Per D164, `869ada4` introduces one UI-test-only canonical `/tmp/claude-usage-ui-<valid UUID>` contract with existing-directory, direct-child, home-nesting, path-component, and symlink-escape checks. Its focused parser/security suite passed 18/18, the dedicated UI-testing build passed, and the exact three-file review is CLEAN.
+- The `869ada4` hosted run passed Build/Test and Distribution Validation but proved Xcode forcibly sandboxes the UI runner and denies its direct `/tmp` fixture creation. D164 and D165 are therefore superseded by D166. Correction `8cd3f2b` lets the runner use its permitted process temp while the app derives the exact known runner-container anchor from `getpwuid_r(getuid())` plus the hardcoded `.xctrunner` identity; no environment value can broaden it. The expanded focused contract suite passed 21/21, app and dedicated UI builds-for-testing passed, and an exact three-file security/correctness review is CLEAN.

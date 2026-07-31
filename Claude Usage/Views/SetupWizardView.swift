@@ -46,13 +46,16 @@ struct SetupWizardView: View {
     @State private var setupMode: SetupMode = .providerSelection
     private let apiService = ClaudeAPIService()
     private let dependencies: ProviderUIDependencies
+    private let completionOverride: (() -> Void)?
 
     init(
-        dependencies: ProviderUIDependencies? = nil
+        dependencies: ProviderUIDependencies? = nil,
+        completionOverride: (() -> Void)? = nil
     ) {
         self.dependencies =
             dependencies
             ?? ProviderUICompositionRoot.shared.dependencies
+        self.completionOverride = completionOverride
     }
 
     var body: some View {
@@ -94,7 +97,11 @@ struct SetupWizardView: View {
                     setupMode = .providerSelection
                 },
                 onComplete: {
-                    dismiss()
+                    if let completionOverride {
+                        completionOverride()
+                    } else {
+                        dismiss()
+                    }
                 }
             )
         }
@@ -386,9 +393,15 @@ struct SetupProviderChoiceView: View {
 
             HStack(spacing: 16) {
                 providerButton(
-                    title: "Claude",
-                    subtitle:
-                        "Connect Claude.ai, Console API, or Claude Code",
+                    title: ProviderUILocalization.text(
+                        "setup.provider.claude_title",
+                        fallback: "Claude"
+                    ),
+                    subtitle: ProviderUILocalization.text(
+                        "setup.provider.claude_subtitle",
+                        fallback:
+                            "Connect Claude.ai, Console API, or Claude Code"
+                    ),
                     icon: "sparkles",
                     enabled: true,
                     identifier:
@@ -396,9 +409,15 @@ struct SetupProviderChoiceView: View {
                     action: onSelectClaude
                 )
                 providerButton(
-                    title: "Codex",
-                    subtitle:
-                        "Link CODEX_HOME and your ChatGPT subscription",
+                    title: ProviderUILocalization.text(
+                        "setup.provider.codex_title",
+                        fallback: "Codex"
+                    ),
+                    subtitle: ProviderUILocalization.text(
+                        "setup.provider.codex_subtitle",
+                        fallback:
+                            "Link CODEX_HOME and your ChatGPT subscription"
+                    ),
                     icon:
                         "chevron.left.forwardslash.chevron.right",
                     enabled: codexAvailable,
@@ -600,6 +619,9 @@ struct CodexSetupWizardView: View {
                     viewModel.dismiss()
                     onBack()
                 }
+                .accessibilityIdentifier(
+                    ProviderUIAccessibility.setupBack
+                )
                 Spacer()
                 Button(
                     ProviderUILocalization.text(

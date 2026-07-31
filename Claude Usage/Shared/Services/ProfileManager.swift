@@ -627,10 +627,10 @@ class ProfileManager: ObservableObject {
         // migration envelopes or surviving stores to rehydrate deleted data.
         let wasActive = activeProfile?.id == id
         let scrubbedProfile = try profileStore.beginProfileDeletion(id)
-        lifecycleEventSink.deletionStarted(scrubbedProfile)
         if let index = profiles.firstIndex(where: { $0.id == id }) {
             profiles[index] = scrubbedProfile
         }
+        lifecycleEventSink.deletionStarted(scrubbedProfile)
         if wasActive {
             if let survivor = profiles.first(where: {
                 $0.id != id && !$0.deletionInProgress

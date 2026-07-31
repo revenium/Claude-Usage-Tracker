@@ -43,6 +43,46 @@ final class StatusBarUIManager {
 
     init() {}
 
+    /// Applies the exact left/right action wiring shared by every production
+    /// status item. Keeping this in one place also lets the isolated native UI
+    /// suite exercise the same AppKit event contract without creating a
+    /// second menu implementation.
+    static func configureActionButton(
+        _ button: NSButton,
+        target: AnyObject,
+        action: Selector
+    ) {
+        button.action = action
+        button.target = target
+        button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+    }
+
+    static func profileAccessibilityLabel(
+        _ baseLabel: String,
+        isActive: Bool
+    ) -> String {
+        String(
+            format: ProviderUILocalization.text(
+                isActive
+                    ? "menubar.accessibility.profile.active"
+                    : "menubar.accessibility.profile.inactive",
+                fallback: isActive
+                    ? "%@, active profile"
+                    : "%@, inactive profile"
+            ),
+            baseLabel
+        )
+    }
+
+    static func usageModeText(showRemaining: Bool) -> String {
+        ProviderUILocalization.text(
+            showRemaining
+                ? "popover.normalized.value.remaining"
+                : "popover.normalized.value.used",
+            fallback: showRemaining ? "remaining" : "used"
+        )
+    }
+
     static func autosaveName(
         for metricID: MenuBarMetricID,
         isLegacyPlaceholder: Bool = false
@@ -59,10 +99,9 @@ final class StatusBarUIManager {
     static func desiredProviderMetricIDs(
         for presentation: ProviderMenuPresentation
     ) -> [MenuBarMetricID] {
-        let metricIDs = presentation.metrics.map(\.id)
-        return metricIDs.isEmpty
-            ? [.providerPlaceholder(presentation.identity.providerID)]
-            : metricIDs
+        ProviderStatusItemReconciliation.singleEntries(
+            for: presentation
+        ).map(\.statusMetricID)
     }
 
     /// A dynamic status item must remain identifiable without relying on
@@ -109,9 +148,11 @@ final class StatusBarUIManager {
             statusItem.isVisible = true
 
             if let button = statusItem.button {
-                button.action = action
-                button.target = target
-                button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+                Self.configureActionButton(
+                    button,
+                    target: target,
+                    action: action
+                )
                 // Set a temporary placeholder - will be updated with actual logo
                 button.title = ""
             } else {
@@ -132,9 +173,11 @@ final class StatusBarUIManager {
                 statusItem.isVisible = true
 
                 if let button = statusItem.button {
-                    button.action = action
-                    button.target = target
-                    button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+                    Self.configureActionButton(
+                        button,
+                        target: target,
+                        action: action
+                    )
                 } else {
                     LoggingService.shared.logWarning(
                         "Status bar button is nil for "
@@ -205,9 +248,11 @@ final class StatusBarUIManager {
             statusItem.isVisible = true
 
             if let button = statusItem.button {
-                button.action = action
-                button.target = target
-                button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+                Self.configureActionButton(
+                    button,
+                    target: target,
+                    action: action
+                )
                 if metricType == .claudeSession {
                     // Default logo placeholder
                     button.title = ""
@@ -245,8 +290,15 @@ final class StatusBarUIManager {
         }
         isMultiProfileMode = false
         let desiredMetricIDs = presentation.metrics.map(\.id)
-        let reconciledIDs = Self.desiredProviderMetricIDs(
-            for: presentation
+        let reconciledEntries =
+            ProviderStatusItemReconciliation.singleEntries(
+                for: presentation
+            )
+        let reconciledIDs = reconciledEntries.map(\.statusMetricID)
+        let identities = Dictionary(
+            uniqueKeysWithValues: reconciledEntries.map {
+                ($0.statusMetricID, $0.identity)
+            }
         )
         let desiredIDs = Set(reconciledIDs)
         let currentIDs = Set(statusItems.keys)
@@ -277,9 +329,11 @@ final class StatusBarUIManager {
                 : Self.autosaveName(for: metricID)
             item.isVisible = true
             if let button = item.button {
-                button.action = action
-                button.target = target
-                button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+                Self.configureActionButton(
+                    button,
+                    target: target,
+                    action: action
+                )
             }
             statusItems[metricID] = item
         }
@@ -297,13 +351,8 @@ final class StatusBarUIManager {
                     + "\(presentation.identity.profileID.uuidString).default"
                 : Self.autosaveName(for: metricID)
             let metric = presentation.metrics.first { $0.id == metricID }
-            let identity = ProviderStatusItemIdentity(
-                profileID: presentation.identity.profileID,
-                providerID: presentation.identity.providerID,
-                providerRevision: presentation.identity.providerRevision,
-                metricID: metric?.id
-            )
-            statusItemIdentities[ObjectIdentifier(button)] = identity
+            statusItemIdentities[ObjectIdentifier(button)] =
+                identities[metricID]
             let menuBarIsDark = button.effectiveAppearance.bestMatch(
                 from: [.darkAqua, .aqua]
             ) == .darkAqua
@@ -333,7 +382,11 @@ final class StatusBarUIManager {
             let accessibility = metric?.accessibilityLabel
                 ?? "\(presentation.appearance.displayName), "
                     + presentation.state.accessibilityText
-            let activeAccessibility = accessibility + ", active profile"
+            let activeAccessibility =
+                Self.profileAccessibilityLabel(
+                    accessibility,
+                    isActive: true
+                )
             button.setAccessibilityLabel(activeAccessibility)
             button.toolTip = activeAccessibility
             button.tag = index
@@ -431,7 +484,9 @@ final class StatusBarUIManager {
         isMultiProfileMode = true
 
         // Filter to only profiles selected for display
-        let selectedProfiles = profiles.filter { $0.isSelectedForDisplay }
+        let selectedProfiles = profiles.filter {
+            $0.isSelectedForDisplay && !$0.deletionInProgress
+        }
 
         if selectedProfiles.isEmpty {
             // No profiles selected - show default logo
@@ -440,9 +495,11 @@ final class StatusBarUIManager {
             statusItem.autosaveName = "claude-usage-tracker.multi.default"
             statusItem.isVisible = true
             if let button = statusItem.button {
-                button.action = action
-                button.target = target
-                button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+                Self.configureActionButton(
+                    button,
+                    target: target,
+                    action: action
+                )
                 button.title = ""
             } else {
                 LoggingService.shared.logWarning("Multi-profile status bar button is nil - screens: \(NSScreen.screens.count)")
@@ -459,9 +516,11 @@ final class StatusBarUIManager {
                 statusItem.isVisible = true
 
                 if let button = statusItem.button {
-                    button.action = action
-                    button.target = target
-                    button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+                    Self.configureActionButton(
+                        button,
+                        target: target,
+                        action: action
+                    )
                 } else {
                     LoggingService.shared.logWarning("Multi-profile status bar button is nil for \(profile.name) - screens: \(NSScreen.screens.count)")
                 }
@@ -492,7 +551,9 @@ final class StatusBarUIManager {
             return
         }
 
-        let selectedProfiles = profiles.filter { $0.isSelectedForDisplay }
+        let selectedProfiles = profiles.filter {
+            $0.isSelectedForDisplay && !$0.deletionInProgress
+        }
         let desiredIDs: Set<UUID> = selectedProfiles.isEmpty
             ? [Self.multiProfileDefaultPlaceholderID]
             : Set(selectedProfiles.map(\.id))
@@ -521,9 +582,11 @@ final class StatusBarUIManager {
             statusItem.autosaveName = "claude-usage-tracker.multi.default"
             statusItem.isVisible = true
             if let button = statusItem.button {
-                button.action = action
-                button.target = target
-                button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+                Self.configureActionButton(
+                    button,
+                    target: target,
+                    action: action
+                )
                 button.title = ""
             }
             multiProfileStatusItems[Self.multiProfileDefaultPlaceholderID] = statusItem
@@ -535,9 +598,11 @@ final class StatusBarUIManager {
                 statusItem.autosaveName = "claude-usage-tracker.profile.\(profile.id.uuidString)"
                 statusItem.isVisible = true
                 if let button = statusItem.button {
-                    button.action = action
-                    button.target = target
-                    button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+                    Self.configureActionButton(
+                        button,
+                        target: target,
+                        action: action
+                    )
                 }
                 multiProfileStatusItems[profile.id] = statusItem
                 if let button = statusItem.button {
@@ -748,11 +813,13 @@ final class StatusBarUIManager {
             let appearance = ProviderAppearance.forProvider(
                 profile.providerID
             )
-            let activeText = isActive ? "active profile" : "not active"
-            let label = "\(appearance.displayName), \(profile.name), "
+            let baseLabel = "\(appearance.displayName), \(profile.name), "
                 + "\(Int(sessionDisplay.rounded()))% "
-                + "\(showRemaining ? "remaining" : "used"), "
-                + activeText
+                + Self.usageModeText(showRemaining: showRemaining)
+            let label = Self.profileAccessibilityLabel(
+                baseLabel,
+                isActive: isActive
+            )
             button.setAccessibilityLabel(label)
             button.toolTip = label
         }
@@ -865,16 +932,18 @@ final class StatusBarUIManager {
                 setButtonImage(button, image: image)
             }
             statusItemIdentities[ObjectIdentifier(button)] =
-                presentation.identity
-            let activeText =
-                presentation.identity.profileID == activeProfileID
-                    ? "active profile"
-                    : "not active"
-            let label = "\(presentation.profileName), "
+                ProviderStatusItemReconciliation.multiIdentity(
+                    for: presentation
+                )
+            let baseLabel = "\(presentation.profileName), "
                 + (presentation.metric?.accessibilityLabel
                     ?? "\(presentation.appearance.displayName), "
                         + presentation.state.accessibilityText)
-                + ", \(activeText)"
+            let label = Self.profileAccessibilityLabel(
+                baseLabel,
+                isActive:
+                    presentation.identity.profileID == activeProfileID
+            )
             button.setAccessibilityLabel(label)
             button.toolTip = label
         }

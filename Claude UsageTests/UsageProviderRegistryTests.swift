@@ -31,8 +31,8 @@ final class UsageProviderRegistryTests: HostedAppTestCase {
 
     private let now = Date(timeIntervalSinceReferenceDate: 50_000)
 
-    func testProductionAvailabilityKeepsCodexDisabled() {
-        XCTAssertFalse(
+    func testProductionAvailabilityEnablesCodex() {
+        XCTAssertTrue(
             UsageProviderFeatureAvailability.production.codexRefreshEnabled
         )
     }
@@ -41,7 +41,7 @@ final class UsageProviderRegistryTests: HostedAppTestCase {
         let resolverCalls = Locked(0)
         let factoryCalls = Locked(0)
         let registry = makeRegistry(
-            availability: .production,
+            availability: .testing(codexRefreshEnabled: false),
             resolverCalls: resolverCalls,
             factoryCalls: factoryCalls
         )

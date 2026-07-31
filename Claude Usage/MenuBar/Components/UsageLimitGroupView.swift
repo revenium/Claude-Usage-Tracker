@@ -80,12 +80,36 @@ struct NormalizedUsageWindowIndicators {
 
     static func paceDescription(for status: PaceStatus) -> String {
         switch status {
-        case .comfortable: return "Comfortable pace"
-        case .onTrack: return "On-track pace"
-        case .warming: return "Warming pace"
-        case .pressing: return "Pressing pace"
-        case .critical: return "Critical pace"
-        case .runaway: return "Runaway pace"
+        case .comfortable:
+            return NormalizedUsageStrings.localized(
+                "popover.normalized.pace.comfortable",
+                default: "Comfortable pace"
+            )
+        case .onTrack:
+            return NormalizedUsageStrings.localized(
+                "popover.normalized.pace.on_track",
+                default: "On-track pace"
+            )
+        case .warming:
+            return NormalizedUsageStrings.localized(
+                "popover.normalized.pace.warming",
+                default: "Warming pace"
+            )
+        case .pressing:
+            return NormalizedUsageStrings.localized(
+                "popover.normalized.pace.pressing",
+                default: "Pressing pace"
+            )
+        case .critical:
+            return NormalizedUsageStrings.localized(
+                "popover.normalized.pace.critical",
+                default: "Critical pace"
+            )
+        case .runaway:
+            return NormalizedUsageStrings.localized(
+                "popover.normalized.pace.runaway",
+                default: "Runaway pace"
+            )
         }
     }
 }

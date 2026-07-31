@@ -181,5 +181,24 @@ do
 done
 printf 'ok: absent literal keys rejected for every helper family\n'
 
+new_case
+SOURCE_DIR="$TEST_ROOT/source-missing-deferred-state"
+mkdir -p "$SOURCE_DIR"
+cp "$FIXTURES/NormalizedUsageDeferredStateMissing.swift" \
+    "$SOURCE_DIR/NormalizedUsageView.swift"
+deferred_state_output="$TEST_ROOT/deferred-state-failure-output"
+if run_source_validator >"$deferred_state_output" 2>&1; then
+    printf 'error: expected deferred state validation failure\n' >&2
+    exit 1
+fi
+if ! grep -F \
+    'source localization key "popover.normalized.state.missing_deferred" is absent' \
+    "$deferred_state_output" >/dev/null; then
+    printf 'error: source scanner missed deferred empty-state key\n' >&2
+    sed -n '1,200p' "$deferred_state_output" >&2
+    exit 1
+fi
+printf 'ok: absent deferred empty-state key rejected\n'
+
 printf 'Localization validator fixture tests passed: %d cases.\n' \
     "$test_number"

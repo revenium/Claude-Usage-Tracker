@@ -298,6 +298,10 @@ unless skip_source_scan
       # Normalized notices intentionally carry their key until rendering.
       if path.basename.to_s == "NormalizedUsageView.swift"
         patterns << /\bkey:\s*"(popover\.normalized\.[A-Za-z0-9_.-]+)"/
+        # Empty-state messages are deferred as tuple literals rather than
+        # passed directly to a localization helper. Keep this explicit so a
+        # newly added state cannot silently fall back to its English default.
+        patterns << /"(popover\.normalized\.state\.[A-Za-z0-9_.-]+)"/
       end
 
       patterns.each do |pattern|

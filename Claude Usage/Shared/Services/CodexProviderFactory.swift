@@ -24,8 +24,8 @@ typealias CodexProviderFetchFactory =
 typealias CodexProviderBuilder =
     @Sendable (CodexAppServerClient) -> CodexUsageProvider
 
-/// Product-level availability. Codex remains unavailable in production until
-/// the final parity and release-readiness gates pass.
+/// Product-level availability shared by setup, refresh, diagnostics, and UI
+/// composition roots.
 nonisolated struct UsageProviderFeatureAvailability: Equatable, Sendable {
     let codexRefreshEnabled: Bool
 
@@ -35,7 +35,7 @@ nonisolated struct UsageProviderFeatureAvailability: Equatable, Sendable {
     }
 
     static let production = UsageProviderFeatureAvailability(
-        codexRefreshEnabled: false
+        codexRefreshEnabled: true
     )
 
     static func testing(codexRefreshEnabled: Bool = true) -> Self {

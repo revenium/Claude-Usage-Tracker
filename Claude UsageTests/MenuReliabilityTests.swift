@@ -116,6 +116,153 @@ final class MenuReliabilityTests: HostedAppTestCase {
         XCTAssertEqual(quit.keyEquivalentModifierMask, .command)
     }
 
+    func testStatusButtonWiringAndContextEventUseProductionContract()
+        throws
+    {
+        let target = MenuTarget()
+        let statusItem = NSStatusBar.system.statusItem(
+            withLength: NSStatusItem.variableLength
+        )
+        defer { NSStatusBar.system.removeStatusItem(statusItem) }
+        let button = try XCTUnwrap(statusItem.button)
+        StatusBarUIManager.configureActionButton(
+            button,
+            target: target,
+            action: #selector(MenuTarget.refresh)
+        )
+
+        XCTAssertTrue(button.target === target)
+        XCTAssertEqual(button.action, #selector(MenuTarget.refresh))
+        let configuredEvents = NSEvent.EventTypeMask(
+            rawValue: UInt64(button.sendAction(on: []))
+        )
+        XCTAssertTrue(configuredEvents.contains(.leftMouseUp))
+        XCTAssertTrue(configuredEvents.contains(.rightMouseUp))
+        XCTAssertTrue(
+            MenuBarManager.isContextMenuEvent(.rightMouseUp)
+        )
+        XCTAssertFalse(
+            MenuBarManager.isContextMenuEvent(.leftMouseUp)
+        )
+        XCTAssertFalse(MenuBarManager.isContextMenuEvent(nil))
+    }
+
+    func testDetachedPopoverLifecycleOwnsWindowContractAndCleanup()
+    {
+        let controller = NSViewController()
+        let window = ProviderPopoverDetachmentLifecycle.makeWindow(
+            contentViewController: controller,
+            delegate: nil
+        )
+        defer { window.close() }
+
+        XCTAssertTrue(
+            ProviderPopoverDetachmentLifecycle.shouldDetach()
+        )
+        XCTAssertTrue(window.contentViewController === controller)
+        XCTAssertTrue(
+            window.collectionBehavior.contains(.fullScreenAuxiliary)
+        )
+        XCTAssertFalse(window.isRestorable)
+        XCTAssertFalse(window.isReleasedWhenClosed)
+        XCTAssertTrue(
+            ProviderPopoverDetachmentLifecycle
+                .closedRetainedWindow(
+                    window,
+                    retainedWindow: window
+                )
+        )
+        XCTAssertFalse(
+            ProviderPopoverDetachmentLifecycle
+                .closedRetainedWindow(
+                    NSWindow(),
+                    retainedWindow: window
+                )
+        )
+    }
+
+    func testDetachedPopoverClosesOnActivationRevisionOrDeletion()
+    {
+        let profile = Profile(
+            name: "Codex A",
+            providerConfiguration: .codex(.init())
+        )
+        let target = ProviderStatusItemIdentity(
+            profileID: profile.id,
+            providerID: profile.providerID,
+            providerRevision: profile.providerRevision,
+            metricID: .providerPlaceholder(.codex)
+        )
+        XCTAssertFalse(
+            ProviderPopoverDetachmentLifecycle
+                .shouldCloseDetachedWindow(
+                    target: target,
+                    profiles: [profile],
+                    activatedProfileID: profile.id
+                )
+        )
+        XCTAssertTrue(
+            ProviderPopoverDetachmentLifecycle
+                .shouldCloseDetachedWindow(
+                    target: target,
+                    profiles: [profile],
+                    activatedProfileID: UUID()
+                )
+        )
+        var relinked = profile
+        relinked.providerRevision += 1
+        XCTAssertTrue(
+            ProviderPopoverDetachmentLifecycle
+                .shouldCloseDetachedWindow(
+                    target: target,
+                    profiles: [relinked],
+                    changedProfileID: profile.id
+                )
+        )
+        var deleting = profile
+        deleting.deletionInProgress = true
+        XCTAssertTrue(
+            ProviderPopoverDetachmentLifecycle
+                .shouldCloseDetachedWindow(
+                    target: target,
+                    profiles: [deleting],
+                    changedProfileID: profile.id
+                )
+        )
+        XCTAssertFalse(
+            ProviderPopoverDetachmentLifecycle
+                .shouldCloseDetachedWindow(
+                    target: target,
+                    profiles: [profile],
+                    changedProfileID: UUID()
+                )
+        )
+        XCTAssertTrue(
+            ProviderPopoverDetachmentLifecycle
+                .shouldCloseDetachedWindow(
+                    target: target,
+                    profiles: [profile],
+                    displayModeChanged: true
+                )
+        )
+        XCTAssertTrue(
+            ProviderPopoverDetachmentLifecycle
+                .shouldCloseDetachedWindow(
+                    target: target,
+                    profiles: [profile],
+                    selectedProfileIDs: []
+                )
+        )
+        XCTAssertFalse(
+            ProviderPopoverDetachmentLifecycle
+                .shouldCloseDetachedWindow(
+                    target: target,
+                    profiles: [profile],
+                    selectedProfileIDs: [profile.id]
+                )
+        )
+    }
+
     func testPopoverCloseDebounceOnlySuppressesTheSameButtonBriefly() {
         let firstButton = NSObject()
         let secondButton = NSObject()
@@ -1429,8 +1576,44 @@ final class MenuReliabilityTests: HostedAppTestCase {
         queue.async {
             recorder.append("mutation")
         }
-        ManageProfilesView.enqueueMenuBarNotification(
+        MenuBarNotificationDelivery.enqueue(
             notificationName,
+            queue: queue,
+            center: center
+        )
+
+        wait(for: [notificationPosted], timeout: 1)
+        XCTAssertEqual(
+            recorder.snapshot(),
+            ["mutation", "notification"]
+        )
+    }
+
+    func testAppearanceWarningCardEnqueuesNotificationAfterModeMutation() {
+        let center = NotificationCenter()
+        let queue = DispatchQueue(
+            label: "MenuReliabilityTests.appearance-warning-order"
+        )
+        let recorder = ThreadSafeRecorder()
+        let notificationPosted = expectation(
+            description: "display mode notification posted"
+        )
+        let observer = center.addObserver(
+            forName: .displayModeChanged,
+            object: nil,
+            queue: nil
+        ) { _ in
+            recorder.append("notification")
+            notificationPosted.fulfill()
+        }
+        defer { center.removeObserver(observer) }
+
+        AppearanceSettingsView.disableMultiProfile(
+            updateDisplayMode: {
+                queue.async {
+                    recorder.append("mutation")
+                }
+            },
             queue: queue,
             center: center
         )

@@ -27,7 +27,7 @@ final class CodexProviderFactoryTests: HostedAppTestCase {
         }
     }
 
-    func testProductionAvailabilityDisablesWholeCodexFactory() {
+    func testProductionAvailabilityEnablesWholeCodexFactory() {
         let dependencyCalls = Locked(0)
         let factory = CodexProviderFactory(
             availability: .production,
@@ -41,14 +41,14 @@ final class CodexProviderFactoryTests: HostedAppTestCase {
             }
         )
 
-        XCTAssertFalse(
+        XCTAssertTrue(
             UsageProviderFeatureAvailability.production.codexSupportEnabled
         )
-        XCTAssertFalse(factory.isEnabled)
+        XCTAssertTrue(factory.isEnabled)
         XCTAssertThrowsError(try factory.capture(linkedHome: nil)) {
             XCTAssertEqual(
                 $0 as? CodexProviderFactoryError,
-                .featureDisabled
+                .homeUnlinked
             )
         }
         XCTAssertEqual(dependencyCalls.snapshot, 0)
@@ -96,7 +96,7 @@ final class CodexProviderFactoryTests: HostedAppTestCase {
         )
         let fetchCalls = Locked(0)
         let disabledFactory = CodexProviderFactory(
-            availability: .production,
+            availability: .testing(codexRefreshEnabled: false),
             fetchFactory: { _ in
                 fetchCalls.withValue { $0 += 1 }
                 return {

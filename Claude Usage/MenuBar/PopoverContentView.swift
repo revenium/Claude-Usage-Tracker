@@ -553,6 +553,7 @@ struct ProfileSwitcherCompact: View {
                 }) {
                     ProviderProfileMenuRow(row: row)
                 }
+                .accessibilityIdentifier(row.accessibilityIdentifier)
             }
 
             Divider()
@@ -565,6 +566,7 @@ struct ProfileSwitcherCompact: View {
                         .font(.system(size: 12, weight: .medium))
                 }
             }
+            .accessibilityIdentifier("popover.action.manage_profiles")
         } label: {
             Text(profileManager.activeProfile?.name ?? "popover.no_profile".localized)
                 .font(.system(size: 13, weight: .bold))
@@ -573,6 +575,7 @@ struct ProfileSwitcherCompact: View {
         }
         .menuStyle(.borderlessButton)
         .buttonStyle(.plain)
+        .accessibilityIdentifier("popover.profile.switcher")
     }
 }
 

@@ -5044,7 +5044,10 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
         let runtime = makeRuntime(
             ledger: ledger,
             committer: committer,
-            batches: batches
+            batches: batches,
+            featureAvailability: .testing(
+                codexRefreshEnabled: false
+            )
         )
         runtime.activate(
             profiles: [profile],
@@ -5098,7 +5101,10 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
         let runtime = makeRuntime(
             ledger: ledger,
             committer: committer,
-            batches: batches
+            batches: batches,
+            featureAvailability: .testing(
+                codexRefreshEnabled: false
+            )
         )
         runtime.activate(
             profiles: [profile],
@@ -5420,7 +5426,9 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
         )
         let resolverCalls = Locked(0)
         let registry = UsageProviderRegistry(
-            featureAvailability: .production,
+            featureAvailability: .testing(
+                codexRefreshEnabled: false
+            ),
             claudeRequestCapture: { _ in
                 throw TestFailure.core
             },
@@ -5547,9 +5555,14 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
     func testDeletionTombstoneSurvivesReactivationAndModeSwitch()
         throws
     {
+        let linkedHome = try CodexHomeCanonicalizer().canonicalize(
+            FileManager.default.temporaryDirectory.path
+        )
         let profile = Profile(
             name: "Codex",
-            providerConfiguration: .codex(.init())
+            providerConfiguration: .codex(
+                .init(linkedHome: linkedHome)
+            )
         )
         let identity = ProviderRefreshIdentity(
             profileID: profile.id,
@@ -6083,12 +6096,14 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
         committer: FakeCommitter,
         batches: BatchRecorder,
         registry customRegistry: UsageProviderRegistry? = nil,
+        featureAvailability: UsageProviderFeatureAvailability =
+            .production,
         statusFetch: @escaping UsageRefreshEngine.StatusFetch = {
             .operational
         }
     ) -> UsageRefreshRuntime {
         let registry = customRegistry ?? UsageProviderRegistry(
-            featureAvailability: .production,
+            featureAvailability: featureAvailability,
             claudeRequestCapture: { _ in
                 throw TestFailure.core
             },

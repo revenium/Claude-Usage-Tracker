@@ -737,6 +737,248 @@ final class ProviderMenuPresentationTests: HostedAppTestCase {
                 $0.action == #selector(MenuTarget.appearance)
             }
         )
+        XCTAssertTrue(
+            menu.items.contains {
+                $0.action == #selector(MenuTarget.profiles)
+                    && $0.title
+                        == "menu.provider.manage_profiles".localized
+            }
+        )
+        XCTAssertTrue(
+            menu.items.contains {
+                $0.action == #selector(MenuTarget.quit)
+                    && $0.title == "common.quit".localized
+            }
+        )
+
+        let activeValue =
+            ProviderMenuPresentationBuilder.presentation(
+                profile: profile,
+                snapshot: nil,
+                now: .distantPast,
+                isActive: true
+            )
+        let activeMenu = MenuBarManager.makeProviderContextMenu(
+            presentation: activeValue,
+            target: target,
+            activateAction: #selector(MenuTarget.activate),
+            refreshAction: #selector(MenuTarget.refresh),
+            accountSettingsAction: #selector(MenuTarget.account),
+            appearanceAction: #selector(MenuTarget.appearance),
+            manageProfilesAction: #selector(MenuTarget.profiles),
+            quitAction: #selector(MenuTarget.quit)
+        )
+        XCTAssertFalse(
+            activeMenu.items.contains {
+                $0.action == #selector(MenuTarget.activate)
+            }
+        )
+    }
+
+    func testStatusReconciliationCapturesExactDuplicateProviderMetrics()
+        throws
+    {
+        let first = Profile(
+            id: UUID(
+                uuidString:
+                    "00000000-0000-0000-0000-000000000101"
+            )!,
+            name: "First",
+            providerConfiguration: .codex(.init())
+        )
+        let second = Profile(
+            id: UUID(
+                uuidString:
+                    "00000000-0000-0000-0000-000000000102"
+            )!,
+            name: "Second",
+            providerConfiguration: .codex(.init())
+        )
+        let now = Date(timeIntervalSinceReferenceDate: 70_000)
+        let report = try makeReport(
+            fetchedAt: now,
+            staleAt: now.addingTimeInterval(60)
+        )
+        let firstPresentation = presentation(
+            first,
+            snapshot: makeSnapshot(profile: first, report: report),
+            now: now
+        )
+        let secondPresentation = presentation(
+            second,
+            snapshot: makeSnapshot(profile: second, report: report),
+            now: now
+        )
+
+        let single = try XCTUnwrap(
+            ProviderStatusItemReconciliation.singleEntries(
+                for: firstPresentation
+            ).first
+        )
+        let firstMulti =
+            ProviderStatusItemReconciliation.multiIdentity(
+                for: firstPresentation
+            )
+        let secondMulti =
+            ProviderStatusItemReconciliation.multiIdentity(
+                for: secondPresentation
+            )
+
+        XCTAssertEqual(single.identity.profileID, first.id)
+        XCTAssertEqual(single.identity.providerID, .codex)
+        XCTAssertEqual(single.identity.providerRevision, 0)
+        XCTAssertEqual(
+            single.identity.metricID,
+            single.statusMetricID
+        )
+        XCTAssertNotNil(firstMulti.metricID)
+        XCTAssertEqual(firstMulti.profileID, first.id)
+        XCTAssertEqual(secondMulti.profileID, second.id)
+        XCTAssertNotEqual(firstMulti.profileID, secondMulti.profileID)
+        XCTAssertEqual(firstMulti.providerID, secondMulti.providerID)
+        XCTAssertEqual(firstMulti.metricID, secondMulti.metricID)
+
+        XCTAssertEqual(
+            ProviderStatusItemReconciliation.resolvedIdentity(
+                captured: nil,
+                fallbackProfile: first
+            )?.profileID,
+            first.id
+        )
+        XCTAssertNil(
+            ProviderStatusItemReconciliation.resolvedIdentity(
+                captured: nil,
+                fallbackProfile: nil
+            )
+        )
+    }
+
+    func testCapturedTargetRouterRoutesAndRejectsRevisionDeletionRaces()
+    {
+        let original = codexProfile()
+        var profiles = [original]
+        var routed: [String] = []
+        var settings: [SettingsNavigationDestination] = []
+        let router = ProviderCapturedTargetActionRouter(
+            profiles: { profiles },
+            sinks: .init(
+                openPopover: { _, _ in routed.append("open") },
+                detachPopover: { _, _ in routed.append("detach") },
+                refresh: { _, _ in routed.append("refresh") },
+                activate: { _, _ in routed.append("activate") },
+                settings: { destination, _, _ in
+                    settings.append(destination)
+                },
+                quit: { _, _ in routed.append("quit") }
+            )
+        )
+        let target = ProviderStatusItemIdentity(
+            profileID: original.id,
+            providerID: original.providerID,
+            providerRevision: original.providerRevision,
+            metricID: .providerPlaceholder(.codex)
+        )
+
+        XCTAssertTrue(router.route(.openPopover, target: target))
+        XCTAssertTrue(router.route(.refresh, target: target))
+        XCTAssertTrue(router.route(.activate, target: target))
+        XCTAssertTrue(router.route(.detachPopover, target: target))
+        XCTAssertTrue(router.route(.providerAccount, target: target))
+        XCTAssertTrue(router.route(.appearance, target: target))
+        XCTAssertTrue(router.route(.manageProfiles, target: target))
+        XCTAssertTrue(router.route(.popoverSettings, target: target))
+        XCTAssertTrue(router.route(.quit, target: target))
+        XCTAssertEqual(
+            routed,
+            ["open", "refresh", "activate", "detach", "quit"]
+        )
+        XCTAssertEqual(settings, [
+            .providerAccount(profileID: original.id),
+            .appearance(profileID: original.id),
+            .manageProfiles,
+            .providerAccount(profileID: original.id),
+        ])
+
+        var relinked = original
+        relinked.providerRevision += 1
+        profiles = [relinked]
+        XCTAssertFalse(router.route(.refresh, target: target))
+        XCTAssertFalse(router.route(.manageProfiles, target: target))
+        XCTAssertFalse(router.route(.detachPopover, target: target))
+        XCTAssertEqual(routed.count, 5)
+        XCTAssertEqual(settings.count, 4)
+
+        profiles = []
+        XCTAssertFalse(router.route(.quit, target: target))
+        XCTAssertEqual(routed.count, 5)
+    }
+
+    func testManualRefreshDispatcherUsesExactProfileAndManualTrigger()
+    {
+        let profile = codexProfile()
+        var receivedProfiles: [Profile] = []
+        var receivedTrigger: UsageRefreshTrigger?
+        ProviderManualRefreshDispatcher { profiles, trigger in
+            receivedProfiles = profiles
+            receivedTrigger = trigger
+        }.dispatch(profile: profile)
+
+        XCTAssertEqual(receivedProfiles.map(\.id), [profile.id])
+        XCTAssertEqual(receivedTrigger, .manual)
+    }
+
+    func testCapturedActionEligibilityRejectsOldSingleAndUnselectedMulti()
+    {
+        let first = codexProfile(name: "A")
+        var second = codexProfile(name: "B")
+        second.isSelectedForDisplay = false
+        let firstTarget = ProviderStatusItemIdentity(
+            profileID: first.id,
+            providerID: first.providerID,
+            providerRevision: first.providerRevision,
+            metricID: .providerPlaceholder(.codex)
+        )
+
+        let singleEligible = MenuBarManager.capturedActionProfiles(
+            displayMode: .single,
+            activeProfile: second,
+            profiles: [first, second]
+        )
+        XCTAssertEqual(singleEligible.map(\.id), [second.id])
+        let singleRouter = ProviderCapturedTargetActionRouter(
+            profiles: { singleEligible },
+            sinks: .init(
+                openPopover: { _, _ in },
+                detachPopover: { _, _ in },
+                refresh: { _, _ in },
+                activate: { _, _ in },
+                settings: { _, _, _ in },
+                quit: { _, _ in }
+            )
+        )
+        XCTAssertFalse(
+            singleRouter.route(.refresh, target: firstTarget)
+        )
+
+        let multiEligible = MenuBarManager.capturedActionProfiles(
+            displayMode: .multi,
+            activeProfile: first,
+            profiles: [first, second]
+        )
+        XCTAssertEqual(multiEligible.map(\.id), [first.id])
+
+        var unselectedFirst = first
+        unselectedFirst.isSelectedForDisplay = false
+        let multiFallback = MenuBarManager.capturedActionProfiles(
+            displayMode: .multi,
+            activeProfile: unselectedFirst,
+            profiles: [unselectedFirst, second]
+        )
+        XCTAssertEqual(
+            multiFallback.map(\.id),
+            [unselectedFirst.id],
+            "The default multi-profile placeholder must retain its active-profile route."
+        )
     }
 
     func testClaudeKeepsLegacyContextMenuRouting() {
@@ -1209,6 +1451,34 @@ final class ProviderMenuPresentationTests: HostedAppTestCase {
         XCTAssertEqual(withPace?.elapsedFraction, 0.9)
     }
 
+    func testMultiProfileReconciliationRemovesDeletingGhostStatusItem()
+        throws
+    {
+        let manager = retain(StatusBarUIManager())
+        defer { manager.cleanup() }
+        let target = MenuTarget()
+        let first = codexProfile(name: "First")
+        let second = codexProfile(name: "Second")
+        manager.setupMultiProfile(
+            profiles: [first, second],
+            target: target,
+            action: #selector(MenuTarget.toggle)
+        )
+        XCTAssertNotNil(manager.button(for: first.id))
+        XCTAssertNotNil(manager.button(for: second.id))
+
+        var deleting = first
+        deleting.deletionInProgress = true
+        manager.updateMultiProfileConfiguration(
+            profiles: [deleting, second],
+            target: target,
+            action: #selector(MenuTarget.toggle)
+        )
+
+        XCTAssertNil(manager.button(for: first.id))
+        XCTAssertNotNil(manager.button(for: second.id))
+    }
+
     func testGenericRendererSupportsEveryStyleAndStateFingerprints()
         throws
     {
@@ -1446,11 +1716,24 @@ final class ProviderMenuPresentationTests: HostedAppTestCase {
         let accessibilityBefore = button?.accessibilityLabel()
         let tooltipBefore = button?.toolTip
 
-        manager.bindLegacySingleProfile(Profile(name: "Claude"))
+        let first = Profile(name: "Claude A")
+        var second = Profile(name: "Claude B")
+        second.providerRevision = 2
+        manager.bindLegacySingleProfile(first)
+        XCTAssertEqual(
+            manager.statusIdentity(for: button)?.profileID,
+            first.id
+        )
+        manager.bindLegacySingleProfile(second)
 
         XCTAssertEqual(manager.autosaveName(for: button), autosaveBefore)
         XCTAssertEqual(button?.accessibilityLabel(), accessibilityBefore)
         XCTAssertEqual(button?.toolTip, tooltipBefore)
+        let rebound = manager.statusIdentity(for: button)
+        XCTAssertEqual(rebound?.profileID, second.id)
+        XCTAssertEqual(rebound?.providerID, .claude)
+        XCTAssertEqual(rebound?.providerRevision, 2)
+        XCTAssertEqual(rebound?.metricID, .claudeSession)
     }
 
     private func codexProfile(

@@ -382,7 +382,11 @@ final class ProviderUIDependencies {
     func captureRequest(
         for profile: Profile
     ) throws -> CapturedProviderUIRequest {
-        try requestCapture(profile)
+        if profile.providerID == .codex,
+           !availability.codexSupportEnabled {
+            throw ProviderUIOperationError.featureDisabled
+        }
+        return try requestCapture(profile)
     }
 
     /// Validates a setup draft without creating a profile UUID or writing app

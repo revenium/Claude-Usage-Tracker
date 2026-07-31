@@ -3,7 +3,7 @@
 <div align="center">
   <img src=".github/cover.jpg" alt="Claude Usage Tracker" width="100%">
 
-  **A native macOS menu bar application for real-time monitoring of Claude AI usage limits**
+  **A native macOS menu bar application for monitoring Claude and Codex subscription usage**
 
   ![macOS](https://img.shields.io/badge/macOS-14.0+-black?style=flat-square&logo=apple)
   ![Swift](https://img.shields.io/badge/Swift-5.0+-orange?style=flat-square&logo=swift)
@@ -24,11 +24,15 @@
 
 ## Overview
 
-Claude Usage Tracker is a lightweight, native macOS menu bar application that provides real-time monitoring of your Claude AI usage limits. Built entirely with Swift and SwiftUI, it offers a clean, intuitive interface to track your 5-hour session window, weekly usage limits, and Opus-specific consumption.
+Claude Usage Tracker is a lightweight, native macOS menu bar application for
+monitoring Claude and Codex subscription usage. Provider-specific data is
+normalized into one profile, menu bar, popover, settings, and history
+experience.
 
 ### Key Capabilities
 
-- **Multi-Profile Support**: Manage unlimited Claude accounts with isolated credentials and settings
+- **Claude and Codex Subscriptions**: Track supported usage windows, credits, account health, and history
+- **Multi-Profile Support**: Manage Claude and Codex profiles with isolated settings
 - **Multi-Profile Display**: Monitor all profiles simultaneously in the menu bar
 - **Claude Code Integration**: Sync CLI accounts and auto-switch credentials when changing profiles
 - **Real-Time Monitoring**: Track session, weekly, API console usage, and API costs per profile
@@ -91,7 +95,12 @@ Claude Usage Tracker is a lightweight, native macOS menu bar application that pr
 Before installing Claude Usage Tracker, ensure you have:
 
 - **macOS 14.0 (Sonoma) or later** - Check: Apple menu → About This Mac
-- **Active Claude AI account** - Sign up at [claude.ai](https://claude.ai)
+- An active Claude account, a ChatGPT subscription used by Codex, or both
+- For Codex: the official `codex` CLI installed and able to run `codex
+  app-server` from the app's environment
+
+See **[Codex subscription support](docs/codex-subscriptions.md)** for account
+eligibility, setup, privacy boundaries, troubleshooting, and exclusions.
 
 **Authentication** (choose one method):
 - **Easiest**: [Claude Code](https://claude.com/claude-code) installed and logged in - App automatically uses CLI credentials (v2.2.2+)
@@ -156,6 +165,19 @@ open "Claude Usage.xcodeproj"
 ```
 
 ### Quick Start Guide
+
+#### Codex Subscription Setup
+
+1. Install Codex, then sign in with the ChatGPT subscription you want to
+   monitor.
+2. Launch Claude Usage Tracker and choose **Codex** in first-run setup, or add
+   a Codex profile in **Settings → Manage Profiles**.
+3. Choose the existing `CODEX_HOME` directory used by that Codex installation,
+   verify it, and select **Start Tracking**.
+4. Use **Provider Account** to refresh health, sign in, relink, or unlink.
+
+The app delegates authentication and usage reads to the official Codex
+app-server process. It does not read or copy Codex authentication files.
 
 #### Option A: Automatic Setup with Claude Code (Easiest)
 
@@ -835,6 +857,28 @@ Contributions are welcome! Please feel free to submit a Pull Request. For major 
 3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
 4. Push to the branch (`git push origin feature/AmazingFeature`)
 5. Open a Pull Request
+
+For Codex subscription changes, run the package, localization, app, and native
+UI suites before opening a pull request:
+
+```bash
+swift test --package-path Packages/UsageKit
+./scripts/tests/test_validate_localizations.sh
+./scripts/validate_localizations.sh
+xcodebuild test -project "Claude Usage.xcodeproj" -scheme "Claude Usage" \
+  -configuration Debug -destination "platform=macOS"
+xcodebuild test -project "Claude Usage.xcodeproj" \
+  -scheme "Claude Usage UI Tests" -configuration UITesting \
+  -destination "platform=macOS,arch=arm64"
+```
+
+The native UI suite uses a temporary app-owned store, temporary `CODEX_HOME`,
+and a deterministic fake Codex app-server. It does not need an account or
+network access. Local macOS runs do require UI automation authorization. If
+Xcode stalls at `enabling automation mode`, enable Developer Mode and grant
+the launching Xcode or terminal process the requested Accessibility permission
+in System Settings, then rerun. Do not script or bypass macOS TCC permissions.
+CI runs the same UI scheme as the required runtime gate.
 
 ### Code Style
 

@@ -106,13 +106,42 @@ final class CodexProfileSetupTests: HostedAppTestCase {
         }
     }
 
-    func testProductionGatePreventsCodexCreationAndOperations()
+    func testProductionGateEnablesCodexCreation()
+        throws
+    {
+        let context = makeContext()
+        let home = try makeHome()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let dependencies = retain(ProviderUIDependencies(
+            profileManager: context.manager,
+            availability: .production,
+            codexCapabilities: CodexProviderFactory.capabilities,
+            requestCapture: { _ in
+                XCTFail("Profile creation must not capture a request")
+                throw ProviderUIOperationError.wrongProvider
+            },
+            setupCompletionWriter: {},
+            setupCompletionReader: { false }
+        ))
+
+        XCTAssertTrue(
+            dependencies.availability.codexSupportEnabled
+        )
+        let profile = try dependencies.createProfile(
+            name: "Codex",
+            provider: .codex,
+            linkedCodexHome: home.path
+        )
+        XCTAssertEqual(profile.providerID, .codex)
+    }
+
+    func testExplicitDisabledGatePreventsCodexCreationAndOperations()
         throws
     {
         let context = makeContext()
         let dependencies = retain(ProviderUIDependencies(
             profileManager: context.manager,
-            availability: .production,
+            availability: .testing(codexRefreshEnabled: false),
             codexCapabilities: CodexProviderFactory.capabilities,
             requestCapture: { _ in
                 XCTFail("Disabled capture must not run")
@@ -130,6 +159,31 @@ final class CodexProfileSetupTests: HostedAppTestCase {
                 name: "Codex",
                 provider: .codex,
                 linkedCodexHome: "/tmp/unused"
+            )
+        ) {
+            XCTAssertEqual(
+                $0 as? ProviderUIOperationError,
+                .featureDisabled
+            )
+        }
+
+        let disabledProfile = Profile(
+            name: "Disabled Codex",
+            providerConfiguration: .codex(.init())
+        )
+        XCTAssertThrowsError(
+            try dependencies.captureRequest(
+                for: disabledProfile
+            )
+        ) {
+            XCTAssertEqual(
+                $0 as? ProviderUIOperationError,
+                .featureDisabled
+            )
+        }
+        XCTAssertThrowsError(
+            try dependencies.captureCodexDraftRequest(
+                homePath: "/tmp/unused"
             )
         ) {
             XCTAssertEqual(

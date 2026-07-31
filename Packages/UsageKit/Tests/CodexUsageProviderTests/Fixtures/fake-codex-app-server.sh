@@ -5,6 +5,12 @@ extract_id() {
         | /usr/bin/sed -n 's/.*"id"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p'
 }
 
+extract_method() {
+    printf '%s\n' "$1" \
+        | /usr/bin/sed -n 's/.*"method"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+        | /usr/bin/sed 's#\\/#/#g'
+}
+
 read_line() {
     IFS= read -r received_line
 }
@@ -80,6 +86,12 @@ request_id="$(extract_id "$request_line")"
 
 if [ -n "${REQUEST_LOG:-}" ]; then
     printf '%s\n' "$request_line" >> "$REQUEST_LOG"
+fi
+if [ -n "${METHOD_LOG:-}" ]; then
+    request_method="$(extract_method "$request_line")"
+    if [ -n "$request_method" ]; then
+        printf '%s\n' "$request_method" >> "$METHOD_LOG"
+    fi
 fi
 
 case "$scenario" in
