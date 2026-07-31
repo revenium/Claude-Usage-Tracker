@@ -346,6 +346,11 @@ class MenuBarManager: NSObject, ObservableObject {
     @Published private(set) var hasCredentialError: Bool = false
     @Published private(set) var consecutiveRefreshFailures: Int = 0
     @Published private(set) var lastRefreshError: String? = nil
+    // Type-safe sibling of `lastRefreshError`, kept in sync with it, so the
+    // popover's refresh-failure banner can select a genuinely relevant
+    // explanation instead of a generic "failed" message.
+    @Published private(set) var lastRefreshFailureKind:
+        ProviderRefreshFailureKind? = nil
     @Published private(set) var lastSuccessfulRefreshTime: Date? = nil
 
     // Multi-profile mode: track which profile's icon was clicked
@@ -578,6 +583,8 @@ class MenuBarManager: NSObject, ObservableObject {
                 self.lastRefreshError = snapshot.currentFailure.map {
                     String(describing: $0.kind)
                 }
+                self.lastRefreshFailureKind =
+                    snapshot.currentFailure?.kind
                 self.updateAllStatusBarIcons()
             }
             .store(in: &cancellables)
@@ -666,6 +673,7 @@ class MenuBarManager: NSObject, ObservableObject {
         consecutiveRefreshFailures = 0
         hasCredentialError = false
         lastRefreshError = nil
+        lastRefreshFailureKind = nil
     }
 
     private func canAttemptUsageRefresh(_ profile: Profile) -> Bool {
@@ -897,6 +905,7 @@ class MenuBarManager: NSObject, ObservableObject {
     private func recordSuccessfulSingleBatch() {
         consecutiveRefreshFailures = 0
         lastRefreshError = nil
+        lastRefreshFailureKind = nil
         hasCredentialError = false
         lastSuccessfulRefreshTime = Date()
     }

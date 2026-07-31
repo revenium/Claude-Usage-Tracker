@@ -914,6 +914,8 @@
 "popover.banner.credentials_expired" = "認証情報が期限切れです。設定で更新してください。";
 "popover.banner.refresh_failed" = "更新が%d回失敗しました";
 "popover.banner.updated_ago" = "%d分前に更新";
+"popover.banner.last_success" = "前回の更新成功: %@";
+"popover.banner.never_succeeded" = "まだ更新に成功していません。";
 
 // MARK: - Overage Balance
 "popover.overage_balance" = "残高";

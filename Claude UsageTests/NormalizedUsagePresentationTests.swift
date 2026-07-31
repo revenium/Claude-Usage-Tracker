@@ -37,6 +37,79 @@ final class NormalizedUsagePresentationTests: HostedAppTestCase {
         )
     }
 
+    func testRefreshFailureBannerDetailIsNeverEmptyForAnyFailureKind()
+        throws
+    {
+        // The refresh-failure banner's chevron only ever appears when it
+        // will reveal real content; assert every failure kind (including
+        // "no failure captured yet", i.e. nil) produces a distinct,
+        // non-empty explanation rather than silently falling through.
+        let allKinds: [ProviderRefreshFailureKind?] = [
+            .disabled, .unlinked, .dependencyMissing,
+            .unauthenticated, .unsupportedAccount,
+            .invalidConfiguration, .transport, .protocolMismatch,
+            .malformedResponse, .timedOut, .persistence, .unknown,
+            nil
+        ]
+        for kind in allKinds {
+            let explanation = LegacyPopoverBannerDetail.explanation(
+                for: kind
+            )
+            XCTAssertFalse(
+                explanation.isEmpty,
+                "Expected non-empty explanation for \(String(describing: kind))"
+            )
+        }
+
+        XCTAssertEqual(
+            LegacyPopoverBannerDetail.explanation(for: .unauthenticated),
+            "popover.normalized.notice.unauthenticated".localized
+        )
+        XCTAssertEqual(
+            LegacyPopoverBannerDetail.explanation(for: .timedOut),
+            "popover.normalized.notice.refresh_failed".localized
+        )
+        XCTAssertEqual(
+            LegacyPopoverBannerDetail.explanation(for: nil),
+            "popover.normalized.notice.refresh_failed".localized
+        )
+    }
+
+    func testLastSuccessTextReflectsKnownAndUnknownRefreshTime() {
+        XCTAssertEqual(
+            LegacyPopoverBannerDetail.lastSuccessText(
+                nil,
+                formatted: { _ in "unused" }
+            ),
+            "popover.banner.never_succeeded".localized
+        )
+        XCTAssertEqual(
+            LegacyPopoverBannerDetail.lastSuccessText(
+                now,
+                formatted: { _ in "Jan 1, 2026 at 9:00 AM" }
+            ),
+            String(
+                format: "popover.banner.last_success".localized,
+                "Jan 1, 2026 at 9:00 AM"
+            )
+        )
+    }
+
+    func testLegacyBannerMessageFormatsCountAndMinutes() {
+        XCTAssertEqual(
+            LegacyPopoverBanner.refreshFailed(count: 12).message,
+            String(format: "popover.banner.refresh_failed".localized, 12)
+        )
+        XCTAssertEqual(
+            LegacyPopoverBanner.stale(minutesAgo: 7).message,
+            String(format: "popover.banner.updated_ago".localized, 7)
+        )
+        XCTAssertEqual(
+            LegacyPopoverBanner.credentialError.message,
+            "popover.banner.credentials_expired".localized
+        )
+    }
+
     func testLegacyBannerPrecedenceThresholdsAndActions() {
         let stale = now.addingTimeInterval(-301)
 

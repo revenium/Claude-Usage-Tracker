@@ -79,6 +79,23 @@ enum LegacyPopoverBanner: Equatable {
         }
     }
 
+    var message: String {
+        switch self {
+        case .credentialError:
+            return "popover.banner.credentials_expired".localized
+        case .refreshFailed(let count):
+            return String(
+                format: "popover.banner.refresh_failed".localized,
+                count
+            )
+        case .stale(let minutesAgo):
+            return String(
+                format: "popover.banner.updated_ago".localized,
+                minutesAgo
+            )
+        }
+    }
+
     static func resolve(
         hasCredentialError: Bool,
         consecutiveRefreshFailures: Int,
@@ -102,6 +119,73 @@ enum LegacyPopoverBanner: Equatable {
             }
         }
         return nil
+    }
+}
+
+/// Diagnostic detail shown when a refresh-failure or stale banner expands.
+/// A pure resolver (mirroring `LegacyPopoverBanner` itself) so "does the
+/// chevron actually produce useful content" stays unit-testable without
+/// driving SwiftUI: every notice with a disclosure affordance must resolve
+/// to real text, never an empty or purely decorative expansion.
+enum LegacyPopoverBannerDetail: Equatable {
+    /// Reuses the same provider-neutral vocabulary as the normalized notice
+    /// list (`NormalizedUsagePresentationBuilder`) rather than inventing
+    /// Claude-specific copy, since the failure kinds themselves are
+    /// provider-neutral.
+    static func explanationLocalization(
+        for failureKind: ProviderRefreshFailureKind?
+    ) -> (key: String, default: String) {
+        switch failureKind {
+        case .unauthenticated:
+            return (
+                "popover.normalized.notice.unauthenticated",
+                "Sign in again to refresh usage."
+            )
+        case .unsupportedAccount:
+            return (
+                "popover.normalized.notice.unsupported_account",
+                "This account does not expose subscription usage."
+            )
+        case .disabled, .unlinked, .dependencyMissing,
+             .invalidConfiguration:
+            return (
+                "popover.normalized.notice.configuration",
+                "This profile needs attention before it can refresh."
+            )
+        case .transport, .protocolMismatch, .malformedResponse,
+             .timedOut, .persistence, .unknown, nil:
+            return (
+                "popover.normalized.notice.refresh_failed",
+                "The latest refresh failed; showing cached usage."
+            )
+        }
+    }
+
+    static func explanation(
+        for failureKind: ProviderRefreshFailureKind?
+    ) -> String {
+        let localization = explanationLocalization(for: failureKind)
+        return NormalizedUsageStrings.localized(
+            localization.key,
+            default: localization.default
+        )
+    }
+
+    static func lastSuccessText(
+        _ date: Date?,
+        formatted: (Date) -> String
+    ) -> String {
+        guard let date else {
+            return NormalizedUsageStrings.localized(
+                "popover.banner.never_succeeded",
+                default: "No successful refresh yet."
+            )
+        }
+        return NormalizedUsageStrings.formatted(
+            "popover.banner.last_success",
+            default: "Last successful refresh: %@",
+            arguments: [formatted(date)]
+        )
     }
 }
 
@@ -308,27 +392,33 @@ struct PopoverContentView: View {
                     color: .orange,
                     onTap: navigationActions.preferences
                 )
-            case .refreshFailed(let count):
-                StatusBannerView(
+            case .refreshFailed:
+                ExpandableStatusBanner(
                     icon: "arrow.clockwise.circle.fill",
-                    message: String(
-                        format:
-                            "popover.banner.refresh_failed".localized,
-                        count
+                    message: banner.message,
+                    detail: LegacyPopoverBannerDetail.explanation(
+                        for: manager.lastRefreshFailureKind
                     ),
+                    lastSuccessText:
+                        LegacyPopoverBannerDetail.lastSuccessText(
+                            manager.lastSuccessfulRefreshTime,
+                            formatted: Self.absoluteTimeText
+                        ),
                     color: .yellow,
-                    onTap: onRefresh
+                    onRetry: onRefresh
                 )
-            case .stale(let minutesAgo):
-                StatusBannerView(
+            case .stale:
+                ExpandableStatusBanner(
                     icon: "clock.fill",
-                    message: String(
-                        format:
-                            "popover.banner.updated_ago".localized,
-                        minutesAgo
-                    ),
+                    message: banner.message,
+                    detail: nil,
+                    lastSuccessText:
+                        LegacyPopoverBannerDetail.lastSuccessText(
+                            manager.lastSuccessfulRefreshTime,
+                            formatted: Self.absoluteTimeText
+                        ),
                     color: .orange,
-                    onTap: onRefresh
+                    onRetry: onRefresh
                 )
             }
         }
@@ -408,6 +498,17 @@ struct PopoverContentView: View {
                     .fill(Color.accentColor.opacity(0.12))
             )
         }
+    }
+
+    private static let absoluteTimeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter
+    }()
+
+    private static func absoluteTimeText(_ date: Date) -> String {
+        absoluteTimeFormatter.string(from: date)
     }
 
     private static let unavailableProfileID = UUID(
@@ -1032,6 +1133,92 @@ struct StatusBannerView: View {
         .cornerRadius(6)
         .padding(.horizontal, 10)
         .padding(.top, 4)
+        // Without an explicit hit-testing shape, `onTapGesture` only
+        // registers over the row's rendered content (icon/text), not the
+        // `Spacer()` that fills most of the row — including the area right
+        // under the chevron the layout draws to invite a tap. That made the
+        // affordance look dead even though the closure was reachable.
+        .contentShape(Rectangle())
         .onTapGesture { onTap?() }
+    }
+}
+
+// MARK: - Expandable Status Banner
+
+/// A status banner whose chevron toggles an in-place disclosure instead of
+/// silently firing an action: tapping the row only ever reveals real detail
+/// (and, when relevant, a last-successful-refresh time), and the visible
+/// "Retry" button is the only thing that re-triggers a refresh. This keeps
+/// the chevron affordance honest — it never implies detail that isn't there.
+struct ExpandableStatusBanner: View {
+    let icon: String
+    let message: String
+    /// Root-cause explanation for the failure, if any. `nil` for banners
+    /// (like staleness) that have no distinct cause beyond time passing.
+    let detail: String?
+    let lastSuccessText: String
+    let color: Color
+    let onRetry: () -> Void
+
+    @State private var isExpanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Button(action: {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    isExpanded.toggle()
+                }
+            }) {
+                HStack(spacing: 8) {
+                    Image(systemName: icon)
+                        .font(.system(size: 11))
+                        .foregroundColor(color)
+                    Text(message)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.primary)
+                        .lineLimit(1)
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary)
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("popover.banner.disclosure")
+
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 4) {
+                    if let detail {
+                        Text(detail)
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Text(lastSuccessText)
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+
+                    Button(action: onRetry) {
+                        Text("common.refresh".localized)
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(.accentColor)
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, 2)
+                    .accessibilityIdentifier("popover.banner.retry")
+                }
+                .padding(.leading, 19)
+                .transition(.opacity)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 6)
+        .background(color.opacity(0.12))
+        .cornerRadius(6)
+        .padding(.horizontal, 10)
+        .padding(.top, 4)
+        .accessibilityElement(children: .contain)
     }
 }

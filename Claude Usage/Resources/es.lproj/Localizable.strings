@@ -895,6 +895,8 @@
 "popover.banner.credentials_expired" = "Credenciales expiradas. Actualizar en Ajustes.";
 "popover.banner.refresh_failed" = "Actualización fallida %d veces";
 "popover.banner.updated_ago" = "Actualizado hace %dm";
+"popover.banner.last_success" = "Última actualización correcta: %@";
+"popover.banner.never_succeeded" = "Aún no se ha actualizado correctamente.";
 
 // MARK: - Overage Balance
 "popover.overage_balance" = "Saldo";
