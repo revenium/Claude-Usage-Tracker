@@ -92,9 +92,9 @@ if grep -ERn -- 'github\.io/.+appcast|gh-pages' .github/workflows; then
 fi
 
 constants='Claude Usage/Shared/Utilities/Constants.swift'
-[[ $release_feed_url == \
-    "$release_repository_url/releases/latest/download/appcast.xml" ]] \
-    || fail 'shared release feed does not derive from the release repository'
+[[ $release_repository_url == \
+    'https://github.com/revenium/Claude-Usage-Tracker' ]] \
+    || fail 'shared release repository does not match the trusted origin'
 contains 'productionFeedURL = URL\(string: Constants\.GitHub\.appcastURL\)!' \
     'Claude Usage/Shared/Services/UpdateManager.swift' \
     || fail 'runtime production feed does not use the application repository constants'
