@@ -174,7 +174,7 @@ struct PersonalUsageView: View {
             loadExistingConfiguration()
             loadCurrentCredentials()
         }
-        .onChange(of: profileManager.activeProfile?.id) { _, _ in
+        .onChange(of: profileManager.activeClaudeProfile?.id) { _, _ in
             // Reload when profile changes
             loadExistingConfiguration()
             loadCurrentCredentials()
@@ -194,7 +194,7 @@ struct PersonalUsageView: View {
     }
 
     private func loadExistingConfiguration() {
-        guard let profile = profileManager.activeProfile else { return }
+        guard let profile = profileManager.activeClaudeProfile else { return }
 
         // Load existing credentials for comparison
         if let creds = try? ProfileStore.shared.loadProfileCredentials(profile.id) {
@@ -204,7 +204,7 @@ struct PersonalUsageView: View {
     }
 
     private func loadCurrentCredentials() {
-        guard let profile = profileManager.activeProfile else { return }
+        guard let profile = profileManager.activeClaudeProfile else { return }
         currentCredentials = try? ProfileStore.shared.loadProfileCredentials(profile.id)
     }
 
@@ -216,7 +216,7 @@ struct PersonalUsageView: View {
     }
 
     private func removeCredentials() {
-        guard let profileId = profileManager.activeProfile?.id else {
+        guard let profileId = profileManager.activeClaudeProfile?.id else {
             LoggingService.shared.logError("PersonalUsageView: No active profile for removal")
             return
         }
@@ -690,7 +690,7 @@ struct ConfirmStep: View {
     }
 
     private func saveConfiguration() {
-        guard let profileId = ProfileManager.shared.activeProfile?.id else { return }
+        guard let profileId = ProfileManager.shared.activeClaudeProfile?.id else { return }
 
         isSaving = true
 

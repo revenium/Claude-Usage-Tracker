@@ -571,20 +571,20 @@ printf "%s\\n" "$output"
 
         if injectSessionKey {
             // Load session key and org ID from active profile
-            guard let activeProfile = ProfileManager.shared.activeProfile else {
+            guard let activeClaudeProfile = ProfileManager.shared.activeClaudeProfile else {
                 throw StatuslineError.noActiveProfile
             }
 
-            guard let sessionKey = activeProfile.claudeSessionKey else {
+            guard let sessionKey = activeClaudeProfile.claudeSessionKey else {
                 throw StatuslineError.sessionKeyNotFound
             }
 
-            guard let organizationId = activeProfile.organizationId else {
+            guard let organizationId = activeClaudeProfile.organizationId else {
                 throw StatuslineError.organizationNotConfigured
             }
 
             swiftScriptContent = generateSwiftScript(sessionKey: sessionKey, organizationId: organizationId)
-            LoggingService.shared.log("Injected session key and org ID from profile '\(activeProfile.name)' into statusline")
+            LoggingService.shared.log("Injected session key and org ID from profile '\(activeClaudeProfile.name)' into statusline")
         } else {
             // Install placeholder script
             swiftScriptContent = placeholderSwiftScript
@@ -793,8 +793,8 @@ PROFILE_NAME="\(profileName)"
 
     /// Checks if active profile has a valid session key
     func hasValidSessionKey() -> Bool {
-        guard let activeProfile = ProfileManager.shared.activeProfile,
-              let key = activeProfile.claudeSessionKey else {
+        guard let activeClaudeProfile = ProfileManager.shared.activeClaudeProfile,
+              let key = activeClaudeProfile.claudeSessionKey else {
             return false
         }
 

@@ -374,7 +374,7 @@ struct ClaudeCodeView: View {
             let preview = generatePreview()
             if showPaceMarker && paceMarkerStepColors && showProgressBar && showUsage,
                let markerRange = preview.range(of: "┃") {
-                let usage = profileManager.activeProfile?.claudeUsage
+                let usage = profileManager.activeClaudeProfile?.claudeUsage
                 let percentage = usage != nil ? Int(usage!.sessionPercentage) : 29
                 let paceColor = previewPaceColor(percentage: percentage)
                 HStack(spacing: 0) {
@@ -447,7 +447,7 @@ struct ClaudeCodeView: View {
 
     /// Multi-color preview showing each element in different colors
     private var multiColorPreview: some View {
-        let usage = profileManager.activeProfile?.claudeUsage
+        let usage = profileManager.activeClaudeProfile?.claudeUsage
         let percentage = usage != nil ? Int(usage!.sessionPercentage) : 29
         let usageColor = TerminalColors.usageLevel(percentage)
 
@@ -477,7 +477,7 @@ struct ClaudeCodeView: View {
             }
 
             if showProfile {
-                let name = ProfileManager.shared.activeProfile?.name ?? "Profile"
+                let name = ProfileManager.shared.activeClaudeProfile?.name ?? "Profile"
                 Text(name)
                     .foregroundColor(TerminalColors.magenta)
                 if showContext || showUsage {
@@ -582,7 +582,7 @@ struct ClaudeCodeView: View {
 
     /// Marker position for preview (0-9), based on real elapsed time or demo
     private var previewMarkerPosition: Int {
-        if let usage = profileManager.activeProfile?.claudeUsage {
+        if let usage = profileManager.activeClaudeProfile?.claudeUsage {
             let remaining = usage.sessionResetTime.timeIntervalSince(Date())
             if remaining > 0 && remaining < 18000 {
                 let elapsed = 18000 - remaining
@@ -599,7 +599,7 @@ struct ClaudeCodeView: View {
         }
 
         let elapsedFraction: Double
-        if let usage = profileManager.activeProfile?.claudeUsage {
+        if let usage = profileManager.activeClaudeProfile?.claudeUsage {
             let remaining = usage.sessionResetTime.timeIntervalSince(Date())
             if remaining > 0 && remaining < 18000 {
                 elapsedFraction = (18000 - remaining) / 18000
@@ -658,7 +658,7 @@ struct ClaudeCodeView: View {
 
         do {
             // Write configuration file
-            let profileName = ProfileManager.shared.activeProfile?.name ?? ""
+            let profileName = ProfileManager.shared.activeClaudeProfile?.name ?? ""
             try StatuslineService.shared.updateConfiguration(
                 showModel: showModel,
                 showDirectory: showDirectory,
@@ -720,7 +720,7 @@ struct ClaudeCodeView: View {
         }
 
         if showProfile {
-            let name = ProfileManager.shared.activeProfile?.name ?? "Profile"
+            let name = ProfileManager.shared.activeClaudeProfile?.name ?? "Profile"
             parts.append(name)
         }
 
@@ -735,7 +735,7 @@ struct ClaudeCodeView: View {
 
         if showUsage {
             // Use real usage data if available
-            let usage = profileManager.activeProfile?.claudeUsage
+            let usage = profileManager.activeClaudeProfile?.claudeUsage
             let percentage = usage != nil ? Int(usage!.sessionPercentage) : 29
 
             var usageText = showUsageLabel ? "Usage: \(percentage)%" : "\(percentage)%"

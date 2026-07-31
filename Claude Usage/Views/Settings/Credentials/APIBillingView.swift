@@ -203,7 +203,7 @@ struct APIBillingView: View {
             loadExistingConfiguration()
             loadCurrentCredentials()
         }
-        .onChange(of: profileManager.activeProfile?.id) { _, _ in
+        .onChange(of: profileManager.activeClaudeProfile?.id) { _, _ in
             // Reload when profile changes
             loadExistingConfiguration()
             loadCurrentCredentials()
@@ -223,7 +223,7 @@ struct APIBillingView: View {
     }
 
     private func loadExistingConfiguration() {
-        guard let profile = profileManager.activeProfile else { return }
+        guard let profile = profileManager.activeClaudeProfile else { return }
 
         // Load existing credentials for comparison
         if let creds = try? ProfileStore.shared.loadProfileCredentials(profile.id) {
@@ -233,7 +233,7 @@ struct APIBillingView: View {
     }
 
     private func loadCurrentCredentials() {
-        guard let profile = profileManager.activeProfile else { return }
+        guard let profile = profileManager.activeClaudeProfile else { return }
         currentCredentials = try? ProfileStore.shared.loadProfileCredentials(profile.id)
     }
 
@@ -245,7 +245,7 @@ struct APIBillingView: View {
     }
 
     private func removeCredentials() {
-        guard let profileId = profileManager.activeProfile?.id else {
+        guard let profileId = profileManager.activeClaudeProfile?.id else {
             LoggingService.shared.logError("APIBillingView: No active profile for removal")
             return
         }
@@ -675,7 +675,7 @@ struct APIConfirmStep: View {
     }
 
     private func saveConfiguration() {
-        guard let profileId = ProfileManager.shared.activeProfile?.id else { return }
+        guard let profileId = ProfileManager.shared.activeClaudeProfile?.id else { return }
 
         isSaving = true
 

@@ -75,9 +75,12 @@ struct ProviderProfileRowPresentation: Equatable, Identifiable {
         "popover.profile.switcher.\(id.uuidString)"
     }
 
+    /// `isActive` is resolved per-row rather than against one shared id,
+    /// since this list mixes Claude and Codex profiles that each have their
+    /// own independent active slot — pass `ProfileManager.isActive(_:)`.
     static func make(
         profiles: [Profile],
-        activeProfileID: UUID?
+        isActive: (Profile) -> Bool
     ) -> [ProviderProfileRowPresentation] {
         profiles.map { profile in
             switch profile.providerConfiguration {
@@ -89,7 +92,7 @@ struct ProviderProfileRowPresentation: Equatable, Identifiable {
                     connectionDescription:
                         claudeConnectionDescription(profile),
                     systemImage: "sparkles",
-                    isActive: profile.id == activeProfileID
+                    isActive: isActive(profile)
                 )
             case .codex(let configuration):
                 let connectionDescription: String
@@ -118,7 +121,7 @@ struct ProviderProfileRowPresentation: Equatable, Identifiable {
                     connectionDescription: connectionDescription,
                     systemImage:
                         "chevron.left.forwardslash.chevron.right",
-                    isActive: profile.id == activeProfileID
+                    isActive: isActive(profile)
                 )
             }
         }

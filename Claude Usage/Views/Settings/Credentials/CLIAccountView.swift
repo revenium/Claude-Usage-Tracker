@@ -40,7 +40,7 @@ struct CLIAccountView: View {
                     subtitle: "cli.subtitle".localized
                 )
 
-                if let profile = profileManager.activeProfile {
+                if let profile = profileManager.activeClaudeProfile {
                     if profileManager.displayMode == .multi {
                         // Multi-profile mode: show linking flow
                         cliAccountLinkingSection(profile: profile)
@@ -74,14 +74,14 @@ struct CLIAccountView: View {
         .onAppear {
             loadCLIAccountInfo()
             skillsSourcePath = SharedDataStore.shared.loadSkillsSourceDirectory()
-            if let accountName = profileManager.activeProfile?.cliAccountName {
+            if let accountName = profileManager.activeClaudeProfile?.cliAccountName {
                 credentialCheckResult = ClaudeSwitchService.shared.checkForCredentials(directoryName: accountName)
             }
         }
-        .onChange(of: profileManager.activeProfile?.id) { _, _ in
+        .onChange(of: profileManager.activeClaudeProfile?.id) { _, _ in
             loadCLIAccountInfo()
             syncError = nil
-            if let accountName = profileManager.activeProfile?.cliAccountName {
+            if let accountName = profileManager.activeClaudeProfile?.cliAccountName {
                 credentialCheckResult = ClaudeSwitchService.shared.checkForCredentials(directoryName: accountName)
             } else {
                 credentialCheckResult = .notFound
@@ -103,7 +103,7 @@ struct CLIAccountView: View {
                 performUnlinkAccount()
             }
         } message: {
-            if let name = profileManager.activeProfile?.cliAccountName {
+            if let name = profileManager.activeClaudeProfile?.cliAccountName {
                 Text(String(format: "cli.unlink_confirm".localized, name))
             }
         }
@@ -859,7 +859,7 @@ struct CLIAccountView: View {
     // MARK: - Computed Properties
 
     private var sanitizedName: String {
-        guard let name = profileManager.activeProfile?.name else { return "" }
+        guard let name = profileManager.activeClaudeProfile?.name else { return "" }
         return ClaudeSwitchService.shared.previewDirectoryName(for: name)
     }
 
@@ -898,7 +898,7 @@ struct CLIAccountView: View {
     // MARK: - Actions
 
     private func performLinkAccount() {
-        guard let profile = profileManager.activeProfile else { return }
+        guard let profile = profileManager.activeClaudeProfile else { return }
         linkingInProgress = true
         syncError = nil
         var plannedLinkWasPersisted = false
@@ -957,7 +957,7 @@ struct CLIAccountView: View {
     }
 
     private func performUnlinkAccount() {
-        guard let profile = profileManager.activeProfile,
+        guard let profile = profileManager.activeClaudeProfile,
               let accountName = profile.cliAccountName else { return }
 
         do {
@@ -1004,14 +1004,14 @@ struct CLIAccountView: View {
     }
 
     private func checkCredentials() {
-        guard let accountName = profileManager.activeProfile?.cliAccountName else { return }
+        guard let accountName = profileManager.activeClaudeProfile?.cliAccountName else { return }
 
         credentialCheckResult = ClaudeSwitchService.shared.checkForCredentials(directoryName: accountName)
 
         if credentialCheckResult.hasCredentials {
             // Read and store credentials for usage data
             if let json = ClaudeSwitchService.shared.readLinkedAccountCredentials(directoryName: accountName) {
-                if var updated = profileManager.activeProfile {
+                if var updated = profileManager.activeClaudeProfile {
                     updated.cliCredentialsJSON = json
                     updated.hasCliAccount = true
                     updated.cliAccountSyncedAt = Date()
@@ -1038,7 +1038,7 @@ struct CLIAccountView: View {
     }
 
     private func syncFromCLI() {
-        guard let profile = profileManager.activeProfile else { return }
+        guard let profile = profileManager.activeClaudeProfile else { return }
 
         isSyncing = true
         syncError = nil
@@ -1069,7 +1069,7 @@ struct CLIAccountView: View {
                 try ClaudeCodeSyncService.shared.syncToProfile(profile.id)
                 profileManager.loadProfiles()
 
-                if var updated = profileManager.activeProfile {
+                if var updated = profileManager.activeClaudeProfile {
                     updated.hasCliAccount = true
                     updated.cliAccountSyncedAt = Date()
                     try profileManager.updateProfileThrowing(updated)
@@ -1118,7 +1118,7 @@ struct CLIAccountView: View {
     // MARK: - Helpers
 
     private func loadCLIAccountInfo() {
-        guard let profile = profileManager.activeProfile,
+        guard let profile = profileManager.activeClaudeProfile,
               let json = profile.cliCredentialsJSON else {
             cliAccountInfo = nil
             return

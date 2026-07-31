@@ -478,8 +478,7 @@ final class ProviderUIDependencies {
     /// Claude-owned state into an active Codex profile. Choosing Claude while
     /// another provider is active is an explicit add-profile operation.
     func claudeSetupProfile() throws -> Profile {
-        if let active = profileManager.activeProfile,
-           active.providerID == .claude {
+        if let active = profileManager.activeClaudeProfile {
             return active
         }
         return try createProfile(

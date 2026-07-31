@@ -79,7 +79,7 @@ class ClaudeAPIService: APIServiceProtocol {
     private func readSessionKey() throws -> String {
         do {
             // Load from active profile only
-            guard let activeProfile = profileManager.activeProfile else {
+            guard let activeClaudeProfile = profileManager.activeClaudeProfile else {
                 LoggingService.shared.logError("ClaudeAPIService.readSessionKey: No active profile")
                 throw AppError.sessionKeyNotFound()
             }
@@ -88,7 +88,7 @@ class ClaudeAPIService: APIServiceProtocol {
                 "ClaudeAPIService.readSessionKey: Resolving active profile credentials"
             )
 
-            guard let key = activeProfile.claudeSessionKey else {
+            guard let key = activeClaudeProfile.claudeSessionKey else {
                 LoggingService.shared.logError("ClaudeAPIService.readSessionKey: Profile has NIL claudeSessionKey - throwing sessionKeyNotFound")
                 throw AppError.sessionKeyNotFound()
             }
@@ -121,13 +121,13 @@ class ClaudeAPIService: APIServiceProtocol {
     /// Priority: 1) claude.ai session → 2) saved CLI OAuth → 3) system Keychain CLI OAuth
     /// Note: Console API session is NOT used as fallback (it only provides billing data, not usage)
     private func getAuthentication() throws -> AuthenticationType {
-        guard let activeProfile = profileManager.activeProfile else {
+        guard let activeClaudeProfile = profileManager.activeClaudeProfile else {
             LoggingService.shared.logError("ClaudeAPIService.getAuthentication: No active profile")
             throw AppError.sessionKeyNotFound()
         }
 
         // Try claude.ai session key first
-        if let sessionKey = activeProfile.claudeSessionKey {
+        if let sessionKey = activeClaudeProfile.claudeSessionKey {
             do {
                 let validatedKey = try sessionKeyValidator.validate(sessionKey)
                 LoggingService.shared.log("ClaudeAPIService: Using claude.ai session key")
@@ -138,7 +138,7 @@ class ClaudeAPIService: APIServiceProtocol {
         }
 
         // Fall back to saved CLI OAuth token if available and not expired
-        if let cliJSON = activeProfile.cliCredentialsJSON {
+        if let cliJSON = activeClaudeProfile.cliCredentialsJSON {
             if !ClaudeCodeSyncService.shared.isTokenExpired(cliJSON),
                let accessToken = ClaudeCodeSyncService.shared.extractAccessToken(from: cliJSON) {
                 LoggingService.shared.log("ClaudeAPIService: Falling back to saved CLI OAuth token")
@@ -206,7 +206,7 @@ class ClaudeAPIService: APIServiceProtocol {
             // Validate the key before saving
             let validatedKey = try sessionKeyValidator.validate(key)
 
-            guard let profileId = profileManager.activeProfile?.id else {
+            guard let profileId = profileManager.activeClaudeProfile?.id else {
                 throw AppError(
                     code: .storageWriteFailed,
                     message: "No active profile found",
@@ -219,7 +219,7 @@ class ClaudeAPIService: APIServiceProtocol {
             // Check if key actually changed (for smart org clearing)
             var shouldClearOrg = true
             if preserveOrgIfUnchanged {
-                let existingKey = profileManager.activeProfile?.claudeSessionKey
+                let existingKey = profileManager.activeClaudeProfile?.claudeSessionKey
                 shouldClearOrg = (existingKey != validatedKey)
             }
 
@@ -420,7 +420,7 @@ class ClaudeAPIService: APIServiceProtocol {
         let sessionKey = try sessionKey ?? self.readSessionKey()
 
         // Check for stored organization ID in active profile first
-        if let storedOrgId = profileManager.activeProfile?.organizationId {
+        if let storedOrgId = profileManager.activeClaudeProfile?.organizationId {
             LoggingService.shared.logInfo("Using stored organization ID from profile: \(storedOrgId)")
             return storedOrgId
         }
@@ -434,7 +434,7 @@ class ClaudeAPIService: APIServiceProtocol {
         LoggingService.shared.logInfo("Auto-selected organization: \(selectedOrg.name) (ID: \(selectedOrg.uuid))")
 
         // Store the selected org ID in active profile
-        if let profileId = profileManager.activeProfile?.id {
+        if let profileId = profileManager.activeClaudeProfile?.id {
             profileManager.updateOrganizationId(selectedOrg.uuid, for: profileId)
         }
 
@@ -706,7 +706,7 @@ class ClaudeAPIService: APIServiceProtocol {
             async let usageDataTask = performRequest(endpoint: "/organizations/\(orgId)/usage", sessionKey: sessionKey)
 
             // Use active profile's checkOverageLimitEnabled setting
-            let checkOverage = profileManager.activeProfile?.checkOverageLimitEnabled ?? true
+            let checkOverage = profileManager.activeClaudeProfile?.checkOverageLimitEnabled ?? true
             async let overageDataTask: Data? = checkOverage ? performRequest(endpoint: "/organizations/\(orgId)/overage_spend_limit", sessionKey: sessionKey) : nil
             async let creditGrantTask: Data? = checkOverage ? performRequest(endpoint: "/organizations/\(orgId)/overage_credit_grant", sessionKey: sessionKey) : nil
 

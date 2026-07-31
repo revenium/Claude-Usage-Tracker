@@ -480,7 +480,7 @@ struct PopoverContentView: View {
 
     @ViewBuilder
     private func activeBadge(for profile: Profile) -> some View {
-        if profile.id == profileManager.activeProfile?.id {
+        if profileManager.isActive(profile) {
             Text(
                 NormalizedUsageStrings.localized(
                     "popover.normalized.profile.active",
@@ -539,7 +539,7 @@ struct ProfileSwitcherCompact: View {
     private var rows: [ProviderProfileRowPresentation] {
         ProviderProfileRowPresentation.make(
             profiles: profileManager.profiles,
-            activeProfileID: profileManager.activeProfile?.id
+            isActive: profileManager.isActive
         )
     }
 
@@ -589,7 +589,7 @@ struct ProfileSwitcherBar: View {
     private var rows: [ProviderProfileRowPresentation] {
         ProviderProfileRowPresentation.make(
             profiles: profileManager.profiles,
-            activeProfileID: profileManager.activeProfile?.id
+            isActive: profileManager.isActive
         )
     }
 

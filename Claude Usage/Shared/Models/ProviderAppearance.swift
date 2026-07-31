@@ -556,11 +556,15 @@ enum ProviderMenuPresentationBuilder {
         return true
     }
 
+    /// `isActive` is resolved per-profile rather than against one shared id:
+    /// this builds status items across every profile regardless of
+    /// provider, and each provider has its own independent active slot —
+    /// pass `ProfileManager.isActive(_:)`.
     static func presentations(
         profiles: [Profile],
         snapshots: [UUID: PresentationSnapshot],
         now: Date,
-        activeProfileID: UUID?
+        isActive: (Profile) -> Bool
     ) -> [ProviderMenuPresentation] {
         profiles
             .sorted {
@@ -578,7 +582,7 @@ enum ProviderMenuPresentationBuilder {
                     profile: $0,
                     snapshot: snapshots[$0.id],
                     now: now,
-                    isActive: $0.id == activeProfileID
+                    isActive: isActive($0)
                 )
             }
     }

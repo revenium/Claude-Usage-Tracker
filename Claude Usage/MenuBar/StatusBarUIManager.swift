@@ -827,16 +827,19 @@ final class StatusBarUIManager {
 
     /// Overrides non-Claude multi-profile buttons with provider-neutral
     /// dynamic metrics while leaving characterized Claude icons untouched.
+    /// `isActive` is resolved per-profile (via `ProfileManager.isActive(_:)`)
+    /// since this spans both providers' independent active slots.
     func updateProviderMultiProfileButtons(
         presentations: [ProviderMenuPresentation],
         profiles: [Profile],
         config: MultiProfileDisplayConfig,
-        activeProfileID: UUID?
+        activeClaudeProfileID: UUID?,
+        isActive: (Profile) -> Bool
     ) {
         updateMultiProfileButtons(
             profiles: profiles,
             config: config,
-            activeProfileId: activeProfileID
+            activeProfileId: activeClaudeProfileID
         )
         for presentation in presentations
         where presentation.identity.providerID != .claude {
@@ -924,7 +927,7 @@ final class StatusBarUIManager {
             )
             image.isTemplate = config.useSystemColor
                 && !iconConfig.showPaceMarker
-            if presentation.identity.profileID == activeProfileID {
+            if let profile, isActive(profile) {
                 let underlined = addGreenUnderline(to: image)
                 underlined.isTemplate = false
                 setButtonImage(button, image: underlined)
@@ -941,8 +944,7 @@ final class StatusBarUIManager {
                         + presentation.state.accessibilityText)
             let label = Self.profileAccessibilityLabel(
                 baseLabel,
-                isActive:
-                    presentation.identity.profileID == activeProfileID
+                isActive: profile.map(isActive) ?? false
             )
             button.setAccessibilityLabel(label)
             button.toolTip = label
@@ -996,7 +998,7 @@ final class StatusBarUIManager {
         apiUsage: APIUsage?
     ) {
         // Get config from active profile
-        let profile = ProfileManager.shared.activeProfile
+        let profile = ProfileManager.shared.activeClaudeProfile
         let config = profile?.iconConfig ?? .default
 
         // Check if we should show default logo (no usage credentials OR no enabled metrics)
@@ -1061,7 +1063,7 @@ final class StatusBarUIManager {
         }
 
         // Get config from active profile
-        let config = ProfileManager.shared.activeProfile?.iconConfig ?? .default
+        let config = ProfileManager.shared.activeClaudeProfile?.iconConfig ?? .default
         guard let metricConfig = config.config(for: metricType) else {
             return
         }

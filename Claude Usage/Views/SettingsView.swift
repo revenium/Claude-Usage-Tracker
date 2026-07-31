@@ -1134,7 +1134,7 @@ struct ProfileCredentialCardsRow: View {
                             fallback: "Codex Account"
                         ),
                         isConnected:
-                            profileManager.activeProfile.map {
+                            profileManager.activeCodexProfile.map {
                                 ProviderProfilePresentation(
                                     profile: $0
                                 ).isConnected
@@ -1192,7 +1192,7 @@ struct ProfileCredentialCardsRow: View {
                         CredentialMiniCard(
                             icon: "terminal.fill",
                             title: "CLI Account",
-                            isConnected: profileManager.activeProfile?
+                            isConnected: profileManager.activeClaudeProfile?
                                 .hasCliAccount ?? false,
                             isSelected:
                                 selectedSection == .cliAccount
@@ -1205,14 +1205,13 @@ struct ProfileCredentialCardsRow: View {
         .onAppear {
             loadCredentials()
         }
-        .onChange(of: profileManager.activeProfile?.id) { _, _ in
+        .onChange(of: profileManager.activeClaudeProfile?.id) { _, _ in
             loadCredentials()
         }
     }
 
     private func loadCredentials() {
-        guard let profile = profileManager.activeProfile,
-              profile.providerID == .claude else {
+        guard let profile = profileManager.activeClaudeProfile else {
             credentials = nil
             return
         }

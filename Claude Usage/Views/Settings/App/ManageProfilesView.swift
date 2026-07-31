@@ -123,7 +123,7 @@ struct ManageProfilesView: View {
                                     ProfileSelectionRow(
                                         profile: profile,
                                         isSelected: profile.isSelectedForDisplay,
-                                        isActive: profileManager.activeProfile?.id == profile.id,
+                                        isActive: profileManager.isActive(profile),
                                         onToggle: {
                                             // Ensure at least one profile stays selected
                                             let selectedCount = profileManager.profiles.filter { $0.isSelectedForDisplay }.count
@@ -425,7 +425,7 @@ struct ProfileRow: View {
             // Profile Icon
             Image(systemName: profileIcon)
                 .font(.system(size: 24))
-                .foregroundColor(profileManager.activeProfile?.id == profile.id ? .accentColor : .secondary)
+                .foregroundColor(profileManager.isActive(profile) ? .accentColor : .secondary)
                 .accessibilityLabel(profileAccessibilityLabel)
 
             VStack(alignment: .leading, spacing: 4) {
@@ -444,7 +444,7 @@ struct ProfileRow: View {
                         Text(profile.name)
                             .font(.system(size: 14, weight: .medium))
 
-                        if profileManager.activeProfile?.id == profile.id {
+                        if profileManager.isActive(profile) {
                             Text("profiles.active_badge".localized)
                                 .font(.system(size: 9, weight: .bold))
                                 .foregroundColor(.white)
@@ -481,7 +481,7 @@ struct ProfileRow: View {
                     )
 
                     // Activate Button (if not active)
-                    if profileManager.activeProfile?.id != profile.id {
+                    if !profileManager.isActive(profile) {
                         Button(action: {
                             Task {
                                 await dependencies.activateProfile(
@@ -638,10 +638,10 @@ struct ProfileRow: View {
 
     private var profileAccessibilityLabel: String {
         let active = ProviderUILocalization.text(
-            profileManager.activeProfile?.id == profile.id
+            profileManager.isActive(profile)
                 ? "profiles.accessibility.active"
                 : "profiles.accessibility.inactive",
-            fallback: profileManager.activeProfile?.id == profile.id
+            fallback: profileManager.isActive(profile)
                 ? "active"
                 : "inactive"
         )

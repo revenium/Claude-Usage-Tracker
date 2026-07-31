@@ -2207,14 +2207,15 @@ class MenuBarManager: NSObject, ObservableObject {
                     profiles: visible,
                     snapshots: profileUsagePresentations,
                     now: now,
-                    activeProfileID: profileManager.activeProfile?.id
+                    isActive: profileManager.isActive
                 )
             let config = profileManager.multiProfileConfig
             statusBarUIManager?.updateProviderMultiProfileButtons(
                 presentations: presentations,
                 profiles: profileManager.profiles,
                 config: config,
-                activeProfileID: profileManager.activeProfile?.id
+                activeClaudeProfileID: profileManager.activeClaudeProfileID,
+                isActive: profileManager.isActive
             )
             scheduleFreshnessDeadline(for: presentations, now: now)
         } else {
@@ -2402,7 +2403,7 @@ class MenuBarManager: NSObject, ObservableObject {
             let routing = MainActor.assumeIsolated {
                 let routing = Self.credentialChangeRouting(
                     changedProfileID: changedProfileID,
-                    activeProfileID: self.profileManager.activeProfile?.id,
+                    activeProfileID: self.profileManager.activeClaudeProfile?.id,
                     selectedProfileIDs: Set(
                         self.profileManager.profiles.lazy
                             .filter(\.isSelectedForDisplay)
@@ -2440,7 +2441,7 @@ class MenuBarManager: NSObject, ObservableObject {
                 )
                 guard Self.shouldExecuteCredentialRefresh(
                     routing,
-                    activeProfileID: self.profileManager.activeProfile?.id,
+                    activeProfileID: self.profileManager.activeClaudeProfile?.id,
                     selectedProfileIDs: selectedProfileIDs,
                     isMultiProfileMode:
                         self.profileManager.displayMode == .multi
@@ -2948,7 +2949,7 @@ class MenuBarManager: NSObject, ObservableObject {
         expectedProfileID: UUID,
         expectedPresentationEpoch: UInt64
     ) {
-        guard profileManager.activeProfile?.id == expectedProfileID,
+        guard profileManager.activeClaudeProfile?.id == expectedProfileID,
               currentProfile.id == expectedProfileID,
               refreshRuntime.presentationContext.epoch
                 == expectedPresentationEpoch else {
