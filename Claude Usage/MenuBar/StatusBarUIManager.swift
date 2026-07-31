@@ -825,6 +825,55 @@ final class StatusBarUIManager {
         }
     }
 
+    /// Renders the shared compact two-row percentage image (top row: up to
+    /// two window percentages separated by a dimmed " · "; bottom row: a
+    /// 3-char profile label) for any provider's multi-profile status item.
+    /// Claude's own `.percentage` style already calls the same renderer
+    /// method directly from `updateMultiProfileButtons`.
+    private static func compactPercentageImage(
+        renderer: MenuBarIconRenderer,
+        presentation: ProviderMenuPresentation,
+        config: MultiProfileDisplayConfig,
+        isDarkMode: Bool
+    ) -> NSImage {
+        let rendered = presentation.metrics.prefix(2).map {
+            ProviderMenuPresentationBuilder.metric($0, applying: config)
+        }
+        let primary = rendered.first ?? nil
+        let secondary = rendered.count > 1 ? rendered[1] : nil
+
+        func paceStatus(
+            for metric: ProviderMetricPresentation?
+        ) -> PaceStatus? {
+            guard config.showPaceMarker,
+                  let metric,
+                  let elapsed = metric.elapsedFraction,
+                  let used = metric.usedPercentage else {
+                return nil
+            }
+            return PaceStatus.calculate(
+                usedPercentage: used,
+                elapsedFraction: elapsed
+            )
+        }
+
+        return renderer.createMultiProfilePercentage(
+            sessionPercentage: primary?.displayedPercentage ?? 0,
+            weekPercentage: secondary?.displayedPercentage,
+            sessionStatus: primary?.statusLevel ?? .safe,
+            weekStatus: secondary?.statusLevel ?? .safe,
+            profileName: config.showProfileLabel
+                ? presentation.profileName
+                : nil,
+            monochromeMode: config.useSystemColor,
+            isDarkMode: isDarkMode,
+            useSystemColor: false,
+            sessionPaceStatus: paceStatus(for: primary),
+            weekPaceStatus: paceStatus(for: secondary),
+            showPaceMarker: config.showPaceMarker
+        )
+    }
+
     /// Overrides non-Claude multi-profile buttons with provider-neutral
     /// dynamic metrics while leaving characterized Claude icons untouched.
     /// `isActive` is resolved per-profile (via `ProfileManager.isActive(_:)`)
@@ -867,64 +916,81 @@ final class StatusBarUIManager {
             iconConfig.showTimeMarker = config.showTimeMarker
             iconConfig.showPaceMarker = config.showPaceMarker
             iconConfig.usePaceColoring = config.usePaceColoring
-            let renderedMetric =
-                ProviderMenuPresentationBuilder.metric(
-                    presentation.metric,
-                    applying: config
+
+            let image: NSImage
+            if config.iconStyle == .percentage {
+                // Compact two-row form shared with Claude: pack up to two
+                // windows' integer percentages into one image per profile
+                // instead of a single metric. Window display names stay
+                // popover-only here, matching the Claude rendering this
+                // mirrors.
+                image = Self.compactPercentageImage(
+                    renderer: renderer,
+                    presentation: presentation,
+                    config: config,
+                    isDarkMode: menuBarIsDark
                 )
-            var metricConfig = renderedMetric.flatMap {
-                iconConfig.config(for: $0.id)
-            } ?? MetricIconConfig(
-                metricID: renderedMetric?.id
-                    ?? .providerPlaceholder(
-                        presentation.identity.providerID
-                    ),
-                isEnabled: renderedMetric != nil
-            )
-            switch config.iconStyle {
-            case .concentric:
-                metricConfig.iconStyle = .icon
-            case .progressBar:
-                metricConfig.iconStyle = .progressBar
-            case .compact:
-                metricConfig.iconStyle = .compact
-            case .percentage:
-                metricConfig.iconStyle = .percentageOnly
+            } else {
+                let renderedMetric =
+                    ProviderMenuPresentationBuilder.metric(
+                        presentation.metric,
+                        applying: config
+                    )
+                var metricConfig = renderedMetric.flatMap {
+                    iconConfig.config(for: $0.id)
+                } ?? MetricIconConfig(
+                    metricID: renderedMetric?.id
+                        ?? .providerPlaceholder(
+                            presentation.identity.providerID
+                        ),
+                    isEnabled: renderedMetric != nil
+                )
+                switch config.iconStyle {
+                case .concentric:
+                    metricConfig.iconStyle = .icon
+                case .progressBar:
+                    metricConfig.iconStyle = .progressBar
+                case .compact:
+                    metricConfig.iconStyle = .compact
+                case .percentage:
+                    metricConfig.iconStyle = .percentageOnly
+                }
+                let profileInitial = config.showProfileLabel
+                    ? String(presentation.profileName.prefix(1))
+                        .uppercased()
+                    : ""
+                let renderAppearance = ProviderAppearance(
+                    providerID: presentation.appearance.providerID,
+                    displayName: presentation.appearance.displayName,
+                    compactBadge:
+                        presentation.appearance.compactBadge
+                            + profileInitial,
+                    symbolName: presentation.appearance.symbolName
+                )
+                let baseVisualLabel = Self.providerMetricVisualLabel(
+                    for: renderedMetric,
+                    in: presentation,
+                    showLongProviderName: false
+                )
+                let visualLabel = profileInitial.isEmpty
+                    ? baseVisualLabel
+                    : baseVisualLabel.replacingOccurrences(
+                        of: presentation.appearance.compactBadge,
+                        with: presentation.appearance.compactBadge
+                            + profileInitial,
+                        options: [.anchored]
+                    )
+                image = renderer.createProviderMetricImage(
+                    renderedMetric,
+                    appearance: renderAppearance,
+                    metricConfig: metricConfig,
+                    globalConfig: iconConfig,
+                    isDarkMode: menuBarIsDark,
+                    showProviderLabel: true,
+                    visualLabel: visualLabel,
+                    placeholderState: presentation.state
+                )
             }
-            let profileInitial = config.showProfileLabel
-                ? String(presentation.profileName.prefix(1)).uppercased()
-                : ""
-            let renderAppearance = ProviderAppearance(
-                providerID: presentation.appearance.providerID,
-                displayName: presentation.appearance.displayName,
-                compactBadge:
-                    presentation.appearance.compactBadge
-                        + profileInitial,
-                symbolName: presentation.appearance.symbolName
-            )
-            let baseVisualLabel = Self.providerMetricVisualLabel(
-                for: renderedMetric,
-                in: presentation,
-                showLongProviderName: false
-            )
-            let visualLabel = profileInitial.isEmpty
-                ? baseVisualLabel
-                : baseVisualLabel.replacingOccurrences(
-                    of: presentation.appearance.compactBadge,
-                    with: presentation.appearance.compactBadge
-                        + profileInitial,
-                    options: [.anchored]
-                )
-            let image = renderer.createProviderMetricImage(
-                renderedMetric,
-                appearance: renderAppearance,
-                metricConfig: metricConfig,
-                globalConfig: iconConfig,
-                isDarkMode: menuBarIsDark,
-                showProviderLabel: true,
-                visualLabel: visualLabel,
-                placeholderState: presentation.state
-            )
             image.isTemplate = config.useSystemColor
                 && !iconConfig.showPaceMarker
             if let profile, isActive(profile) {
