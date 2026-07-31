@@ -653,23 +653,6 @@ class UsageHistoryService: ProfileHistoryDeleting {
         }
     }
 
-    /// Compatibility entry point for legacy callers that only carry a UUID.
-    func exportToFile(
-        for profileId: UUID,
-        resetType: ResetType? = nil,
-        format: ExportFormat = .json
-    ) {
-        let profile = Profile(
-            id: profileId,
-            name: "Profile"
-        )
-        exportToFile(
-            profile: profile,
-            resetType: resetType,
-            format: format
-        )
-    }
-
     enum ExportFormat {
         case json
         case csv

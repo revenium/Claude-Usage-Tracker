@@ -566,7 +566,7 @@ final class ProviderHistoryNotificationTests: HostedAppTestCase {
         }
     }
 
-    func testNotificationCrossingDedupAndNewCycleResetRealert()
+    func testNotificationCrossingRetryAndNewCycleResetRealert()
         throws
     {
         let profileID = UUID()
@@ -583,8 +583,7 @@ final class ProviderHistoryNotificationTests: HostedAppTestCase {
             profileID: profileID,
             settings: settings,
             now: now,
-            previousStates: [:],
-            sentIdentities: []
+            previousStates: [:]
         )
         XCTAssertTrue(baseline.events.isEmpty)
 
@@ -598,8 +597,7 @@ final class ProviderHistoryNotificationTests: HostedAppTestCase {
             profileID: profileID,
             settings: settings,
             now: now.addingTimeInterval(1),
-            previousStates: baseline.states,
-            sentIdentities: []
+            previousStates: baseline.states
         )
         let crossingReport = try report(
             providerID: .codex,
@@ -611,22 +609,19 @@ final class ProviderHistoryNotificationTests: HostedAppTestCase {
             profileID: profileID,
             settings: settings,
             now: now.addingTimeInterval(2),
-            previousStates: lowered.states,
-            sentIdentities: []
+            previousStates: lowered.states
         )
         XCTAssertEqual(crossing.events.map(\.threshold), [75])
-        let sent = Set(
-            crossing.events.map(\.identity.persistenceKey)
-        )
         let duplicate = UsageNotificationPolicy.evaluate(
             report: crossingReport,
             profileID: profileID,
             settings: settings,
             now: now.addingTimeInterval(2),
-            previousStates: crossing.states,
-            sentIdentities: sent
+            previousStates: crossing.states
         )
-        XCTAssertTrue(duplicate.events.isEmpty)
+        // The pure policy keeps undelivered work pending. NotificationManager
+        // owns in-flight suppression and marks it delivered on success.
+        XCTAssertEqual(duplicate.events.map(\.threshold), [75])
 
         let newCycle = try report(
             providerID: .codex,
@@ -638,8 +633,7 @@ final class ProviderHistoryNotificationTests: HostedAppTestCase {
             profileID: profileID,
             settings: settings,
             now: now.addingTimeInterval(3),
-            previousStates: crossing.states,
-            sentIdentities: sent
+            previousStates: crossing.states
         )
         XCTAssertEqual(
             reset.events.map(\.identity.kind),
@@ -673,8 +667,7 @@ final class ProviderHistoryNotificationTests: HostedAppTestCase {
                 profileID: UUID(),
                 settings: NotificationSettings(),
                 now: now,
-                previousStates: [:],
-                sentIdentities: []
+                previousStates: [:]
             )
 
             XCTAssertEqual(
@@ -705,8 +698,7 @@ final class ProviderHistoryNotificationTests: HostedAppTestCase {
             profileID: profileID,
             settings: NotificationSettings(),
             now: now,
-            previousStates: [:],
-            sentIdentities: []
+            previousStates: [:]
         )
         XCTAssertTrue(first.events.isEmpty)
         XCTAssertEqual(
@@ -729,8 +721,7 @@ final class ProviderHistoryNotificationTests: HostedAppTestCase {
             profileID: profileID,
             settings: NotificationSettings(),
             now: now.addingTimeInterval(1),
-            previousStates: first.states,
-            sentIdentities: []
+            previousStates: first.states
         )
         XCTAssertEqual(second.events.count, 1)
         XCTAssertEqual(
@@ -1422,7 +1413,7 @@ final class ProviderHistoryNotificationTests: HostedAppTestCase {
         )
     }
 
-    func testInvalidAndFutureNotificationLedgersFailClosedWithoutOverwrite()
+    func testInvalidAndFutureNotificationLedgersResetOnlyForDeletion()
         throws
     {
         let fixtures = [
@@ -1475,12 +1466,41 @@ final class ProviderHistoryNotificationTests: HostedAppTestCase {
                 ),
                 fixture
             )
-            XCTAssertThrowsError(
-                try manager.clearNotificationsForProfile(
-                    profileID,
-                    providerID: .codex
+            try manager.clearNotificationsForProfile(
+                profileID,
+                providerID: .codex
+            )
+            let resetData = try XCTUnwrap(
+                environment.defaults.data(
+                    forKey:
+                        "normalizedUsageNotificationLedger.v1"
                 )
             )
+            let resetObject = try XCTUnwrap(
+                JSONSerialization.jsonObject(
+                    with: resetData
+                ) as? [String: Any]
+            )
+            XCTAssertEqual(resetObject["schemaVersion"] as? Int, 1)
+            XCTAssertEqual(
+                (resetObject["records"] as? [Any])?.count,
+                0
+            )
+
+            manager.checkAndNotify(
+                report: try report(
+                    providerID: .codex,
+                    fetchedAt: now,
+                    windows: [
+                        ("group", "primary", 96, 59_975)
+                    ]
+                ),
+                profileID: profileID,
+                profileName: "Codex",
+                settings: NotificationSettings(),
+                now: now
+            )
+            XCTAssertEqual(requests.count, 1)
         }
     }
 
@@ -1503,8 +1523,7 @@ final class ProviderHistoryNotificationTests: HostedAppTestCase {
             profileID: firstProfile,
             settings: NotificationSettings(),
             now: now,
-            previousStates: [:],
-            sentIdentities: []
+            previousStates: [:]
         )
         let missingFuture = try report(
             providerID: .codex,
@@ -1518,8 +1537,7 @@ final class ProviderHistoryNotificationTests: HostedAppTestCase {
             profileID: firstProfile,
             settings: NotificationSettings(),
             now: now.addingTimeInterval(1),
-            previousStates: first.states,
-            sentIdentities: []
+            previousStates: first.states
         )
         XCTAssertEqual(next.states.count, 2)
         XCTAssertEqual(next.events.map(\.threshold), [75])
@@ -1529,8 +1547,7 @@ final class ProviderHistoryNotificationTests: HostedAppTestCase {
             profileID: secondProfile,
             settings: NotificationSettings(),
             now: now,
-            previousStates: [:],
-            sentIdentities: []
+            previousStates: [:]
         )
         XCTAssertNotEqual(
             Set(first.states.keys.map(\.profileID)),
@@ -1567,8 +1584,7 @@ final class ProviderHistoryNotificationTests: HostedAppTestCase {
             profileID: profileID,
             settings: NotificationSettings(),
             now: now,
-            previousStates: existing,
-            sentIdentities: []
+            previousStates: existing
         )
         XCTAssertTrue(staleResult.events.isEmpty)
         XCTAssertEqual(staleResult.states, existing)
@@ -1585,8 +1601,7 @@ final class ProviderHistoryNotificationTests: HostedAppTestCase {
                 profileID: profileID,
                 settings: NotificationSettings(),
                 now: now,
-                previousStates: existing,
-                sentIdentities: []
+                previousStates: existing
             )
         XCTAssertTrue(unavailableResult.events.isEmpty)
         XCTAssertEqual(unavailableResult.states, existing)
@@ -1601,8 +1616,7 @@ final class ProviderHistoryNotificationTests: HostedAppTestCase {
             profileID: profileID,
             settings: NotificationSettings(),
             now: now.addingTimeInterval(1),
-            previousStates: unavailableResult.states,
-            sentIdentities: []
+            previousStates: unavailableResult.states
         )
         XCTAssertEqual(
             recoveredResult.events.compactMap(\.threshold),

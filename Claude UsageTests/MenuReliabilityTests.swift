@@ -912,7 +912,10 @@ final class MenuReliabilityTests: HostedAppTestCase {
 
         XCTAssertEqual(
             recorder.snapshot(),
-            ["api-history:Initiating name"]
+            [
+                "api-history:Initiating name",
+                "notify:Initiating name:false:Captured sound"
+            ]
         )
 
         router.presented(
@@ -925,8 +928,8 @@ final class MenuReliabilityTests: HostedAppTestCase {
             recorder.snapshot(),
             [
                 "api-history:Initiating name",
-                "statusline:Initiating name",
                 "notify:Initiating name:false:Captured sound",
+                "statusline:Initiating name",
                 "auto:\(profileID.uuidString)"
             ]
         )
@@ -955,6 +958,7 @@ final class MenuReliabilityTests: HostedAppTestCase {
         let recorder = ThreadSafeRecorder()
         let router = makeSideEffectRouter(recorder)
 
+        router.committed(event)
         router.presented(
             event,
             currentContext: context,
@@ -964,9 +968,39 @@ final class MenuReliabilityTests: HostedAppTestCase {
         XCTAssertEqual(
             recorder.snapshot(),
             [
-                "statusline:Captured",
-                "notify:Captured:true:default"
+                "notify:Captured:true:default",
+                "statusline:Captured"
             ]
+        )
+    }
+
+    func testRefreshSideEffectRouterCommitsMultiProfileNotifications()
+    {
+        let profile = Profile(name: "Claude")
+        let context = UsagePresentationContext(
+            epoch: 11,
+            focusedProfileID: profile.id,
+            visibleProfileIDs: [profile.id, UUID()],
+            mode: .multi
+        )
+        let event = makeAcceptedEvent(
+            profileID: profile.id,
+            context: context,
+            components: [.providerUsage]
+        )
+        let recorder = ThreadSafeRecorder()
+        let router = makeSideEffectRouter(recorder)
+
+        router.committed(event)
+        router.presented(
+            event,
+            currentContext: context,
+            activeProfile: profile
+        )
+
+        XCTAssertEqual(
+            recorder.snapshot(),
+            ["notify:Captured:true:default"]
         )
     }
 
@@ -997,7 +1031,10 @@ final class MenuReliabilityTests: HostedAppTestCase {
 
         XCTAssertEqual(
             recorder.snapshot(),
-            ["api-history:Captured"]
+            [
+                "api-history:Captured",
+                "notify:Captured:true:default"
+            ]
         )
     }
 

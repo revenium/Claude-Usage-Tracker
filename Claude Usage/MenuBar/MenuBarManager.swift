@@ -111,6 +111,15 @@ class MenuBarManager: NSObject, ObservableObject {
                let usage = event.currentUsage.apiUsage {
                 hooks.recordAPI(event, usage)
             }
+            if event.acceptedComponents.contains(.providerUsage),
+               event.capabilities.supports(.usageNotifications),
+               let report = event.currentUsage.report,
+               report.providerID == event.identity.providerID {
+                // Notifications are profile-scoped committed effects, not
+                // presentation effects. Multi-profile refreshes intentionally
+                // have no single interactive presentation target.
+                hooks.notifyNormalized(event, report)
+            }
         }
 
         func presented(
@@ -141,14 +150,6 @@ class MenuBarManager: NSObject, ObservableObject {
                     hooks.writeStatusline(event, usage)
                 }
                 if event.capabilities.supports(
-                    .usageNotifications
-                ),
-                   let report = event.currentUsage.report,
-                   report.providerID
-                    == event.identity.providerID {
-                    hooks.notifyNormalized(event, report)
-                }
-                if event.capabilities.supports(
                     .automaticProfileSwitch
                 ) {
                     hooks.autoSwitch(
@@ -157,13 +158,6 @@ class MenuBarManager: NSObject, ObservableObject {
                         activeProfile
                     )
                 }
-            } else if event.capabilities.supports(
-                .usageNotifications
-            ),
-                      let report = event.currentUsage.report,
-                      report.providerID
-                        == event.identity.providerID {
-                hooks.notifyNormalized(event, report)
             }
         }
 

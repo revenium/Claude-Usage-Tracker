@@ -96,6 +96,13 @@ struct UsageNotificationEvaluation: Equatable, Sendable {
 /// Pure threshold/reset policy used by NotificationManager and deterministic
 /// tests. It consumes only normalized provider data and stable identities.
 enum UsageNotificationPolicy {
+    struct EligibleWindow {
+        let groupID: UsageLimitGroupID
+        let groupDisplayName: String?
+        let window: UsageWindow
+        let percentage: Double
+    }
+
     /// Claude's established policy applies only to its effective subscription
     /// session. Provider-owned dynamic windows are otherwise all eligible.
     static func includes(
@@ -122,15 +129,11 @@ enum UsageNotificationPolicy {
             && report.health.status != .unsupported
     }
 
-    static func baselineStates(
-        report: UsageReport,
-        profileID: UUID
-    ) -> [UsageNotificationWindowKey:
-        UsageNotificationWindowState] {
-        var result: [UsageNotificationWindowKey:
-            UsageNotificationWindowState] = [:]
-        for group in report.limitGroups {
-            for window in group.windows {
+    static func eligibleWindows(
+        in report: UsageReport
+    ) -> [EligibleWindow] {
+        report.limitGroups.flatMap { group in
+            group.windows.compactMap { window in
                 guard includes(
                     providerID: report.providerID,
                     groupID: group.id,
@@ -140,24 +143,41 @@ enum UsageNotificationPolicy {
                         ?? window.quantity?
                             .calculatedUsedPercentage,
                       percentage.isFinite else {
-                    continue
+                    return nil
                 }
-                result[
-                    UsageNotificationWindowKey(
-                        profileID: profileID,
-                        providerID: report.providerID,
-                        groupID: group.id,
-                        windowID: window.id
-                    )
-                ] = UsageNotificationWindowState(
-                    cycleID:
-                        NormalizedUsageSnapshot.cycleID(
-                            for: window
-                        ),
-                    percentage: percentage,
-                    lastSeenAt: report.fetchedAt
+                return EligibleWindow(
+                    groupID: group.id,
+                    groupDisplayName: group.displayName,
+                    window: window,
+                    percentage: percentage
                 )
             }
+        }
+    }
+
+    static func baselineStates(
+        report: UsageReport,
+        profileID: UUID
+    ) -> [UsageNotificationWindowKey:
+        UsageNotificationWindowState] {
+        var result: [UsageNotificationWindowKey:
+            UsageNotificationWindowState] = [:]
+        for eligible in eligibleWindows(in: report) {
+            result[
+                UsageNotificationWindowKey(
+                    profileID: profileID,
+                    providerID: report.providerID,
+                    groupID: eligible.groupID,
+                    windowID: eligible.window.id
+                )
+            ] = UsageNotificationWindowState(
+                cycleID:
+                    NormalizedUsageSnapshot.cycleID(
+                        for: eligible.window
+                    ),
+                percentage: eligible.percentage,
+                lastSeenAt: report.fetchedAt
+            )
         }
         return result
     }
@@ -168,8 +188,7 @@ enum UsageNotificationPolicy {
         settings: NotificationSettings,
         now: Date,
         previousStates: [UsageNotificationWindowKey:
-            UsageNotificationWindowState],
-        sentIdentities: Set<String>
+            UsageNotificationWindowState]
     ) -> UsageNotificationEvaluation {
         guard isEligible(
             report: report,
@@ -188,143 +207,102 @@ enum UsageNotificationPolicy {
             threshold in
             (1...100).contains(threshold)
         }
-        for group in report.limitGroups {
-            for window in group.windows {
-                guard includes(
-                    providerID: report.providerID,
-                    groupID: group.id,
-                    windowID: window.id
-                ),
-                      let percentage = window.usedPercentage
-                        ?? window.quantity?
-                            .calculatedUsedPercentage,
-                      percentage.isFinite else {
-                    continue
-                }
-                let key = UsageNotificationWindowKey(
-                    profileID: profileID,
-                    providerID: report.providerID,
-                    groupID: group.id,
-                    windowID: window.id
+        for eligible in eligibleWindows(in: report) {
+            let window = eligible.window
+            let percentage = eligible.percentage
+            let key = UsageNotificationWindowKey(
+                profileID: profileID,
+                providerID: report.providerID,
+                groupID: eligible.groupID,
+                windowID: window.id
+            )
+            let cycleID =
+                NormalizedUsageSnapshot.cycleID(for: window)
+            let previous = previousStates[key]
+            var state: UsageNotificationWindowState
+            if let previous,
+               previous.cycleID == cycleID {
+                state = previous
+                state.percentage = percentage
+                state.lastSeenAt = now
+            } else {
+                state = UsageNotificationWindowState(
+                    cycleID: cycleID,
+                    percentage: percentage,
+                    pendingResetCycleID:
+                        (previous?.percentage ?? 0) > 0
+                        ? cycleID
+                        : nil,
+                    lastSeenAt: now
                 )
-                let cycleID =
-                    NormalizedUsageSnapshot.cycleID(for: window)
-                let previous = previousStates[key]
-                var state: UsageNotificationWindowState
-                if let previous,
-                   previous.cycleID == cycleID {
-                    state = previous
-                    state.percentage = percentage
-                    state.lastSeenAt = now
-                } else {
-                    state = UsageNotificationWindowState(
-                        cycleID: cycleID,
-                        percentage: percentage,
-                        pendingResetCycleID:
-                            (previous?.percentage ?? 0) > 0
-                            ? cycleID
-                            : nil,
-                        lastSeenAt: now
-                    )
-                }
-
-                if state.pendingResetCycleID == cycleID {
-                    let identity = UsageNotificationIdentity(
-                        window: key,
-                        cycleID: cycleID,
-                        kind: .reset,
-                        threshold: nil
-                    )
-                    if sentIdentities.contains(
-                        identity.persistenceKey
-                    ) {
-                        state.pendingResetCycleID = nil
-                    } else {
-                        events.append(
-                            UsageNotificationEvent(
-                                identity: identity,
-                                percentage: percentage,
-                                threshold: nil,
-                                resetTime: window.resetsAt,
-                                groupDisplayName:
-                                    group.displayName,
-                                windowDisplayName:
-                                    window.displayName
-                            )
-                        )
-                    }
-                }
-
-                for threshold in thresholds {
-                    let identity = UsageNotificationIdentity(
-                        window: key,
-                        cycleID: cycleID,
-                        kind: .threshold,
-                        threshold: threshold
-                    )
-                    if sentIdentities.contains(
-                        identity.persistenceKey
-                    ) {
-                        state.highestDeliveredThreshold = max(
-                            state.highestDeliveredThreshold ?? 0,
-                            threshold
-                        )
-                        if state.pendingThreshold == threshold {
-                            state.pendingThreshold = nil
-                        }
-                    }
-                }
-
-                if let pendingThreshold =
-                    state.pendingThreshold,
-                   !thresholds.contains(pendingThreshold) {
-                    state.pendingThreshold = nil
-                }
-
-                if let reachedThreshold = thresholds
-                    .reversed()
-                    .first(where: {
-                        percentage >= Double($0)
-                    }),
-                   reachedThreshold
-                    > (state.highestDeliveredThreshold ?? 0),
-                   reachedThreshold
-                    > (state.pendingThreshold ?? 0) {
-                    state.pendingThreshold = reachedThreshold
-                }
-
-                if let threshold = state.pendingThreshold,
-                   threshold
-                    > (state.highestDeliveredThreshold ?? 0) {
-                    let identity = UsageNotificationIdentity(
-                        window: key,
-                        cycleID: cycleID,
-                        kind: .threshold,
-                        threshold: threshold
-                    )
-                    if !sentIdentities.contains(
-                        identity.persistenceKey
-                    ) {
-                        events.append(
-                            UsageNotificationEvent(
-                                identity: identity,
-                                percentage: max(
-                                    percentage,
-                                    Double(threshold)
-                                ),
-                                threshold: threshold,
-                                resetTime: window.resetsAt,
-                                groupDisplayName:
-                                    group.displayName,
-                                windowDisplayName:
-                                    window.displayName
-                            )
-                        )
-                    }
-                }
-
-                states[key] = state
             }
+
+            if state.pendingResetCycleID == cycleID {
+                let identity = UsageNotificationIdentity(
+                    window: key,
+                    cycleID: cycleID,
+                    kind: .reset,
+                    threshold: nil
+                )
+                events.append(
+                    UsageNotificationEvent(
+                        identity: identity,
+                        percentage: percentage,
+                        threshold: nil,
+                        resetTime: window.resetsAt,
+                        groupDisplayName:
+                            eligible.groupDisplayName,
+                        windowDisplayName:
+                            window.displayName
+                    )
+                )
+            }
+
+            if let pendingThreshold =
+                state.pendingThreshold,
+               !thresholds.contains(pendingThreshold) {
+                state.pendingThreshold = nil
+            }
+
+            if let reachedThreshold = thresholds
+                .reversed()
+                .first(where: {
+                    percentage >= Double($0)
+                }),
+               reachedThreshold
+                > (state.highestDeliveredThreshold ?? 0),
+               reachedThreshold
+                > (state.pendingThreshold ?? 0) {
+                state.pendingThreshold = reachedThreshold
+            }
+
+            if let threshold = state.pendingThreshold,
+               threshold
+                > (state.highestDeliveredThreshold ?? 0) {
+                let identity = UsageNotificationIdentity(
+                    window: key,
+                    cycleID: cycleID,
+                    kind: .threshold,
+                    threshold: threshold
+                )
+                events.append(
+                    UsageNotificationEvent(
+                        identity: identity,
+                        percentage: max(
+                            percentage,
+                            Double(threshold)
+                        ),
+                        threshold: threshold,
+                        resetTime: window.resetsAt,
+                        groupDisplayName:
+                            eligible.groupDisplayName,
+                        windowDisplayName:
+                            window.displayName
+                    )
+                )
+            }
+
+            states[key] = state
         }
         return UsageNotificationEvaluation(
             events: events,
@@ -360,14 +338,11 @@ private struct NormalizedNotificationReservation {
 private enum NotificationStatePersistenceError:
     LocalizedError
 {
-    case normalizedLedgerUnavailable
     case normalizedLedgerWriteFailed
     case legacyStateWriteFailed
 
     var errorDescription: String? {
         switch self {
-        case .normalizedLedgerUnavailable:
-            return "Notification state uses an unreadable or newer schema."
         case .normalizedLedgerWriteFailed,
              .legacyStateWriteFailed:
             return "Notification state could not be saved."
@@ -389,7 +364,7 @@ class NotificationManager: NotificationServiceProtocol {
     private let notificationRequestAdder: NotificationRequestAdder
     private let missingWindowRetention: TimeInterval
     private let maximumMissingWindowsPerScope: Int
-    private let normalizedLedgerIsUsable: Bool
+    private var normalizedLedgerIsUsable: Bool
     private static let normalizedLedgerKey =
         "normalizedUsageNotificationLedger.v1"
     private static let normalizedLedgerSchemaVersion = 1
@@ -542,68 +517,74 @@ class NotificationManager: NotificationServiceProtocol {
             report: report,
             settings: settings,
             now: now
-        ),
-              normalizedLedgerIsUsable else {
+        ) else {
             return
         }
 
-        stateLock.lock()
-        var priorStates = normalizedWindowStates
-        if let previousReport,
-           previousReport.providerID == report.providerID {
-            let persistedBaseline =
-                UsageNotificationPolicy.baselineStates(
-                    report: previousReport,
-                    profileID: profileID
-                )
-            for (key, state) in persistedBaseline
-            where priorStates[key] == nil {
-                priorStates[key] = state
-            }
-        }
-        let evaluation = UsageNotificationPolicy.evaluate(
-            report: report,
-            profileID: profileID,
-            settings: settings,
-            now: now,
-            previousStates: priorStates,
-            sentIdentities: sentNotificationIdentities
-        )
-        normalizedWindowStates = evaluation.states
-        let activeKeys = activeWindowKeys(
-            report: report,
-            profileID: profileID
-        )
-        applyMissingWindowRetentionLocked(
-            profileID: profileID,
-            providerID: report.providerID,
-            activeKeys: activeKeys,
-            now: now
-        )
-        guard persistNormalizedLedgerLocked() else {
-            stateLock.unlock()
-            return
-        }
-        var reservedEvents: [(
+        let reservedEvents: [(
             event: UsageNotificationEvent,
             token: UUID
-        )] = []
-        for event in evaluation.events {
-            let identifier = event.identity.persistenceKey
-            guard normalizedInFlightReservations[
-                identifier
-            ] == nil else {
-                continue
+        )] = {
+            stateLock.lock()
+            defer { stateLock.unlock() }
+            guard normalizedLedgerIsUsable else {
+                return []
             }
-            let token = UUID()
-            normalizedInFlightReservations[identifier] =
-                NormalizedNotificationReservation(
-                    token: token,
-                    window: event.identity.window
-                )
-            reservedEvents.append((event, token))
-        }
-        stateLock.unlock()
+            var priorStates = normalizedWindowStates
+            if let previousReport,
+               previousReport.providerID == report.providerID {
+                let persistedBaseline =
+                    UsageNotificationPolicy.baselineStates(
+                        report: previousReport,
+                        profileID: profileID
+                    )
+                for (key, state) in persistedBaseline
+                where priorStates[key] == nil {
+                    priorStates[key] = state
+                }
+            }
+            let evaluation = UsageNotificationPolicy.evaluate(
+                report: report,
+                profileID: profileID,
+                settings: settings,
+                now: now,
+                previousStates: priorStates
+            )
+            normalizedWindowStates = evaluation.states
+            let activeKeys = activeWindowKeys(
+                report: report,
+                profileID: profileID
+            )
+            applyMissingWindowRetentionLocked(
+                profileID: profileID,
+                providerID: report.providerID,
+                activeKeys: activeKeys,
+                now: now
+            )
+            guard persistNormalizedLedgerLocked() else {
+                return []
+            }
+            var reservations: [(
+                event: UsageNotificationEvent,
+                token: UUID
+            )] = []
+            for event in evaluation.events {
+                let identifier = event.identity.persistenceKey
+                guard normalizedInFlightReservations[
+                    identifier
+                ] == nil else {
+                    continue
+                }
+                let token = UUID()
+                normalizedInFlightReservations[identifier] =
+                    NormalizedNotificationReservation(
+                        token: token,
+                        window: event.identity.window
+                    )
+                reservations.append((event, token))
+            }
+            return reservations
+        }()
         for reservation in reservedEvents {
             sendNormalizedAlert(
                 reservation.event,
@@ -764,31 +745,18 @@ class NotificationManager: NotificationServiceProtocol {
         report: UsageReport,
         profileID: UUID
     ) -> Set<UsageNotificationWindowKey> {
-        var keys: Set<UsageNotificationWindowKey> = []
-        for group in report.limitGroups {
-            for window in group.windows
-            where UsageNotificationPolicy.includes(
-                providerID: report.providerID,
-                groupID: group.id,
-                windowID: window.id
-            ) {
-                guard let percentage = window.usedPercentage
-                        ?? window.quantity?
-                            .calculatedUsedPercentage,
-                      percentage.isFinite else {
-                    continue
-                }
-                keys.insert(
-                    UsageNotificationWindowKey(
-                        profileID: profileID,
-                        providerID: report.providerID,
-                        groupID: group.id,
-                        windowID: window.id
-                    )
+        Set(
+            UsageNotificationPolicy.eligibleWindows(
+                in: report
+            ).map {
+                UsageNotificationWindowKey(
+                    profileID: profileID,
+                    providerID: report.providerID,
+                    groupID: $0.groupID,
+                    windowID: $0.window.id
                 )
             }
-        }
-        return keys
+        )
     }
 
     private func applyMissingWindowRetentionLocked(
@@ -1171,9 +1139,23 @@ class NotificationManager: NotificationServiceProtocol {
     ) throws {
         stateLock.lock()
         defer { stateLock.unlock() }
-        guard normalizedLedgerIsUsable else {
-            throw NotificationStatePersistenceError
-                .normalizedLedgerUnavailable
+        if !normalizedLedgerIsUsable {
+            // An unreadable or future-schema ledger cannot be edited
+            // selectively. Explicit profile deletion must still complete and
+            // must not retain unknown data for the deleted profile, so reset
+            // the whole notification-only ledger with readback verification.
+            defaults.removeObject(
+                forKey: Self.normalizedLedgerKey
+            )
+            guard defaults.data(
+                forKey: Self.normalizedLedgerKey
+            ) == nil else {
+                throw NotificationStatePersistenceError
+                    .normalizedLedgerWriteFailed
+            }
+            normalizedWindowStates.removeAll()
+            normalizedInFlightReservations.removeAll()
+            normalizedLedgerIsUsable = true
         }
         normalizedWindowStates = normalizedWindowStates.filter {
             $0.key.profileID != profileID
