@@ -1024,6 +1024,8 @@
 "codex.account.unsupported" = "此 Codex 账户不提供 ChatGPT 订阅用量信息。";
 "codex.account.unsupported_short" = "不受支持的账户";
 "codex.cli.missing" = "Codex CLI 不可用。请安装 Codex，或确保其可执行文件在 PATH 中可用。";
+"codex.cli_switch.explain" = "将此代码片段添加到 %@ 中一次即可。它适用于每个已链接的 Codex 配置文件——无需为其他配置文件重复此步骤。";
+"codex.cli_switch.title" = "终端 CLI 切换";
 "codex.credentials.owned_by_codex" = "凭据仍保存在此目录中，且仅由 Codex 管理。";
 "codex.feature_unavailable" = "此版本不支持 Codex。";
 "codex.home.choose" = "选择 Codex 主目录";

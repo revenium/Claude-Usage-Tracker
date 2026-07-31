@@ -1028,6 +1028,8 @@
 "codex.account.unsupported" = "Dieses Codex-Konto stellt keine ChatGPT-Abonnementnutzung bereit.";
 "codex.account.unsupported_short" = "Nicht unterstütztes Konto";
 "codex.cli.missing" = "Die Codex-CLI ist nicht verfügbar. Installieren Sie Codex oder machen Sie die ausführbare Datei über PATH verfügbar.";
+"codex.cli_switch.explain" = "Fügen Sie diesen Codeausschnitt einmalig zu %@ hinzu. Er gilt für jedes verknüpfte Codex-Profil — für weitere Profile ist dieser Schritt nicht erforderlich.";
+"codex.cli_switch.title" = "Terminal-CLI-Umschaltung";
 "codex.credentials.owned_by_codex" = "Die Anmeldedaten verbleiben in diesem Verzeichnis und werden ausschließlich von Codex verwaltet.";
 "codex.feature_unavailable" = "Codex-Unterstützung ist in diesem Build nicht verfügbar.";
 "codex.home.choose" = "Codex-Home auswählen";
