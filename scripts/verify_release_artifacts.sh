@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+release_constants_path="$script_dir/release_constants.sh"
+[[ -r $release_constants_path ]] || {
+    echo "error: release constants are not readable: $release_constants_path" >&2
+    exit 66
+}
+# shellcheck source=scripts/release_constants.sh
+source "$release_constants_path"
+
 usage() {
     cat >&2 <<'EOF'
 usage: verify_release_artifacts.sh [options] <zip> <appcast> <sha256-file> <metadata-json>
@@ -56,9 +65,6 @@ for path in "$zip_path" "$appcast_path" "$checksum_path" "$metadata_path"; do
     }
 done
 
-expected_bundle_id='HamedElfayome.Claude-Usage'
-expected_feed='https://github.com/revenium/Claude-Usage-Tracker/releases/latest/download/appcast.xml'
-
 expected_sha=$(awk 'NR == 1 { print $1 }' "$checksum_path")
 actual_sha=$(shasum -a 256 "$zip_path" | awk '{ print $1 }')
 [[ $expected_sha =~ ^[0-9a-f]{64}$ ]] || {
@@ -98,7 +104,7 @@ feed_url=$(plist_value SUFeedURL)
 public_key=$(plist_value SUPublicEDKey)
 channel=$(plist_value ReveniumUpdateChannel)
 
-[[ $bundle_id == "$expected_bundle_id" ]] || {
+[[ $bundle_id == "$release_bundle_identifier" ]] || {
     echo "error: bundle identity changed: $bundle_id" >&2
     exit 65
 }
@@ -106,7 +112,7 @@ channel=$(plist_value ReveniumUpdateChannel)
     echo "error: minimum macOS version changed: $minimum_os" >&2
     exit 65
 }
-[[ $feed_url == "$expected_feed" ]] || {
+[[ $feed_url == "$release_feed_url" ]] || {
     echo "error: release feed is not the Revenium production feed: $feed_url" >&2
     exit 65
 }
@@ -139,7 +145,7 @@ enclosure_url=$(xpath_string '//*[local-name()="enclosure"]/@url')
 enclosure_length=$(xpath_string '//*[local-name()="enclosure"]/@length')
 signature=$(xpath_string '//*[local-name()="enclosure"]/@*[local-name()="edSignature"]')
 
-expected_download_url="https://github.com/revenium/Claude-Usage-Tracker/releases/download/v$version/Claude-Usage.zip"
+expected_download_url="$release_repository_url/releases/download/v$version/Claude-Usage.zip"
 actual_length=$(stat -f%z "$zip_path")
 
 [[ $appcast_version == "$version" ]] || {

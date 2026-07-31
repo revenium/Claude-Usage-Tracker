@@ -953,7 +953,7 @@
 "cli.link_benefit_3" = "Changement automatique lorsque vous modifiez le profil actif";
 "cli.link_button" = "Lier un compte CLI";
 "cli.link_confirm_action" = "Créer et lier";
-"cli.link_confirm_message" = "Cela créera un répertoire de configuration CLI dédié dans ~/.claude-accounts/%@.\\n\\nLes fichiers de ~/.claude/ seront liés par symlink afin que les réglages soient partagés. Seuls les identifiants seront propres à ce profil.\\n\\nRemarque : les nouveaux fichiers ajoutés ultérieurement à ~/.claude/ ne seront pas automatiquement liés par symlink.";
+"cli.link_confirm_message" = "Cela créera un répertoire de configuration CLI dédié dans ~/.claude-accounts/%@.\n\nLes fichiers de ~/.claude/ seront liés par symlink afin que les réglages soient partagés. Seuls les identifiants seront propres à ce profil.\n\nRemarque : les nouveaux fichiers ajoutés ultérieurement à ~/.claude/ ne seront pas automatiquement liés par symlink.";
 "cli.link_confirm_title" = "Lier un compte CLI";
 "cli.link_subtitle" = "Créer une configuration CLI dédiée pour ce profil";
 "cli.link_title" = "Lier un compte CLI";

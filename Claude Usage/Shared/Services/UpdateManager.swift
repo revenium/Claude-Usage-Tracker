@@ -25,9 +25,7 @@ struct SparkleUpdateConfiguration: Equatable {
     static let productionChannel = "production"
     static let testingChannel = "testing"
     static let productionBundleIdentifier = "HamedElfayome.Claude-Usage"
-    static let productionFeedURL = URL(
-        string: "https://github.com/revenium/Claude-Usage-Tracker/releases/latest/download/appcast.xml"
-    )!
+    static let productionFeedURL = URL(string: Constants.GitHub.appcastURL)!
 
     let state: State
 

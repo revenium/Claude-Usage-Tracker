@@ -10,6 +10,12 @@ fail() {
     exit 1
 }
 
+release_constants_path="$script_dir/release_constants.sh"
+[[ -r $release_constants_path ]] \
+    || fail "release constants are not readable: $release_constants_path"
+# shellcheck source=scripts/release_constants.sh
+source "$release_constants_path"
+
 contains() {
     grep -Eq -- "$1" "$2"
 }
@@ -22,9 +28,6 @@ count_matches() {
     grep -Ec -- "$1" "$2" || true
 }
 
-expected_repo='https://github.com/revenium/Claude-Usage-Tracker'
-expected_feed="$expected_repo/releases/latest/download/appcast.xml"
-expected_bundle_id='HamedElfayome.Claude-Usage'
 expected_app_group='group.com.claudeusagetracker.shared'
 
 plutil -lint \
@@ -41,7 +44,7 @@ contains '<string>\$\(REVENIUM_UPDATE_CHANNEL\)</string>' "$info_plist" \
     || fail 'Info.plist must use the injected update channel build setting'
 
 project='Claude Usage.xcodeproj/project.pbxproj'
-bundle_id_count=$(count_matches "PRODUCT_BUNDLE_IDENTIFIER = \"$expected_bundle_id\";" "$project")
+bundle_id_count=$(count_matches "PRODUCT_BUNDLE_IDENTIFIER = \"$release_bundle_identifier\";" "$project")
 [[ $bundle_id_count -eq 2 ]] \
     || fail 'application bundle identifier changed or is not present in both configurations'
 contains 'MACOSX_DEPLOYMENT_TARGET = 14\.0;' "$project" \
@@ -88,13 +91,25 @@ if grep -ERn -- 'github\.io/.+appcast|gh-pages' .github/workflows; then
     fail 'release workflows must not consume or publish the inherited Pages feed'
 fi
 
-contains_fixed "$expected_feed" 'Claude Usage/Shared/Services/UpdateManager.swift' \
-    || fail 'runtime production feed does not match Revenium Releases'
 constants='Claude Usage/Shared/Utilities/Constants.swift'
+[[ $release_feed_url == \
+    "$release_repository_url/releases/latest/download/appcast.xml" ]] \
+    || fail 'shared release feed does not derive from the release repository'
+contains 'productionFeedURL = URL\(string: Constants\.GitHub\.appcastURL\)!' \
+    'Claude Usage/Shared/Services/UpdateManager.swift' \
+    || fail 'runtime production feed does not use the application repository constants'
 contains 'static let owner = "revenium"' "$constants" \
     || fail 'application repository owner is not Revenium'
 contains 'static let repo = "Claude-Usage-Tracker"' "$constants" \
     || fail 'application repository name is not Claude-Usage-Tracker'
+contains_fixed 'static let repoURL = "https://github.com/\(owner)/\(repo)"' \
+    "$constants" \
+    || fail 'application repository URL does not derive from its trusted identity'
+contains_fixed 'static let releasesURL = "\(repoURL)/releases"' "$constants" \
+    || fail 'application releases URL does not derive from its repository URL'
+contains_fixed 'static let appcastURL = "\(releasesURL)/latest/download/appcast.xml"' \
+    "$constants" \
+    || fail 'application appcast path does not target the latest release asset'
 contains 'repos/revenium/homebrew-tap/contents/Casks/claude-usage\.rb' \
     '.github/workflows/update-homebrew-cask.yml' \
     || fail 'Homebrew workflow does not target the Revenium tap'
@@ -172,7 +187,7 @@ while IFS= read -r uses_line; do
     [[ $action_ref =~ ^[0-9a-f]{40}([[:space:]]|$) ]] \
         || fail "GitHub Action is not pinned to a full commit: $uses_line"
 done < <(
-    grep -Eho -- 'uses:[[:space:]]+[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+@[0-9A-Za-z_.-]+' \
+    grep -Eho -- 'uses:[[:space:]]+[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)+@[0-9A-Za-z_.-]+' \
         "${distribution_workflows[@]}" \
         | sed -E 's/^.*uses:[[:space:]]+//'
 )
@@ -187,7 +202,7 @@ trap 'rm -f "$rendered_cask"' EXIT
     '99.99.99' \
     '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' \
     "$rendered_cask" >/dev/null
-contains_fixed "$expected_repo/releases/download/v#{version}/Claude-Usage.zip" "$rendered_cask" \
+contains_fixed "$release_repository_url/releases/download/v#{version}/Claude-Usage.zip" "$rendered_cask" \
     || fail 'rendered cask URL is not the version-pinned Revenium release asset'
 contains 'depends_on macos: ">= :sonoma"' "$rendered_cask" \
     || fail 'rendered cask does not preserve the macOS 14 minimum'

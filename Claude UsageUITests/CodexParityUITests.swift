@@ -199,11 +199,15 @@ final class CodexParityUITests: XCTestCase {
             scenario: "provider_current"
         )
         XCTAssertTrue(
-            element(app, identifier: "profile.row.codex")
+            element(
+                app,
+                identifier:
+                    "profile.row.codex.\(Self.codexProfileID)"
+            )
                 .waitForExistence(timeout: 5)
         )
         XCTAssertTrue(
-            element(app, identifier: "profile.row.claude").exists
+            profileRow(app, provider: "claude").exists
         )
         XCTAssertTrue(
             element(app, identifier: "profile.create").exists
@@ -435,7 +439,7 @@ final class CodexParityUITests: XCTestCase {
         in bin: URL,
         scenario: String
     ) throws {
-        let fixture = URL(fileURLWithPath: #filePath)
+        let fixtureSource = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .appendingPathComponent(
@@ -443,11 +447,22 @@ final class CodexParityUITests: XCTestCase {
                     + "CodexUsageProviderTests/Fixtures/"
                     + "fake-codex-app-server.sh"
             )
+        let fixture = bin.appendingPathComponent(
+            "fake-codex-app-server.sh"
+        )
+        try FileManager.default.copyItem(
+            at: fixtureSource,
+            to: fixture
+        )
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: fixture.path
+        )
         XCTAssertTrue(
             FileManager.default.isExecutableFile(
                 atPath: fixture.path
             ),
-            "Missing executable Codex fixture at \(fixture.path)"
+            "Private Codex fixture is not executable at \(fixture.path)"
         )
         let script: String
         if scenario == "ui_device_login" {
@@ -470,6 +485,20 @@ final class CodexParityUITests: XCTestCase {
             [.posixPermissions: 0o755],
             ofItemAtPath: wrapper.path
         )
+    }
+
+    private func profileRow(
+        _ app: XCUIApplication,
+        provider: String
+    ) -> XCUIElement {
+        app.descendants(matching: .any)
+            .matching(
+                NSPredicate(
+                    format: "identifier BEGINSWITH %@",
+                    "profile.row.\(provider)."
+                )
+            )
+            .firstMatch
     }
 
     private func element(

@@ -135,7 +135,9 @@ final class UITestLaunchConfigurationTests: XCTestCase {
                     codexHomeURL: temporaryRoot.appendingPathComponent(
                         "codex-home",
                         isDirectory: true
-                    ),
+                    )
+                    .standardizedFileURL
+                    .resolvingSymlinksInPath(),
                     seed: .linkedCodex,
                     surface: .account,
                     locale: "de"
