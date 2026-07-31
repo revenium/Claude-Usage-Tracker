@@ -10,11 +10,11 @@
 - Current phase: P17 final hosted/ship gate; P13–P16 implementation and local acceptance are complete
 - B04 merged: PR [#10](https://github.com/revenium/Claude-Usage-Tracker/pull/10), squash `64047219d03ba1aa11401dfc94fa38f89c4add32`
 - B05 base: `64047219d03ba1aa11401dfc94fa38f89c4add32`
-- B05 complete local-matrix source: `8b6a3c2ebd780ed4bed8a90b089edd9fbbf84500`
-- B05 hosted correction source: `8cd3f2ba49eb30a4bc5bfab90648f0bd7fc7bc51`
-- Current validation: 610/610 app tests in serial and parallel modes; 80 UsageKit tests in Debug and Release with one intentional opt-in live-smoke skip; installed Codex 0.145.0 smoke 1/1; 9×994 localization keys and 15/15 fixtures; Debug/universal Release and UI build-for-testing; static/forbidden audit and independent exact-head review clean. Hosted app and distribution CI pass through `869ada4`; the sandbox-aware runner-container correction passes 21/21 parser/security tests, app and dedicated UI `build-for-testing`, diff hygiene, and exact independent review at `8cd3f2b`.
-- Review-size prerequisite: PR [#12](https://github.com/revenium/Claude-Usage-Tracker/pull/12) merged as `16b2a87`; B05 merged that base at `5448504` and now changes exactly 99 files.
-- Next action: push the final tracking head, require hosted `Codex UI parity` 11/11 plus app/distribution CI, complete the canonical Tessie and `$codex-ship-pr skip-review` audits, merge, then archive/delete inherited `gh-pages` by exact SHA and reconcile Linear
+- B05 exhaustive implementation and local-matrix source: `54ce0d12afa844ec77a75a2d7a16622ab223ad00`
+- B05 documentation-only evidence checkpoint: `aeb5965f62724ff1fb9e45698d3168b815d7ce18`; this is a descendant of the implementation source, not a self-reference to the eventual post-review head
+- Current validation at implementation source `54ce0d1`: 631/631 app tests in serial and parallel modes; 80 UsageKit tests in Debug and Release with one intentional opt-in live-smoke skip; installed Codex 0.145.0 smoke 1/1; 9×998 localization keys and 15/15 fixtures; Debug/universal Release and UI build-for-testing; static/forbidden audit and independent exact-source review clean. Hosted app/UI run `30607952002` and Distribution Validation run `30607952004` pass, including Codex UI parity 11/11.
+- Review delta: implementation source `54ce0d1` is 42 files and 6,054 changed lines; documentation-only evidence checkpoint `aeb5965` is 42 files and 6,043 changed lines
+- Next action: complete the canonical Tessie and `$codex-ship-pr skip-review` audits, merge, then archive/delete inherited `gh-pages` by exact SHA and reconcile Linear
 
 ## Repository State at Initialization
 

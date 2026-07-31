@@ -931,8 +931,8 @@ private final class UITestMenuStatusController:
                         target: identity
                     )
                 },
-                onDetach: { [weak self] in
-                    guard let self else { return }
+                onDetach: { [weak self, weak next] in
+                    guard let self, let next else { return }
                     _ = self.detachableWindow(for: next)
                 },
                 onMutateRevision: { [weak self] in
@@ -1391,6 +1391,7 @@ private struct UITestPopoverSurface: View {
     @State private var presentation:
         NormalizedUsagePresentation?
     @State private var isRefreshing = false
+    @State private var refreshGeneration: UInt64 = 0
     @State private var settingsController:
         SettingsWindowNavigationController?
 
@@ -1516,6 +1517,7 @@ private struct UITestPopoverSurface: View {
             onActiveProfileChanged?(profileID)
             guard selectedProfileID == nil else { return }
             presentation = nil
+            refreshGeneration &+= 1
             refresh()
         }
     }
@@ -1534,11 +1536,17 @@ private struct UITestPopoverSurface: View {
     }
 
     private var expectedProfile: NormalizedUsageExpectedProfile {
+        expectedProfile(for: activeProfile)
+    }
+
+    private func expectedProfile(
+        for profile: Profile
+    ) -> NormalizedUsageExpectedProfile {
         NormalizedUsageExpectedProfile(
-            id: activeProfile.id,
-            name: activeProfile.name,
-            providerID: activeProfile.providerID,
-            providerRevision: activeProfile.providerRevision
+            id: profile.id,
+            name: profile.name,
+            providerID: profile.providerID,
+            providerRevision: profile.providerRevision
         )
     }
 
@@ -1557,6 +1565,8 @@ private struct UITestPopoverSurface: View {
                 .codexConfiguration?.linkedHome else {
             return
         }
+        let targetProfile = expectedProfile
+        let generation = refreshGeneration
         isRefreshing = true
         Task {
             let snapshot: PresentationSnapshot
@@ -1571,11 +1581,13 @@ private struct UITestPopoverSurface: View {
                     )
                 let report = try await provider.fetchUsage()
                 snapshot = makeSnapshot(
+                    profile: targetProfile,
                     report: report,
                     failure: nil
                 )
             } catch {
                 snapshot = makeSnapshot(
+                    profile: targetProfile,
                     report: nil,
                     failure: ProviderRefreshFailure(
                         kind: .transport,
@@ -1585,25 +1597,36 @@ private struct UITestPopoverSurface: View {
                     )
                 )
             }
+            let currentHome = activeProfile.providerConfiguration
+                .codexConfiguration?.linkedHome
+            let targetIsCurrent =
+                refreshGeneration == generation
+                && expectedProfile == targetProfile
+                && currentHome == home
+            isRefreshing = false
+            guard targetIsCurrent else {
+                refresh()
+                return
+            }
             presentation =
                 NormalizedUsagePresentationBuilder.make(
                     snapshot: snapshot,
-                    expectedProfile: expectedProfile,
+                    expectedProfile: targetProfile,
                     now: Date()
                 )
-            isRefreshing = false
         }
     }
 
     private func makeSnapshot(
+        profile: NormalizedUsageExpectedProfile,
         report: UsageReport?,
         failure: ProviderRefreshFailure?
     ) -> PresentationSnapshot {
         PresentationSnapshot(
-            profileID: activeProfile.id,
-            profileName: activeProfile.name,
-            providerID: activeProfile.providerID,
-            providerRevision: activeProfile.providerRevision,
+            profileID: profile.id,
+            profileName: profile.name,
+            providerID: profile.providerID,
+            providerRevision: profile.providerRevision,
             presentationEpoch: 1,
             capabilities:
                 compositionRoot.codexProviderFactory.capabilities,

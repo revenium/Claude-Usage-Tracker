@@ -150,9 +150,12 @@ struct ProviderMetricPresentation: Equatable, Identifiable, Sendable {
         let provider = ProviderAppearance.forProvider(
             descriptor.providerID
         )
+        let stateSuffix = state == .ready
+            ? ""
+            : ", \(state.accessibilityText)"
         return "\(provider.displayName), \(descriptor.groupName), "
             + "\(descriptor.metricName), \(percentageText) \(modeText)"
-            + ", \(state.accessibilityText)"
+            + stateSuffix
     }
 }
 
