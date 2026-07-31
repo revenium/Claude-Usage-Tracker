@@ -1038,6 +1038,10 @@
 "codex.unlink.confirmation" = "이는 앱과의 연결만 제거합니다. Codex 자격 증명은 Codex 홈에 그대로 남아 있으며 Codex는 로그아웃되지 않습니다.";
 "codex.unlink.title" = "Codex 홈 연결 해제";
 "common.retry" = "다시 시도";
+"diagnostics.network_logs.cleanup_message" = "이전 네트워크 캡처에 자격 증명이 포함되어 있을 수 있으며 안전하게 제거하지 못했습니다. 정리가 완료될 때까지 네트워크 로깅이 차단됩니다.";
+"diagnostics.network_logs.cleanup_required" = "안전한 정리가 완료될 때까지 네트워크 로그를 사용할 수 없습니다.";
+"diagnostics.network_logs.cleanup_title" = "안전한 정리 필요";
+"diagnostics.network_logs.retry_cleanup" = "안전한 정리 다시 시도";
 "diagnostics.provider.app" = "앱";
 "diagnostics.provider.app_server" = "앱 서버";
 "diagnostics.provider.codex" = "Codex";

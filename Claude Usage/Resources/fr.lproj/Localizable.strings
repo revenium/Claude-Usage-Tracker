@@ -1044,6 +1044,10 @@
 "codex.unlink.confirmation" = "Cela supprime uniquement l'association de l'application. Les identifiants Codex restent dans le Codex Home et Codex n'est pas déconnecté.";
 "codex.unlink.title" = "Délier Codex Home";
 "common.retry" = "Réessayer";
+"diagnostics.network_logs.cleanup_message" = "Une ancienne capture réseau peut contenir des identifiants et n'a pas pu être supprimée en toute sécurité. La journalisation réseau est bloquée jusqu'à ce que le nettoyage réussisse.";
+"diagnostics.network_logs.cleanup_required" = "Les journaux réseau sont indisponibles tant que le nettoyage sécurisé n'a pas réussi.";
+"diagnostics.network_logs.cleanup_title" = "Nettoyage sécurisé requis";
+"diagnostics.network_logs.retry_cleanup" = "Réessayer le nettoyage sécurisé";
 "diagnostics.provider.app" = "Application";
 "diagnostics.provider.app_server" = "Serveur d'application";
 "diagnostics.provider.codex" = "Codex";

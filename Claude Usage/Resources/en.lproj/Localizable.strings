@@ -1091,6 +1091,10 @@
 "codex.unlink.action" = "Unlink";
 "codex.unlink.confirmation" = "This removes only the app's association. Codex credentials remain in the Codex home and Codex is not logged out.";
 "codex.unlink.title" = "Unlink Codex Home";
+"diagnostics.network_logs.cleanup_message" = "A legacy network capture may contain credentials and could not be safely removed. Network logging is blocked until cleanup succeeds.";
+"diagnostics.network_logs.cleanup_required" = "Network logs are unavailable until secure cleanup succeeds.";
+"diagnostics.network_logs.cleanup_title" = "Secure Cleanup Required";
+"diagnostics.network_logs.retry_cleanup" = "Retry Secure Cleanup";
 "diagnostics.provider.app" = "App";
 "diagnostics.provider.app_server" = "App Server";
 "diagnostics.provider.codex" = "Codex";

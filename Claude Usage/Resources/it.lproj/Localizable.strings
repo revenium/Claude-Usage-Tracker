@@ -1064,6 +1064,10 @@
 "codex.unlink.confirmation" = "Questo rimuove solo l'associazione dell'app. Le credenziali di Codex restano nella home di Codex e Codex non viene disconnesso.";
 "codex.unlink.title" = "Scollega home di Codex";
 "common.retry" = "Riprova";
+"diagnostics.network_logs.cleanup_message" = "Una precedente acquisizione di rete potrebbe contenere credenziali e non è stato possibile rimuoverla in modo sicuro. La registrazione di rete è bloccata finché la pulizia non riesce.";
+"diagnostics.network_logs.cleanup_required" = "I log di rete non sono disponibili finché la pulizia sicura non riesce.";
+"diagnostics.network_logs.cleanup_title" = "Pulizia sicura richiesta";
+"diagnostics.network_logs.retry_cleanup" = "Riprova pulizia sicura";
 "diagnostics.provider.app" = "App";
 "diagnostics.provider.app_server" = "Server dell'app";
 "diagnostics.provider.codex" = "Codex";

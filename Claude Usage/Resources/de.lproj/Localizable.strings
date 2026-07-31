@@ -1066,6 +1066,10 @@
 "codex.unlink.confirmation" = "Dadurch wird nur die Zuordnung der App entfernt. Die Codex-Anmeldedaten verbleiben im Codex-Home, und Codex wird nicht abgemeldet.";
 "codex.unlink.title" = "Codex-Home-Verknüpfung aufheben";
 "common.retry" = "Erneut versuchen";
+"diagnostics.network_logs.cleanup_message" = "Eine ältere Netzwerkaufzeichnung kann Anmeldedaten enthalten und konnte nicht sicher entfernt werden. Die Netzwerkprotokollierung bleibt gesperrt, bis die Bereinigung erfolgreich ist.";
+"diagnostics.network_logs.cleanup_required" = "Netzwerkprotokolle sind nicht verfügbar, bis die sichere Bereinigung erfolgreich ist.";
+"diagnostics.network_logs.cleanup_title" = "Sichere Bereinigung erforderlich";
+"diagnostics.network_logs.retry_cleanup" = "Sichere Bereinigung erneut versuchen";
 "diagnostics.provider.app" = "App";
 "diagnostics.provider.app_server" = "App-Server";
 "diagnostics.provider.codex" = "Codex";

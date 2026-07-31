@@ -1062,6 +1062,10 @@
 "codex.unlink.confirmation" = "这只会移除应用中的关联。Codex 凭据仍保留在 Codex 主目录中，Codex 不会退出登录。";
 "codex.unlink.title" = "取消链接 Codex 主目录";
 "common.retry" = "重试";
+"diagnostics.network_logs.cleanup_message" = "旧版网络捕获可能包含凭据，且无法安全移除。在清理成功之前，网络日志记录将被阻止。";
+"diagnostics.network_logs.cleanup_required" = "安全清理成功之前，网络日志不可用。";
+"diagnostics.network_logs.cleanup_title" = "需要安全清理";
+"diagnostics.network_logs.retry_cleanup" = "重试安全清理";
 "diagnostics.provider.app" = "应用";
 "diagnostics.provider.app_server" = "应用服务器";
 "diagnostics.provider.codex" = "Codex";

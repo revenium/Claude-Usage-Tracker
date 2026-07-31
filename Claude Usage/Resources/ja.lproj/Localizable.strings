@@ -1066,6 +1066,10 @@
 "codex.unlink.confirmation" = "これはアプリとの関連付けのみを削除します。Codexの認証情報はCodexホームに残り、Codexからサインアウトされることはありません。";
 "codex.unlink.title" = "Codexホームのリンクを解除";
 "common.retry" = "再試行";
+"diagnostics.network_logs.cleanup_message" = "以前のネットワークキャプチャに認証情報が含まれている可能性があり、安全に削除できませんでした。クリーンアップが成功するまでネットワークログは無効です。";
+"diagnostics.network_logs.cleanup_required" = "安全なクリーンアップが成功するまで、ネットワークログは利用できません。";
+"diagnostics.network_logs.cleanup_title" = "安全なクリーンアップが必要です";
+"diagnostics.network_logs.retry_cleanup" = "安全なクリーンアップを再試行";
 "diagnostics.provider.app" = "アプリ";
 "diagnostics.provider.app_server" = "アプリサーバー";
 "diagnostics.provider.codex" = "Codex";
