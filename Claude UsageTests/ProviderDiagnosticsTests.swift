@@ -336,6 +336,19 @@ final class ProviderDiagnosticsTests: HostedAppTestCase {
                 + SensitiveDataRedactor.redactedValue
                 + "/completion"
         )
+        XCTAssertEqual(
+            SensitiveDataRedactor.redact(
+                #"Request failed for "/organizations/\#(organizationID)/usage" with status 429"#
+            ),
+            #"Request failed for "/organizations/<redacted>/usage" with status 429"#
+        )
+        XCTAssertEqual(
+            SensitiveDataRedactor.redact(
+                #"Request failed for "/organizations/\#(organizationID)/users/p14-private-user""#
+            ),
+            "Request failed for "
+                + SensitiveDataRedactor.redactedPath
+        )
         let unknownNestedRoute =
             SensitiveDataRedactor.redact(
                 "GET /organizations/"
@@ -1998,6 +2011,7 @@ final class ProviderDiagnosticsTests: HostedAppTestCase {
             1
         )
         let childPID = try readPID(from: childPIDFile)
+        defer { _ = Darwin.kill(childPID, SIGKILL) }
         await assertProcessExited(childPID)
     }
 
@@ -2039,6 +2053,9 @@ final class ProviderDiagnosticsTests: HostedAppTestCase {
         let processIdentifier = try readPID(
             from: rootPIDFile
         )
+        defer {
+            _ = Darwin.kill(processIdentifier, SIGKILL)
+        }
         // A zombie still answers kill(pid, 0). Reaching ESRCH therefore proves
         // the event-driven exact-PID source eventually performed waitpid.
         await assertProcessExited(processIdentifier)
@@ -2105,9 +2122,13 @@ final class ProviderDiagnosticsTests: HostedAppTestCase {
             )
             return
         }
-        await assertProcessExited(
-            try readPID(from: rootPIDFile)
+        let processIdentifier = try readPID(
+            from: rootPIDFile
         )
+        defer {
+            _ = Darwin.kill(processIdentifier, SIGKILL)
+        }
+        await assertProcessExited(processIdentifier)
     }
 
     func testVersionProbeCleansTrackedSetsidDescendant()
@@ -2230,6 +2251,11 @@ final class ProviderDiagnosticsTests: HostedAppTestCase {
             readPID(from: childPIDFile),
             readPID(from: grandchildPIDFile)
         ]
+        defer {
+            for processIdentifier in processIdentifiers {
+                _ = Darwin.kill(processIdentifier, SIGKILL)
+            }
+        }
         for processIdentifier in processIdentifiers {
             await assertProcessExited(processIdentifier)
         }
@@ -2241,34 +2267,72 @@ final class ProviderDiagnosticsTests: HostedAppTestCase {
         let repositoryRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-        let files = [
-            "Packages/UsageKit/Sources/CodexUsageProvider/Transport/JSONLTransport.swift",
-            "Packages/UsageKit/Sources/CodexUsageProvider/Transport/CodexAppServerClient.swift",
-            "Packages/UsageKit/Sources/CodexUsageProvider/Transport/BoundedProcess.swift"
+        let transportRoot = repositoryRoot.appendingPathComponent(
+            "Packages/UsageKit/Sources/"
+                + "CodexUsageProvider/Transport"
+        )
+        let files = try FileManager.default.subpathsOfDirectory(
+            atPath: transportRoot.path
+        ).filter {
+            URL(fileURLWithPath: $0).pathExtension == "swift"
+        }.map {
+            transportRoot.appendingPathComponent($0)
+        }
+        XCTAssertFalse(files.isEmpty)
+        let forbiddenPatterns = [
+            #"\b(?:print|debugPrint|dump|os_log|NSLog|fputs)\s*\("#,
+            #"\b(?:LoggingService|Logger|OSLog)\b"#,
+            #"\bFileHandle\.standard(?:Output|Error)\b"#,
+            #"\blog(?:Request|Response|Error)?\s*\("#
         ]
-        let forbidden = [
-            "print(line",
-            "debugPrint(line",
-            "dump(frame",
-            "log(rawResponse",
-            "logRequest(url:",
-            "os_log"
-        ]
+        let forbiddenExpressions = try forbiddenPatterns.map {
+            try NSRegularExpression(pattern: $0)
+        }
 
-        for relativePath in files {
+        for file in files {
             let source = try String(
-                contentsOf:
-                    repositoryRoot.appendingPathComponent(
-                        relativePath
-                    ),
+                contentsOf: file,
                 encoding: .utf8
             )
-            for pattern in forbidden {
-                XCTAssertFalse(
-                    source.contains(pattern),
-                    "\(relativePath) contains \(pattern)"
+            for (pattern, expression) in zip(
+                forbiddenPatterns,
+                forbiddenExpressions
+            ) {
+                let range = NSRange(
+                    source.startIndex...,
+                    in: source
+                )
+                XCTAssertNil(
+                    expression.firstMatch(
+                        in: source,
+                        range: range
+                    ),
+                    "\(file.lastPathComponent) matches \(pattern)"
                 )
             }
+        }
+
+        let unsafeSourceFixtures = [
+            "print (\nrawFrame\n)",
+            "debugPrint(intermediateFrame)",
+            "someLogger.log (\nrawResponse\n)",
+            "import OSLog\nlet sink = Logger()",
+            "FileHandle.standardError.write(rawFrame)"
+        ]
+        for fixture in unsafeSourceFixtures {
+            let range = NSRange(
+                fixture.startIndex...,
+                in: fixture
+            )
+            XCTAssertTrue(
+                forbiddenExpressions.contains {
+                    $0.firstMatch(
+                        in: fixture,
+                        range: range
+                    ) != nil
+                },
+                fixture
+            )
         }
     }
 

@@ -339,11 +339,7 @@ nonisolated enum SensitiveDataRedactor {
     private static func replacingLocalPaths(
         in value: String
     ) -> String {
-        var result = replacing(
-            #""/(?!/)[^"\r\n]+"|'/(?!/)[^'\r\n]+'|\(/(?!/)[^)\r\n]+\)|\[/(?!/)[^\]\r\n]+\]"#,
-            in: value,
-            with: redactedPath
-        )
+        var result = replacingDelimitedLocalPaths(in: value)
         guard let pathExpression = try? NSRegularExpression(
             pattern: localPathPattern
         ),
@@ -368,6 +364,34 @@ nonisolated enum SensitiveDataRedactor {
             }
             guard !isSafeRoute,
                   let matchRange = Range(match.range, in: result) else {
+                continue
+            }
+            result.replaceSubrange(matchRange, with: redactedPath)
+        }
+        return result
+    }
+
+    private static func replacingDelimitedLocalPaths(
+        in value: String
+    ) -> String {
+        guard let expression = try? NSRegularExpression(
+            pattern:
+                #""/(?!/)[^"\r\n]+"|'/(?!/)[^'\r\n]+'|\(/(?!/)[^)\r\n]+\)|\[/(?!/)[^\]\r\n]+\]"#
+        ) else {
+            return value
+        }
+        var result = value
+        let range = NSRange(result.startIndex..., in: result)
+        for match in expression.matches(
+            in: result,
+            range: range
+        ).reversed() {
+            guard let matchRange = Range(match.range, in: result) else {
+                continue
+            }
+            let delimited = result[matchRange]
+            let path = String(delimited.dropFirst().dropLast())
+            guard !isSafeURLPath(path) else {
                 continue
             }
             result.replaceSubrange(matchRange, with: redactedPath)
