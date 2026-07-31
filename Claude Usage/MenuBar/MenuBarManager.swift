@@ -1983,7 +1983,7 @@ class MenuBarManager: NSObject, ObservableObject {
                 profile: profile,
                 snapshot: profileUsagePresentations[profile.id],
                 now: Date(),
-                isActive: profile.id == profileManager.activeProfile?.id
+                isActive: profileManager.isActive(profile)
             )
         let menu: NSMenu
         if Self.usesLegacyContextMenu(for: profile.providerID) {

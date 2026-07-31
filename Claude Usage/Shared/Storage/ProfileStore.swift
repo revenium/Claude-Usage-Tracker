@@ -94,6 +94,12 @@ class ProfileStore {
         static let legacyActiveProfileId = "activeProfileId"
         static let activeClaudeProfileId = "activeClaudeProfileId_v1"
         static let activeCodexProfileId = "activeCodexProfileId_v1"
+        /// The most recently focused profile across both providers,
+        /// independent of the per-provider active slots and of the legacy
+        /// single slot (which is deleted after its first read). Written on
+        /// every focus change so `loadProfiles()` can restore focus on a
+        /// second/later call in the same session, not just the first.
+        static let lastFocusedProfileId = "lastFocusedProfileId_v1"
         static let displayMode = "profileDisplayMode"
         static let multiProfileConfig = "multiProfileDisplayConfig"
         static let pendingCredentialUsageUnlinks =
@@ -436,6 +442,26 @@ class ProfileStore {
     func loadLegacyActiveProfileId() -> UUID? {
         guard let uuidString = defaults.string(
             forKey: Keys.legacyActiveProfileId
+        ) else {
+            return nil
+        }
+        return UUID(uuidString: uuidString)
+    }
+
+    /// Persists the most recently focused profile (independent of the
+    /// per-provider active slots). Pass nil to clear it.
+    func saveLastFocusedProfileId(_ id: UUID?) {
+        if let id {
+            defaults.set(id.uuidString, forKey: Keys.lastFocusedProfileId)
+        } else {
+            defaults.removeObject(forKey: Keys.lastFocusedProfileId)
+        }
+    }
+
+    /// Loads the most recently focused profile id, if any was persisted.
+    func loadLastFocusedProfileId() -> UUID? {
+        guard let uuidString = defaults.string(
+            forKey: Keys.lastFocusedProfileId
         ) else {
             return nil
         }

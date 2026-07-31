@@ -2120,6 +2120,63 @@ final class ProfileProviderCoreTests: HostedAppTestCase {
         XCTAssertEqual(effects.count, 0)
     }
 
+    /// `testDeletingActiveProfileAppliesClaudeSurvivorEffects` above never
+    /// actually exercises `deleteProfile`'s cross-provider `wasFocused`
+    /// fallback (Tessie finding): the lone Claude profile there is
+    /// auto-active by `resolveActiveProfileID`'s single-candidate fallback,
+    /// so `activeProfile` is already the Claude survivor before deletion,
+    /// making `wasFocused` false from the start. This test seeds explicit
+    /// focus (via `lastFocusedProfileId`) onto the Codex profile being
+    /// deleted, verifies that precondition, then confirms the cross-provider
+    /// fallback in `deleteProfile` genuinely moves focus to the other
+    /// provider's active profile when no same-provider survivor exists —
+    /// and that CODEX_HOME is cleared in that no-survivor case.
+    @MainActor
+    func testDeletingFocusedActiveCodexProfileFallsBackToOtherProviderFocus()
+        throws
+    {
+        let defaults = ProviderTestDefaults()
+        let store = retain(ProfileStore(
+            defaults: defaults,
+            secretStore: ProviderSecretStore(),
+            usageFileStore: ProviderUsageStore()
+        ))
+        let target = Profile(
+            name: "Delete Codex",
+            providerConfiguration: .codex(.init())
+        )
+        let claudeSurvivor = Profile(
+            name: "Claude Survivor",
+            claudeSessionKey: "claude-session",
+            organizationId: "org",
+            cliCredentialsJSON: "cli-json",
+            cliAccountName: "account"
+        )
+        try seedProfilesForTesting([target, claudeSurvivor], in: store)
+        store.saveActiveProfileId(target.id, for: .codex)
+        store.saveActiveProfileId(claudeSurvivor.id, for: .claude)
+        store.saveLastFocusedProfileId(target.id)
+        let codexEffects = ProviderCodexEffectCounter()
+        let manager = retain(ProfileManager(
+            profileStore: store,
+            historyService: retain(ProviderHistoryDeleter()),
+            activationClaudeEffects: .noOp,
+            activationCodexEffects: codexEffects.effects
+        ))
+        manager.loadProfiles()
+
+        XCTAssertEqual(
+            manager.activeProfile?.id, target.id,
+            "Precondition: focus must genuinely start on the profile being deleted."
+        )
+
+        try manager.deleteProfile(target.id)
+
+        XCTAssertNil(manager.activeCodexProfile)
+        XCTAssertEqual(manager.activeProfile?.id, claudeSurvivor.id)
+        XCTAssertEqual(codexEffects.clearCount, 1)
+    }
+
     @MainActor
     func testTombstoneDoesNotCountAsUsableLastProfile() throws {
         let defaults = ProviderTestDefaults()
@@ -3236,11 +3293,15 @@ private final class ProviderEffectCounter {
 
 private final class ProviderCodexEffectCounter {
     private(set) var switchedHomes: [CanonicalCodexHome] = []
+    private(set) var clearCount = 0
 
     var effects: ProfileActivationCodexEffects {
         ProfileActivationCodexEffects(
             switchToLinkedHome: { [weak self] home in
                 self?.switchedHomes.append(home)
+            },
+            clearHome: { [weak self] in
+                self?.clearCount += 1
             }
         )
     }

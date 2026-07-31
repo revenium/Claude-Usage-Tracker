@@ -308,22 +308,23 @@ final class CodexParityUITests: XCTestCase {
                 .waitForExistence(timeout: 3)
         )
 
-        let activate = claudeRow.descendants(matching: .any)[
-            "profile.activate"
-        ]
-        activate.click()
-        XCTAssertTrue(
-            activate.waitForNonExistence(timeout: 5),
-            "The exact Claude profile must become active."
-        )
+        // The lone Claude profile is auto-active by design (see
+        // `ProfileManager.resolveActiveProfileID`'s single-candidate
+        // fallback), so it has no "Make Active" affordance to click even
+        // before this rename — renaming it must not disturb that, and must
+        // not disturb Codex's own independently active profile either.
         XCTAssertTrue(
             claudeRow.staticTexts["Active"]
                 .waitForExistence(timeout: 5)
         )
-        XCTAssertTrue(
-            codexRow.descendants(matching: .any)[
-                "profile.activate"
-            ].waitForExistence(timeout: 5)
+        XCTAssertFalse(
+            claudeRow.descendants(matching: .any)["profile.activate"]
+                .exists
+        )
+        XCTAssertFalse(
+            codexRow.descendants(matching: .any)["profile.activate"]
+                .exists,
+            "Renaming Claude must not disturb Codex's independently active profile."
         )
 
         secondCodexRow.descendants(matching: .any)[

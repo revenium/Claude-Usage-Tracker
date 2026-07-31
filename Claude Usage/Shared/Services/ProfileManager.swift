@@ -49,10 +49,14 @@ struct ProfileActivationClaudeEffects {
 /// Codex auth.json/tokens — directory-path-level only.
 struct ProfileActivationCodexEffects {
     var switchToLinkedHome: (CanonicalCodexHome) throws -> Void
+    var clearHome: () -> Void
 
     static let live = ProfileActivationCodexEffects(
         switchToLinkedHome: {
             try CodexSwitchService.shared.switchToHome($0)
+        },
+        clearHome: {
+            CodexSwitchService.shared.clearHome()
         }
     )
 }
@@ -122,6 +126,12 @@ class ProfileManager: ObservableObject {
         didSet {
             if oldValue?.id != activeProfile?.id {
                 activeProfileIdentityGeneration &+= 1
+                // Persist focus independently of the legacy single-slot
+                // key, which is deleted after its first read (see
+                // `loadProfiles()`). Without this, any later call to
+                // `loadProfiles()` in the same session would silently fall
+                // back to the Claude-first tie-break.
+                profileStore.saveLastFocusedProfileId(activeProfile?.id)
             }
         }
     }
@@ -251,13 +261,25 @@ class ProfileManager: ObservableObject {
             profileStore.saveActiveProfileId(id, for: .codex)
         }
 
-        // The focused/displayed profile preserves pre-upgrade behavior:
-        // whatever the single legacy slot pointed at, else whichever
-        // provider resolved an active profile first.
+        // The focused/displayed profile preserves pre-upgrade behavior on
+        // the very first post-upgrade load: whatever the single legacy slot
+        // pointed at. That legacy slot is deleted after this first read (see
+        // `saveActiveProfileId(_:for:)`), so every subsequent call in this
+        // or a later session restores focus from `lastFocusedProfileId`
+        // instead — a dedicated pointer kept in sync via `activeProfile`'s
+        // `didSet`. Without it, any later `loadProfiles()` call would fall
+        // through to the Claude-first tie-break below and silently discard
+        // Codex focus.
+        let lastFocusedID = profileStore.loadLastFocusedProfileId()
         if let legacyActiveID,
            let profile = profiles.first(where: {
                $0.id == legacyActiveID && !$0.deletionInProgress
            }) {
+            activeProfile = profile
+        } else if let lastFocusedID,
+                  let profile = profiles.first(where: {
+                      $0.id == lastFocusedID && !$0.deletionInProgress
+                  }) {
             activeProfile = profile
         } else if let claudeID = activeClaudeProfileID {
             activeProfile = profiles.first(where: { $0.id == claudeID })
@@ -641,6 +663,14 @@ class ProfileManager: ObservableObject {
             if activeProfile?.id == profileID {
                 activeProfile = updated
             }
+            // Unlinking the currently-active Codex profile's home must
+            // clear CODEX_HOME immediately — otherwise terminals keep
+            // using the just-unlinked directory until the next activation.
+            if home == nil,
+               updated.providerConfiguration.kind == .codex,
+               activeProfileID(for: .codex) == profileID {
+                activationCodexEffects.clearHome()
+            }
             if previous.providerConfiguration
                     != updated.providerConfiguration
                 || previous.providerRevision != updated.providerRevision {
@@ -772,6 +802,11 @@ class ProfileManager: ObservableObject {
                     for: deletedKind
                 )
                 applyPostDeletionActivationEffects(providerSurvivor)
+            } else if deletedKind == .codex {
+                // The last active Codex profile was deleted with no
+                // same-provider survivor to switch to — CODEX_HOME must be
+                // cleared rather than left pointing at the deleted profile.
+                activationCodexEffects.clearHome()
             }
         }
 
@@ -816,6 +851,29 @@ class ProfileManager: ObservableObject {
 
     private func applyPostDeletionActivationEffects(_ profile: Profile) {
         guard profile.providerConfiguration.kind == .claude else {
+            // Deleting the active Codex profile elects a same-provider
+            // survivor above; that survivor's terminal state must follow
+            // it, mirroring the Claude branch below.
+            if profile.providerConfiguration.kind == .codex {
+                if let linkedHome = profile.providerConfiguration
+                    .codexConfiguration?.linkedHome {
+                    do {
+                        try activationCodexEffects
+                            .switchToLinkedHome(linkedHome)
+                    } catch {
+                        LoggingService.shared.logError(
+                            "Post-delete CODEX_HOME switch failed",
+                            error: error
+                        )
+                        // Don't leave CODEX_HOME pointed at the deleted
+                        // profile's (now-invalid) home just because the
+                        // survivor's switch failed.
+                        activationCodexEffects.clearHome()
+                    }
+                } else {
+                    activationCodexEffects.clearHome()
+                }
+            }
             return
         }
         if profile.cliCredentialsJSON != nil {
@@ -960,6 +1018,12 @@ class ProfileManager: ObservableObject {
                             error: error
                         )
                     }
+                } else {
+                    // Activating an unlinked profile must clear any
+                    // CODEX_HOME left behind by a previously active linked
+                    // profile — otherwise terminals keep pointing at the
+                    // prior profile's home.
+                    activationCodexEffects.clearHome()
                 }
                 LoggingService.shared.log(
                     "Successfully activated Codex profile: \(updated.name)"

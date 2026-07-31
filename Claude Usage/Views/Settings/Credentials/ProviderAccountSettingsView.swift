@@ -682,22 +682,49 @@ struct ProviderAccountSettingsView: View {
 
     // MARK: - Shell Integration
 
+    /// The user's shell family, detected once from `$SHELL` and shared by
+    /// every shell-specific presentation below so they can never drift out
+    /// of sync with each other.
+    private enum DetectedShellFamily: Equatable {
+        case zsh
+        case bash
+        case fish
+        case other
+
+        init(shellPath: String) {
+            if shellPath.contains("fish") {
+                self = .fish
+            } else if shellPath.contains("zsh") {
+                self = .zsh
+            } else if shellPath.contains("bash") {
+                self = .bash
+            } else {
+                self = .other
+            }
+        }
+    }
+
+    private var detectedShellFamily: DetectedShellFamily {
+        let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+        return DetectedShellFamily(shellPath: shell)
+    }
+
     /// Detects the user's shell and returns the appropriate config file name.
     private var shellConfigFile: String {
-        let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
-        if shell.contains("zsh") {
+        switch detectedShellFamily {
+        case .zsh:
             return "~/.zshrc"
-        } else if shell.contains("bash") {
+        case .bash:
             return "~/.bashrc or ~/.bash_profile"
-        } else if shell.contains("fish") {
+        case .fish:
             return "~/.config/fish/config.fish"
+        case .other:
+            return "your shell configuration file"
         }
-        return "your shell configuration file"
     }
 
     private var shellSnippet: String {
-        let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
-        if shell.contains("fish") {
+        if detectedShellFamily == .fish {
             return """
             # Codex CLI home auto-switch (one-time setup, applies to all profiles)
             if test -f ~/.claude-tokens/.last-codex-home
