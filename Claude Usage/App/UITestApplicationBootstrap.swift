@@ -206,7 +206,7 @@ enum UITestApplicationBootstrap {
                 )
                 profileStore.saveDisplayMode(.multi)
             }
-            profileStore.saveActiveProfileId(codex.id)
+            profileStore.saveActiveProfileId(codex.id, for: .codex)
         } catch {
             assertionFailure(
                 "Unable to seed isolated UI-test profiles: \(error)"

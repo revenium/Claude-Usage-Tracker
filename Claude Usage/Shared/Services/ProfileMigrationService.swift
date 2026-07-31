@@ -54,8 +54,8 @@ class ProfileMigrationService {
 
     func migrateIfNeededThrowing() throws {
         let profiles = try profileStore.loadProfilesWithVerifiedMigration()
-        let previousActiveID = profileStore.loadActiveProfileId()
-        let activeClaude = profileStore.loadActiveProfileId()
+        let previousActiveID = profileStore.loadLegacyActiveProfileId()
+        let activeClaude = previousActiveID
             .flatMap { activeID in
                 profiles.first(where: {
                     $0.id == activeID
@@ -82,7 +82,7 @@ class ProfileMigrationService {
         if previousActiveID.flatMap({ id in
             profiles.first(where: { $0.id == id })
         }) == nil {
-            profileStore.saveActiveProfileId(targetProfile.id)
+            profileStore.saveActiveProfileId(targetProfile.id, for: .claude)
         }
     }
 

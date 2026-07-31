@@ -87,7 +87,13 @@ class ProfileStore {
 
     private enum Keys {
         static let profiles = "profiles_v3"
-        static let activeProfileId = "activeProfileId"
+        /// Legacy single-slot active id. Read-only after migration: a fresh
+        /// install never writes it again, but it remains the source used to
+        /// seed whichever provider owned it the first time per-provider keys
+        /// are loaded.
+        static let legacyActiveProfileId = "activeProfileId"
+        static let activeClaudeProfileId = "activeClaudeProfileId_v1"
+        static let activeCodexProfileId = "activeCodexProfileId_v1"
         static let displayMode = "profileDisplayMode"
         static let multiProfileConfig = "multiProfileDisplayConfig"
         static let pendingCredentialUsageUnlinks =
@@ -401,15 +407,46 @@ class ProfileStore {
         return profiles
     }
 
-    func saveActiveProfileId(_ id: UUID) {
-        defaults.set(id.uuidString, forKey: Keys.activeProfileId)
+    /// Persists the active profile id for one provider. Each provider owns an
+    /// independent slot so activating a Claude profile never disturbs the
+    /// active Codex profile and vice versa.
+    func saveActiveProfileId(_ id: UUID, for kind: ProfileProviderKind) {
+        defaults.set(id.uuidString, forKey: key(for: kind))
+        // A fresh per-provider write supersedes the legacy single slot. It is
+        // no longer read once any per-provider key exists (see
+        // `loadActiveProfileId(for:)`), but clearing it keeps state legible.
+        defaults.removeObject(forKey: Keys.legacyActiveProfileId)
     }
 
-    func loadActiveProfileId() -> UUID? {
-        guard let uuidString = defaults.string(forKey: Keys.activeProfileId) else {
+    /// Loads the active profile id explicitly persisted for one provider.
+    /// Returns nil if that provider has never had its own slot written —
+    /// callers resolve the one-time upgrade migration from
+    /// `loadLegacyActiveProfileId()` themselves, since the legacy id is not
+    /// scoped to either provider and both providers need a chance to claim
+    /// it against their own candidate profiles.
+    func loadActiveProfileId(for kind: ProfileProviderKind) -> UUID? {
+        guard let uuidString = defaults.string(forKey: key(for: kind)) else {
             return nil
         }
         return UUID(uuidString: uuidString)
+    }
+
+    /// The pre-upgrade single active-profile id, if still present. Only used
+    /// as a migration seed by `loadActiveProfileId(for:)`.
+    func loadLegacyActiveProfileId() -> UUID? {
+        guard let uuidString = defaults.string(
+            forKey: Keys.legacyActiveProfileId
+        ) else {
+            return nil
+        }
+        return UUID(uuidString: uuidString)
+    }
+
+    private func key(for kind: ProfileProviderKind) -> String {
+        switch kind {
+        case .claude: return Keys.activeClaudeProfileId
+        case .codex: return Keys.activeCodexProfileId
+        }
     }
 
     func saveDisplayMode(_ mode: ProfileDisplayMode) {

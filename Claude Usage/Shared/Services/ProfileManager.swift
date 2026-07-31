@@ -43,6 +43,20 @@ struct ProfileActivationClaudeEffects {
     }
 }
 
+/// Codex-only activation side effect: switching CODEX_HOME for the terminal
+/// CLI, mirroring `ProfileActivationClaudeEffects.switchAccountAndSync` but
+/// scoped to a directory path rather than an account name. Never touches
+/// Codex auth.json/tokens — directory-path-level only.
+struct ProfileActivationCodexEffects {
+    var switchToLinkedHome: (CanonicalCodexHome) throws -> Void
+
+    static let live = ProfileActivationCodexEffects(
+        switchToLinkedHome: {
+            try CodexSwitchService.shared.switchToHome($0)
+        }
+    )
+}
+
 struct ProfileLifecycleEventSink {
     var deletionStarted: (Profile) -> Void
     var deletionCleanup: (Profile) throws -> Void
@@ -97,6 +111,13 @@ class ProfileManager: ObservableObject {
     static let shared = ProfileManager()
 
     @Published var profiles: [Profile] = []
+    /// The most recently focused/activated profile, regardless of provider.
+    /// Single-display mode, the menu-bar title, and every other "whichever
+    /// profile is currently shown" call site key off this — it is preserved
+    /// exactly as before the per-provider activation split. Provider-scoped
+    /// consumers (Claude CLI sync, statusline, Codex CLI switching, etc.)
+    /// must use `activeClaudeProfile` / `activeCodexProfile` instead, since
+    /// this can point at either provider's profile at any time.
     @Published var activeProfile: Profile? {
         didSet {
             if oldValue?.id != activeProfile?.id {
@@ -105,6 +126,57 @@ class ProfileManager: ObservableObject {
         }
     }
     private(set) var activeProfileIdentityGeneration: UInt64 = 0
+
+    /// The independently active profile for each provider. Activating a
+    /// Claude profile never touches `activeCodexProfileID` and vice versa —
+    /// this is what makes Claude and Codex simultaneously active.
+    @Published private(set) var activeClaudeProfileID: UUID?
+    @Published private(set) var activeCodexProfileID: UUID?
+
+    var activeClaudeProfile: Profile? {
+        guard let id = activeClaudeProfileID else { return nil }
+        return profiles.first(where: { $0.id == id })
+    }
+
+    var activeCodexProfile: Profile? {
+        guard let id = activeCodexProfileID else { return nil }
+        return profiles.first(where: { $0.id == id })
+    }
+
+    /// Returns whether `profile` is the active profile for its own provider.
+    /// Use this (rather than comparing against `activeProfile`) anywhere a
+    /// list mixes Claude and Codex rows and needs a per-row "Active" badge.
+    func isActive(_ profile: Profile) -> Bool {
+        switch profile.providerConfiguration.kind {
+        case .claude:
+            return profile.id == activeClaudeProfileID
+        case .codex:
+            return profile.id == activeCodexProfileID
+        }
+    }
+
+    private func activeProfileID(for kind: ProfileProviderKind) -> UUID? {
+        switch kind {
+        case .claude: return activeClaudeProfileID
+        case .codex: return activeCodexProfileID
+        }
+    }
+
+    private func setActiveProfileID(_ id: UUID?, for kind: ProfileProviderKind) {
+        switch kind {
+        case .claude: activeClaudeProfileID = id
+        case .codex: activeCodexProfileID = id
+        }
+    }
+
+    private func otherProviderActiveProfile(
+        excluding kind: ProfileProviderKind
+    ) -> Profile? {
+        switch kind {
+        case .claude: return activeCodexProfile
+        case .codex: return activeClaudeProfile
+        }
+    }
     @Published var displayMode: ProfileDisplayMode = .single
     @Published var multiProfileConfig: MultiProfileDisplayConfig = .default
     @Published var isSwitchingProfile: Bool = false
@@ -113,6 +185,7 @@ class ProfileManager: ObservableObject {
     private let profileStore: ProfileStore
     private let historyService: any ProfileHistoryDeleting
     private let activationClaudeEffects: ProfileActivationClaudeEffects
+    private let activationCodexEffects: ProfileActivationCodexEffects
     private let codexHomeCanonicalizer: CodexHomeCanonicalizer
     private let lifecycleEventSink: ProfileLifecycleEventSink
     private let postClaudeCreationMigration: (UUID) throws -> Profile
@@ -125,6 +198,7 @@ class ProfileManager: ObservableObject {
         cliSyncService: ClaudeCodeSyncService? = nil,
         historyService: (any ProfileHistoryDeleting)? = nil,
         activationClaudeEffects: ProfileActivationClaudeEffects? = nil,
+        activationCodexEffects: ProfileActivationCodexEffects? = nil,
         codexHomeCanonicalizer: CodexHomeCanonicalizer? = nil,
         lifecycleEventSink: ProfileLifecycleEventSink? = nil,
         postClaudeCreationMigration: ((UUID) throws -> Profile)? = nil,
@@ -136,6 +210,7 @@ class ProfileManager: ObservableObject {
         self.activationClaudeEffects =
             activationClaudeEffects
             ?? .live(cliSyncService: resolvedCLISyncService)
+        self.activationCodexEffects = activationCodexEffects ?? .live
         self.codexHomeCanonicalizer =
             codexHomeCanonicalizer ?? CodexHomeCanonicalizer()
         self.lifecycleEventSink = lifecycleEventSink ?? .live
@@ -153,25 +228,67 @@ class ProfileManager: ObservableObject {
     func loadProfiles() {
         profiles = profileStore.loadProfiles()
 
-        // Load active profile
-        if let activeId = profileStore.loadActiveProfileId(),
+        // A pre-upgrade install has only the single legacy slot. Both
+        // providers get a chance to claim it against their own candidates —
+        // whichever provider actually owned that profile adopts it, and the
+        // other provider falls back to its own first profile.
+        let legacyActiveID = profileStore.loadLegacyActiveProfileId()
+
+        activeClaudeProfileID = resolveActiveProfileID(
+            stored: profileStore.loadActiveProfileId(for: .claude)
+                ?? legacyActiveID,
+            kind: .claude
+        )
+        activeCodexProfileID = resolveActiveProfileID(
+            stored: profileStore.loadActiveProfileId(for: .codex)
+                ?? legacyActiveID,
+            kind: .codex
+        )
+        if let id = activeClaudeProfileID {
+            profileStore.saveActiveProfileId(id, for: .claude)
+        }
+        if let id = activeCodexProfileID {
+            profileStore.saveActiveProfileId(id, for: .codex)
+        }
+
+        // The focused/displayed profile preserves pre-upgrade behavior:
+        // whatever the single legacy slot pointed at, else whichever
+        // provider resolved an active profile first.
+        if let legacyActiveID,
            let profile = profiles.first(where: {
-               $0.id == activeId && !$0.deletionInProgress
+               $0.id == legacyActiveID && !$0.deletionInProgress
            }) {
             activeProfile = profile
+        } else if let claudeID = activeClaudeProfileID {
+            activeProfile = profiles.first(where: { $0.id == claudeID })
+        } else if let codexID = activeCodexProfileID {
+            activeProfile = profiles.first(where: { $0.id == codexID })
         } else {
             activeProfile = profiles.first(where: {
                 !$0.deletionInProgress
             })
-            if let first = activeProfile {
-                profileStore.saveActiveProfileId(first.id)
-            }
         }
 
         displayMode = profileStore.loadDisplayMode()
         multiProfileConfig = profileStore.loadMultiProfileConfig()
 
         LoggingService.shared.log("ProfileManager: Loaded \(profiles.count) profile(s), active: \(activeProfile?.name ?? "none")")
+    }
+
+    /// Resolves the active profile id for one provider: the stored/legacy id
+    /// if it still names a live profile of that provider, else that
+    /// provider's first live profile, else nil if it has none.
+    private func resolveActiveProfileID(
+        stored: UUID?,
+        kind: ProfileProviderKind
+    ) -> UUID? {
+        let candidates = profiles.filter {
+            $0.providerConfiguration.kind == kind && !$0.deletionInProgress
+        }
+        if let stored, candidates.contains(where: { $0.id == stored }) {
+            return stored
+        }
+        return candidates.first?.id
     }
 
     // MARK: - Profile Operations
@@ -227,7 +344,11 @@ class ProfileManager: ObservableObject {
         try profileStore.createInitialProfile(profile)
         profiles = [profile]
         activeProfile = profile
-        profileStore.saveActiveProfileId(profile.id)
+        setActiveProfileID(profile.id, for: profile.providerConfiguration.kind)
+        profileStore.saveActiveProfileId(
+            profile.id,
+            for: profile.providerConfiguration.kind
+        )
         guard profile.providerConfiguration.kind == .claude else {
             return profile
         }
@@ -625,21 +746,49 @@ class ProfileManager: ObservableObject {
         // Atomically retain a scrubbed marker before any destructive cleanup.
         // On failure or relaunch, identity remains for retry without allowing
         // migration envelopes or surviving stores to rehydrate deleted data.
-        let wasActive = activeProfile?.id == id
+        let deletedKind = deletionTarget.providerConfiguration.kind
+        let wasFocused = activeProfile?.id == id
+        let wasProviderActive = activeProfileID(for: deletedKind) == id
         let scrubbedProfile = try profileStore.beginProfileDeletion(id)
         if let index = profiles.firstIndex(where: { $0.id == id }) {
             profiles[index] = scrubbedProfile
         }
         lifecycleEventSink.deletionStarted(scrubbedProfile)
-        if wasActive {
-            if let survivor = profiles.first(where: {
-                $0.id != id && !$0.deletionInProgress
-            }) {
-                activeProfile = survivor
-                profileStore.saveActiveProfileId(survivor.id)
-                applyPostDeletionActivationEffects(survivor)
+
+        // Re-electing the active profile for the deleted profile's own
+        // provider must never pull in a profile from the other provider —
+        // that would silently deactivate a provider that was never touched.
+        var providerSurvivor: Profile?
+        if wasProviderActive {
+            providerSurvivor = profiles.first(where: {
+                $0.id != id
+                    && !$0.deletionInProgress
+                    && $0.providerConfiguration.kind == deletedKind
+            })
+            setActiveProfileID(providerSurvivor?.id, for: deletedKind)
+            if let providerSurvivor {
+                profileStore.saveActiveProfileId(
+                    providerSurvivor.id,
+                    for: deletedKind
+                )
+                applyPostDeletionActivationEffects(providerSurvivor)
+            }
+        }
+
+        if wasFocused {
+            // Prefer a same-provider survivor to keep the focused profile
+            // stable; otherwise fall back to whichever other provider still
+            // has an active profile, then to any remaining profile.
+            if let providerSurvivor {
+                activeProfile = providerSurvivor
+            } else if let otherActive = otherProviderActiveProfile(
+                excluding: deletedKind
+            ) {
+                activeProfile = otherActive
             } else {
-                activeProfile = nil
+                activeProfile = profiles.first(where: {
+                    $0.id != id && !$0.deletionInProgress
+                })
             }
         }
 
@@ -765,8 +914,11 @@ class ProfileManager: ObservableObject {
             return
         }
 
-        if activeProfile?.id == id {
+        if activeProfileID(for: profile.providerConfiguration.kind) == id {
+            // Already active for its own provider — the other provider's
+            // active profile is untouched, but focus still moves to it.
             LoggingService.shared.log("Profile already active: \(profile.name)")
+            activeProfile = profile
             return
         }
 
@@ -780,7 +932,8 @@ class ProfileManager: ObservableObject {
         LoggingService.shared.log("Switching to profile: \(profile.name)")
 
         // The target provider selects the branch before any provider-specific
-        // side effect. Codex selection is app metadata only.
+        // side effect. Activating one provider's profile never reads or
+        // writes the other provider's active slot.
         if profile.providerConfiguration.kind == .codex {
             do {
                 let updated = try profileStore.updateActivationMetadata(
@@ -790,8 +943,24 @@ class ProfileManager: ObservableObject {
                 if let index = profiles.firstIndex(where: { $0.id == id }) {
                     profiles[index] = updated
                 }
+                activeCodexProfileID = id
+                profileStore.saveActiveProfileId(id, for: .codex)
                 activeProfile = updated
-                profileStore.saveActiveProfileId(id)
+                if let linkedHome = updated.providerConfiguration
+                    .codexConfiguration?.linkedHome {
+                    do {
+                        try activationCodexEffects
+                            .switchToLinkedHome(linkedHome)
+                        LoggingService.shared.log(
+                            "✓ Switched CODEX_HOME to: \(linkedHome.path)"
+                        )
+                    } catch {
+                        LoggingService.shared.logError(
+                            "Failed to switch CODEX_HOME (non-fatal)",
+                            error: error
+                        )
+                    }
+                }
                 LoggingService.shared.log(
                     "Successfully activated Codex profile: \(updated.name)"
                 )
@@ -804,8 +973,10 @@ class ProfileManager: ObservableObject {
             return
         }
 
-        // Re-sync current profile before leaving (if CLI credentials exist)
-        if let currentProfile = activeProfile, currentProfile.cliCredentialsJSON != nil {
+        // Re-sync the outgoing Claude profile before leaving (if CLI
+        // credentials exist). This is scoped to the active *Claude* profile,
+        // not whichever profile is merely focused/displayed.
+        if let currentProfile = activeClaudeProfile, currentProfile.cliCredentialsJSON != nil {
             do {
                 try activationClaudeEffects
                     .resyncBeforeSwitching(currentProfile.id)
@@ -860,8 +1031,9 @@ class ProfileManager: ObservableObject {
             profiles[index] = updated
         }
 
+        activeClaudeProfileID = id
+        profileStore.saveActiveProfileId(id, for: .claude)
         activeProfile = updated
-        profileStore.saveActiveProfileId(id)
         profileStore.saveProfiles(profiles)
 
         // Update statusline script if the new profile has credentials
