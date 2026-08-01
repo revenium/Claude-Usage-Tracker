@@ -189,7 +189,17 @@ class ProfileManager: ObservableObject {
     }
     @Published var displayMode: ProfileDisplayMode = .single
     @Published var multiProfileConfig: MultiProfileDisplayConfig = .default
-    @Published var providerBadgeStyle: ProviderBadgeStyle = .none
+    /// Independent toggles, both off by default. See `providerBadgeStyle`
+    /// for the combined value the renderer consumes.
+    @Published var providerBadgeGlyphEnabled: Bool = false
+    @Published var providerBadgeTintEnabled: Bool = false
+
+    var providerBadgeStyle: ProviderBadgeStyle {
+        ProviderBadgeStyle(
+            glyphEnabled: providerBadgeGlyphEnabled,
+            tintEnabled: providerBadgeTintEnabled
+        )
+    }
     @Published var isSwitchingProfile: Bool = false
     @Published private(set) var legacyMigrationPendingProfileID: UUID?
 
@@ -294,7 +304,8 @@ class ProfileManager: ObservableObject {
 
         displayMode = profileStore.loadDisplayMode()
         multiProfileConfig = profileStore.loadMultiProfileConfig()
-        providerBadgeStyle = profileStore.loadProviderBadgeStyle()
+        providerBadgeGlyphEnabled = profileStore.loadProviderBadgeGlyphEnabled()
+        providerBadgeTintEnabled = profileStore.loadProviderBadgeTintEnabled()
 
         LoggingService.shared.log("ProfileManager: Loaded \(profiles.count) profile(s), active: \(activeProfile?.name ?? "none")")
     }
@@ -972,12 +983,21 @@ class ProfileManager: ObservableObject {
         }
     }
 
-    func updateProviderBadgeStyle(_ style: ProviderBadgeStyle) {
+    func updateProviderBadgeGlyphEnabled(_ enabled: Bool) {
         // Use async to avoid "Publishing changes from within view updates" warning
         DispatchQueue.main.async { [weak self] in
-            self?.providerBadgeStyle = style
-            self?.profileStore.saveProviderBadgeStyle(style)
-            LoggingService.shared.log("Updated provider badge style: \(style.rawValue)")
+            self?.providerBadgeGlyphEnabled = enabled
+            self?.profileStore.saveProviderBadgeGlyphEnabled(enabled)
+            LoggingService.shared.log("Updated provider badge glyph enabled: \(enabled)")
+        }
+    }
+
+    func updateProviderBadgeTintEnabled(_ enabled: Bool) {
+        // Use async to avoid "Publishing changes from within view updates" warning
+        DispatchQueue.main.async { [weak self] in
+            self?.providerBadgeTintEnabled = enabled
+            self?.profileStore.saveProviderBadgeTintEnabled(enabled)
+            LoggingService.shared.log("Updated provider badge tint enabled: \(enabled)")
         }
     }
 

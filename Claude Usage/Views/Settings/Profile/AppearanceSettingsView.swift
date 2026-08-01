@@ -251,29 +251,62 @@ struct AppearanceSettingsView: View {
 
     // MARK: - Helper Methods
 
-    /// Lets the user pick how Claude vs Codex status items are visually
-    /// distinguished in the menu bar without clicking. Global (like
+    /// Lets the user independently enable a provider glyph and/or a provider
+    /// background tint so Claude vs Codex status items are visually
+    /// distinguished in the menu bar without clicking. Both default off
+    /// (unchanged current behavior); turning both on is the combined look —
+    /// there is no separate combined option. Global (like
     /// `multiProfileConfig`), not per-profile, since it applies to every
     /// provider's status items at once.
     @ViewBuilder
     private var providerBadgePicker: some View {
-        Picker("", selection: Binding(
-            get: { profileManager.providerBadgeStyle },
-            set: { newStyle in
-                profileManager.updateProviderBadgeStyle(newStyle)
-                NotificationCenter.default.post(
-                    name: .menuBarIconConfigChanged,
-                    object: nil
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.cardPadding) {
+            SettingToggle(
+                title: NSLocalizedString(
+                    "appearance.provider_badge_glyph_title",
+                    value: "Provider glyph",
+                    comment: ""
+                ),
+                description: NSLocalizedString(
+                    "appearance.provider_badge_glyph_description",
+                    value: "Show a small provider mark before each item's content.",
+                    comment: ""
+                ),
+                isOn: Binding(
+                    get: { profileManager.providerBadgeGlyphEnabled },
+                    set: { newValue in
+                        profileManager.updateProviderBadgeGlyphEnabled(newValue)
+                        NotificationCenter.default.post(
+                            name: .menuBarIconConfigChanged,
+                            object: nil
+                        )
+                    }
                 )
-            }
-        )) {
-            ForEach(ProviderBadgeStyle.allCases, id: \.self) { style in
-                Text(style.displayName).tag(style)
-            }
+            )
+
+            SettingToggle(
+                title: NSLocalizedString(
+                    "appearance.provider_badge_tint_title",
+                    value: "Provider background tint",
+                    comment: ""
+                ),
+                description: NSLocalizedString(
+                    "appearance.provider_badge_tint_description",
+                    value: "Show a faint provider-colored background behind each item.",
+                    comment: ""
+                ),
+                isOn: Binding(
+                    get: { profileManager.providerBadgeTintEnabled },
+                    set: { newValue in
+                        profileManager.updateProviderBadgeTintEnabled(newValue)
+                        NotificationCenter.default.post(
+                            name: .menuBarIconConfigChanged,
+                            object: nil
+                        )
+                    }
+                )
+            )
         }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder
