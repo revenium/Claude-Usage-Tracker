@@ -291,27 +291,26 @@ struct UsageSnapshot: Codable, Identifiable, Equatable {
         self.triggeringResetTime = triggeringResetTime
     }
 
-    /// Creates a snapshot from ClaudeUsage data (for session reset)
+    /// Creates a snapshot from ClaudeUsage data (for session reset).
+    /// Token fields are intentionally omitted: Claude's API reports only
+    /// utilization percentages, so any token count would be fabricated.
     static func fromSessionReset(_ usage: ClaudeUsage, resetTime: Date) -> UsageSnapshot {
         UsageSnapshot(
             resetType: .sessionReset,
-            sessionTokensUsed: usage.sessionTokensUsed,
             sessionPercentage: usage.sessionPercentage,
             triggeringResetTime: resetTime
         )
     }
 
-    /// Creates a snapshot from ClaudeUsage data (for weekly reset)
+    /// Creates a snapshot from ClaudeUsage data (for weekly reset).
+    /// Token fields are intentionally omitted: Claude's API reports only
+    /// utilization percentages, so any token count would be fabricated.
     static func fromWeeklyReset(_ usage: ClaudeUsage, resetTime: Date) -> UsageSnapshot {
         UsageSnapshot(
             resetType: .weeklyReset,
-            weeklyTokensUsed: usage.weeklyTokensUsed,
             weeklyPercentage: usage.weeklyPercentage,
-            opusWeeklyTokensUsed: usage.opusWeeklyTokensUsed,
             opusWeeklyPercentage: usage.opusWeeklyPercentage,
-            sonnetWeeklyTokensUsed: usage.sonnetWeeklyTokensUsed,
             sonnetWeeklyPercentage: usage.sonnetWeeklyPercentage,
-            fableWeeklyTokensUsed: usage.fableWeeklyTokensUsed,
             fableWeeklyPercentage: usage.fableWeeklyPercentage,
             triggeringResetTime: resetTime
         )

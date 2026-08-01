@@ -433,10 +433,10 @@ class UsageHistoryService: ProfileHistoryDeleting {
             }
         }
 
-        // Create periodic snapshot
+        // Create periodic snapshot (percentages only — Claude's API does not
+        // report token counts, so none are recorded)
         let snapshot = UsageSnapshot(
             resetType: .sessionReset,
-            sessionTokensUsed: usage.sessionTokensUsed,
             sessionPercentage: usage.sessionPercentage,
             triggeringResetTime: now
         )
@@ -465,16 +465,13 @@ class UsageHistoryService: ProfileHistoryDeleting {
             }
         }
 
-        // Create periodic snapshot
+        // Create periodic snapshot (percentages only — Claude's API does not
+        // report token counts, so none are recorded)
         let snapshot = UsageSnapshot(
             resetType: .weeklyReset,
-            weeklyTokensUsed: usage.weeklyTokensUsed,
             weeklyPercentage: usage.weeklyPercentage,
-            opusWeeklyTokensUsed: usage.opusWeeklyTokensUsed,
             opusWeeklyPercentage: usage.opusWeeklyPercentage,
-            sonnetWeeklyTokensUsed: usage.sonnetWeeklyTokensUsed,
             sonnetWeeklyPercentage: usage.sonnetWeeklyPercentage,
-            fableWeeklyTokensUsed: usage.fableWeeklyTokensUsed,
             fableWeeklyPercentage: usage.fableWeeklyPercentage,
             triggeringResetTime: now
         )
