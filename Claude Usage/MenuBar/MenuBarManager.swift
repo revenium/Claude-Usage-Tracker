@@ -738,17 +738,14 @@ class MenuBarManager: NSObject, ObservableObject {
         activeProfileID: UUID?,
         presentations: [UUID: PresentationSnapshot]
     ) -> PresentationSnapshot? {
-        switch displayMode {
-        case .single:
-            guard let activeProfileID else { return nil }
-            return presentations[activeProfileID]
-        case .multi:
-            if let clickedProfileID {
-                return presentations[clickedProfileID]
-            }
-            guard let activeProfileID else { return nil }
-            return presentations[activeProfileID]
+        // `displayMode` no longer changes this selection: viewing a
+        // non-active profile via `setViewedProfile` must work identically
+        // in single- and multi-profile display mode.
+        if let clickedProfileID {
+            return presentations[clickedProfileID]
         }
+        guard let activeProfileID else { return nil }
+        return presentations[activeProfileID]
     }
 
     /// Changes which profile's data the popover displays, without touching

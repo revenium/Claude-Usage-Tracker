@@ -432,7 +432,7 @@ final class MenuReliabilityTests: HostedAppTestCase {
 
         let claude = MenuBarManager.selectDisplayedUsagePresentation(
             displayMode: .single,
-            clickedProfileID: codexID,
+            clickedProfileID: nil,
             activeProfileID: claudeID,
             presentations: presentations
         )
@@ -654,6 +654,92 @@ final class MenuReliabilityTests: HostedAppTestCase {
         manager.cleanup()
     }
 
+    func testSetViewedProfileChangesDisplayWithoutActivatingInSingleMode() {
+        let claudeProfile = Profile(name: "jc@example.com")
+        let codexProfile = Profile(
+            name: "codex",
+            providerConfiguration: .codex(.init())
+        )
+        let profileManager = retain(ProfileManager())
+        profileManager.profiles = [claudeProfile, codexProfile]
+        profileManager.activeProfile = claudeProfile
+        profileManager.displayMode = .single
+        let apiService = retain(ClaudeAPIService(
+            profileManager: profileManager,
+            systemCredentialsReader: { nil }
+        ))
+        let statusService = retain(ClaudeStatusService())
+        let runtime = retain(UsageRefreshRuntime.live(
+            profileManager: profileManager,
+            apiService: apiService,
+            statusService: statusService,
+            featureAvailability: .testing()
+        ))
+        let providerUIDependencies = retain(
+            ProviderUIDependencies(
+                profileManager: profileManager,
+                codexProviderFactory: CodexProviderFactory(
+                    availability: .testing()
+                )
+            )
+        )
+        let manager = retain(MenuBarManager(
+            apiService: apiService,
+            statusService: statusService,
+            profileManager: profileManager,
+            refreshRuntime: runtime,
+            providerUIDependencies: providerUIDependencies
+        ))
+        let context = UsagePresentationContext(
+            epoch: 1,
+            focusedProfileID: claudeProfile.id,
+            visibleProfileIDs: [claudeProfile.id, codexProfile.id],
+            mode: .multi
+        )
+        runtime.presentationStore.activate(context)
+        XCTAssertTrue(
+            runtime.presentationStore.publish(
+                makePresentationSnapshot(
+                    profileID: claudeProfile.id,
+                    profileName: claudeProfile.name,
+                    providerID: .claude,
+                    presentationEpoch: context.epoch
+                ),
+                expected: context
+            )
+        )
+        XCTAssertTrue(
+            runtime.presentationStore.publish(
+                makePresentationSnapshot(
+                    profileID: codexProfile.id,
+                    profileName: codexProfile.name,
+                    providerID: .codex,
+                    presentationEpoch: context.epoch
+                ),
+                expected: context
+            )
+        )
+
+        // Default view follows the active (Claude) profile.
+        XCTAssertEqual(
+            manager.displayedUsagePresentation?.profileID,
+            claudeProfile.id
+        )
+
+        manager.setViewedProfile(codexProfile.id)
+
+        XCTAssertEqual(manager.clickedProfileId, codexProfile.id)
+        XCTAssertEqual(
+            manager.displayedUsagePresentation?.profileID,
+            codexProfile.id
+        )
+        // Activation state must be untouched — the switch is view-only.
+        XCTAssertEqual(profileManager.activeProfile?.id, claudeProfile.id)
+        XCTAssertFalse(profileManager.isActive(codexProfile))
+
+        manager.cleanup()
+    }
+
     func testSetViewedProfileIgnoresUnknownProfileID() {
         let claudeProfile = Profile(name: "jc@example.com")
         let profileManager = retain(ProfileManager())
@@ -693,7 +779,7 @@ final class MenuReliabilityTests: HostedAppTestCase {
         manager.cleanup()
     }
 
-    func testSingleProfilePresentationIgnoresStaleClickedProfile() {
+    func testSingleProfilePresentationHonorsClickedProfile() {
         let activeID = UUID()
         let clickedID = UUID()
         let presentations = [
@@ -714,7 +800,7 @@ final class MenuReliabilityTests: HostedAppTestCase {
             presentations: presentations
         )
 
-        XCTAssertEqual(selected?.profileID, activeID)
+        XCTAssertEqual(selected?.profileID, clickedID)
     }
 
     func testMultiProfilePresentationSelectsClickedThenActive() {
@@ -857,7 +943,7 @@ final class MenuReliabilityTests: HostedAppTestCase {
 
         let selected = MenuBarManager.selectDisplayedUsagePresentation(
             displayMode: .single,
-            clickedProfileID: UUID(),
+            clickedProfileID: nil,
             activeProfileID: profileID,
             presentations: [profileID: snapshot]
         )

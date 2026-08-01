@@ -1375,7 +1375,7 @@ private struct UITestSetupSurface: View {
 @MainActor
 private struct UITestPopoverSurface: View {
     let compositionRoot: ProviderUICompositionRoot
-    var selectedProfileID: UUID? = nil
+    @State private var viewedProfileID: UUID? = nil
     var onRefreshOverride: (() -> Void)? = nil
     var onManageProfilesOverride: (() -> Void)? = nil
     var onPreferencesOverride: (() -> Void)? = nil
@@ -1403,7 +1403,7 @@ private struct UITestPopoverSurface: View {
         onActiveProfileChanged: ((UUID?) -> Void)? = nil
     ) {
         self.compositionRoot = compositionRoot
-        self.selectedProfileID = selectedProfileID
+        _viewedProfileID = State(initialValue: selectedProfileID)
         self.onRefreshOverride = onRefreshOverride
         self.onManageProfilesOverride = onManageProfilesOverride
         self.onPreferencesOverride = onPreferencesOverride
@@ -1425,9 +1425,7 @@ private struct UITestPopoverSurface: View {
                 claudeStatus: .unknown,
                 isRefreshing: isRefreshing,
                 onSelectProfile: { id in
-                    Task {
-                        await profileManager.activateProfile(id)
-                    }
+                    viewedProfileID = id
                 },
                 onRefresh: onRefreshOverride ?? refresh,
                 onManageProfiles: {
@@ -1516,7 +1514,7 @@ private struct UITestPopoverSurface: View {
             of: profileManager.activeProfile?.id
         ) { _, profileID in
             onActiveProfileChanged?(profileID)
-            guard selectedProfileID == nil else { return }
+            guard viewedProfileID == nil else { return }
             presentation = nil
             refreshGeneration &+= 1
             refresh()
@@ -1524,7 +1522,7 @@ private struct UITestPopoverSurface: View {
     }
 
     private var activeProfile: Profile {
-        selectedProfileID.flatMap { selectedID in
+        viewedProfileID.flatMap { selectedID in
             profileManager.profiles.first {
                 $0.id == selectedID
             }
