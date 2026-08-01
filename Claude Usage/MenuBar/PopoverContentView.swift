@@ -128,8 +128,9 @@ enum LegacyPopoverBanner: Equatable {
 /// driving SwiftUI: every notice with a disclosure affordance must resolve
 /// to real text, never an empty or purely decorative expansion.
 enum LegacyPopoverBannerDetail: Equatable {
-    /// Reuses the same provider-neutral vocabulary as the normalized notice
-    /// list (`NormalizedUsagePresentationBuilder`) rather than inventing
+    /// Single-sourced from `NormalizedUsageFailureVocabulary`, the same
+    /// provider-neutral vocabulary the normalized notice list
+    /// (`NormalizedUsagePresentationBuilder`) uses, rather than duplicating
     /// Claude-specific copy, since the failure kinds themselves are
     /// provider-neutral.
     static func explanationLocalization(
@@ -137,27 +138,15 @@ enum LegacyPopoverBannerDetail: Equatable {
     ) -> (key: String, default: String) {
         switch failureKind {
         case .unauthenticated:
-            return (
-                "popover.normalized.notice.unauthenticated",
-                "Sign in again to refresh usage."
-            )
+            return NormalizedUsageFailureVocabulary.unauthenticated
         case .unsupportedAccount:
-            return (
-                "popover.normalized.notice.unsupported_account",
-                "This account does not expose subscription usage."
-            )
+            return NormalizedUsageFailureVocabulary.unsupportedAccount
         case .disabled, .unlinked, .dependencyMissing,
              .invalidConfiguration:
-            return (
-                "popover.normalized.notice.configuration",
-                "This profile needs attention before it can refresh."
-            )
+            return NormalizedUsageFailureVocabulary.configuration
         case .transport, .protocolMismatch, .malformedResponse,
              .timedOut, .persistence, .unknown, nil:
-            return (
-                "popover.normalized.notice.refresh_failed",
-                "The latest refresh failed; showing cached usage."
-            )
+            return NormalizedUsageFailureVocabulary.refreshFailed
         }
     }
 

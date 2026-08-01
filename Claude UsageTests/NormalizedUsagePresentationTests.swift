@@ -75,6 +75,35 @@ final class NormalizedUsagePresentationTests: HostedAppTestCase {
         )
     }
 
+    /// The legacy expandable banner's failure explanations must be
+    /// single-sourced from the same vocabulary as the normalized notice
+    /// list, not an independently maintained copy that can drift.
+    func testLegacyBannerExplanationsReuseNormalizedNoticeVocabulary() {
+        XCTAssertEqual(
+            LegacyPopoverBannerDetail.explanationLocalization(
+                for: .unauthenticated
+            ).key,
+            NormalizedUsageFailureVocabulary.unauthenticated.key
+        )
+        XCTAssertEqual(
+            LegacyPopoverBannerDetail.explanationLocalization(
+                for: .unsupportedAccount
+            ).default,
+            NormalizedUsageFailureVocabulary.unsupportedAccount.default
+        )
+        XCTAssertEqual(
+            LegacyPopoverBannerDetail.explanationLocalization(
+                for: .invalidConfiguration
+            ).key,
+            NormalizedUsageFailureVocabulary.configuration.key
+        )
+        XCTAssertEqual(
+            LegacyPopoverBannerDetail.explanationLocalization(for: nil)
+                .default,
+            NormalizedUsageFailureVocabulary.refreshFailed.default
+        )
+    }
+
     func testLastSuccessTextReflectsKnownAndUnknownRefreshTime() {
         XCTAssertEqual(
             LegacyPopoverBannerDetail.lastSuccessText(

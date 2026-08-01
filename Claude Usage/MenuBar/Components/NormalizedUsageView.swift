@@ -177,6 +177,29 @@ struct NormalizedUsageNotice: Equatable, Identifiable {
     }
 }
 
+/// Provider-neutral copy for the refresh/configuration/health conditions
+/// shared between the normalized notice list built below and
+/// `LegacyPopoverBannerDetail`'s expandable-banner explanation (which
+/// previously duplicated the same four strings independently).
+enum NormalizedUsageFailureVocabulary {
+    static let unauthenticated = (
+        key: "popover.normalized.notice.unauthenticated",
+        default: "Sign in again to refresh usage."
+    )
+    static let unsupportedAccount = (
+        key: "popover.normalized.notice.unsupported_account",
+        default: "This account does not expose subscription usage."
+    )
+    static let configuration = (
+        key: "popover.normalized.notice.configuration",
+        default: "This profile needs attention before it can refresh."
+    )
+    static let refreshFailed = (
+        key: "popover.normalized.notice.refresh_failed",
+        default: "The latest refresh failed; showing cached usage."
+    )
+}
+
 enum NormalizedUsageEmptyState: String, Equatable {
     case missingSnapshot = "missing-snapshot"
     case loading
@@ -337,10 +360,12 @@ enum NormalizedUsagePresentationBuilder {
             notices.append(
                 notice(
                     .refreshFailed,
-                    key: "popover.normalized.notice.refresh_failed",
+                    key: NormalizedUsageFailureVocabulary
+                        .refreshFailed.key,
                     default: report == nil
                         ? "Usage could not be refreshed."
-                        : "The latest refresh failed; showing cached usage."
+                        : NormalizedUsageFailureVocabulary
+                            .refreshFailed.default
                 )
             )
         }
@@ -555,16 +580,20 @@ enum NormalizedUsagePresentationBuilder {
             notices.append(
                 notice(
                     .unauthenticated,
-                    key: "popover.normalized.notice.unauthenticated",
-                    default: "Sign in again to refresh usage."
+                    key: NormalizedUsageFailureVocabulary
+                        .unauthenticated.key,
+                    default: NormalizedUsageFailureVocabulary
+                        .unauthenticated.default
                 )
             )
         case .unsupported:
             notices.append(
                 notice(
                     .unsupported,
-                    key: "popover.normalized.notice.unsupported_account",
-                    default: "This account does not expose subscription usage."
+                    key: NormalizedUsageFailureVocabulary
+                        .unsupportedAccount.key,
+                    default: NormalizedUsageFailureVocabulary
+                        .unsupportedAccount.default
                 )
             )
         }
@@ -581,24 +610,30 @@ enum NormalizedUsagePresentationBuilder {
             notices.append(
                 notice(
                     .unauthenticated,
-                    key: "popover.normalized.notice.unauthenticated",
-                    default: "Sign in again to refresh usage."
+                    key: NormalizedUsageFailureVocabulary
+                        .unauthenticated.key,
+                    default: NormalizedUsageFailureVocabulary
+                        .unauthenticated.default
                 )
             )
         case .unsupported:
             notices.append(
                 notice(
                     .unsupported,
-                    key: "popover.normalized.notice.unsupported_account",
-                    default: "This account does not expose subscription usage."
+                    key: NormalizedUsageFailureVocabulary
+                        .unsupportedAccount.key,
+                    default: NormalizedUsageFailureVocabulary
+                        .unsupportedAccount.default
                 )
             )
         case .disabled, .unlinked, .dependencyMissing, .invalid, .deleting:
             notices.append(
                 notice(
                     .unavailable,
-                    key: "popover.normalized.notice.configuration",
-                    default: "This profile needs attention before it can refresh."
+                    key: NormalizedUsageFailureVocabulary
+                        .configuration.key,
+                    default: NormalizedUsageFailureVocabulary
+                        .configuration.default
                 )
             )
         }
