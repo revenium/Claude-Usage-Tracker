@@ -423,6 +423,12 @@
 "appearance.multiprofile_locked_title" = "Paramètres d'Apparence Verrouillés";
 "appearance.multiprofile_locked_description" = "Ces paramètres sont désactivés pendant que l'Affichage Multi-Profil est actif. Chaque profil utilise sa propre apparence en mode multi-profil.";
 "appearance.disable_multiprofile" = "Désactiver l'Affichage Multi-Profil";
+"appearance.provider_badge_title" = "Badge du fournisseur";
+"appearance.provider_badge_description" = "Distinguez les éléments Claude et Codex dans la barre de menus sans avoir à cliquer.";
+"appearance.provider_badge_glyph_title" = "Symbole du fournisseur";
+"appearance.provider_badge_glyph_description" = "Affiche une petite marque de fournisseur avant le contenu de chaque élément.";
+"appearance.provider_badge_tint_title" = "Teinte de fond du fournisseur";
+"appearance.provider_badge_tint_description" = "Affiche un arrière-plan discret aux couleurs du fournisseur derrière chaque élément.";
 
 /* Setup Wizard */
 "setup.step_number_1" = "1";

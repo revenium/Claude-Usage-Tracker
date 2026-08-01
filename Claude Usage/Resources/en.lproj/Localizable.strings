@@ -460,6 +460,12 @@
 "appearance.multiprofile_locked_title" = "Appearance Settings Locked";
 "appearance.multiprofile_locked_description" = "These settings are disabled while Multi-Profile Display is active. Each profile uses its own appearance in multi-profile mode.";
 "appearance.disable_multiprofile" = "Turn Off Multi-Profile Display";
+"appearance.provider_badge_title" = "Provider badge";
+"appearance.provider_badge_description" = "Distinguish Claude and Codex items in the menu bar without clicking.";
+"appearance.provider_badge_glyph_title" = "Provider glyph";
+"appearance.provider_badge_glyph_description" = "Show a small provider mark before each item's content.";
+"appearance.provider_badge_tint_title" = "Provider background tint";
+"appearance.provider_badge_tint_description" = "Show a faint provider-colored background behind each item.";
 
 /* ==================== */
 /* MARK: - Setup Wizard (Additional) */

@@ -276,10 +276,6 @@ struct AppearanceSettingsView: View {
                     get: { profileManager.providerBadgeGlyphEnabled },
                     set: { newValue in
                         profileManager.updateProviderBadgeGlyphEnabled(newValue)
-                        NotificationCenter.default.post(
-                            name: .menuBarIconConfigChanged,
-                            object: nil
-                        )
                     }
                 )
             )
@@ -299,10 +295,6 @@ struct AppearanceSettingsView: View {
                     get: { profileManager.providerBadgeTintEnabled },
                     set: { newValue in
                         profileManager.updateProviderBadgeTintEnabled(newValue)
-                        NotificationCenter.default.post(
-                            name: .menuBarIconConfigChanged,
-                            object: nil
-                        )
                     }
                 )
             )

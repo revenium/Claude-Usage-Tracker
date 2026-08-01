@@ -439,6 +439,12 @@
 "appearance.multiprofile_locked_title" = "Darstellungseinstellungen gesperrt";
 "appearance.multiprofile_locked_description" = "Diese Einstellungen sind deaktiviert, während die Mehrfach-Profil-Anzeige aktiv ist. Jedes Profil verwendet im Mehrfach-Profil-Modus seine eigene Darstellung.";
 "appearance.disable_multiprofile" = "Mehrfach-Profil-Anzeige ausschalten";
+"appearance.provider_badge_title" = "Anbieter-Abzeichen";
+"appearance.provider_badge_description" = "Unterscheidet Claude- und Codex-Einträge in der Menüleiste, ohne zu klicken.";
+"appearance.provider_badge_glyph_title" = "Anbieter-Symbol";
+"appearance.provider_badge_glyph_description" = "Zeigt ein kleines Anbieter-Symbol vor dem Inhalt jedes Eintrags an.";
+"appearance.provider_badge_tint_title" = "Anbieter-Hintergrundfarbe";
+"appearance.provider_badge_tint_description" = "Zeigt einen dezenten, anbieterfarbenen Hintergrund hinter jedem Eintrag an.";
 
 /* ==================== */
 /* MARK: - Setup Wizard (Additional) */

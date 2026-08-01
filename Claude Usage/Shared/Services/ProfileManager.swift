@@ -984,20 +984,28 @@ class ProfileManager: ObservableObject {
     }
 
     func updateProviderBadgeGlyphEnabled(_ enabled: Bool) {
-        // Use async to avoid "Publishing changes from within view updates" warning
+        // Use async to avoid "Publishing changes from within view updates" warning.
+        // The menuBarIconConfigChanged notification is posted here, after the
+        // deferred state update, so observers that redraw from providerBadgeStyle
+        // never read the stale value.
         DispatchQueue.main.async { [weak self] in
             self?.providerBadgeGlyphEnabled = enabled
             self?.profileStore.saveProviderBadgeGlyphEnabled(enabled)
             LoggingService.shared.log("Updated provider badge glyph enabled: \(enabled)")
+            NotificationCenter.default.post(name: .menuBarIconConfigChanged, object: nil)
         }
     }
 
     func updateProviderBadgeTintEnabled(_ enabled: Bool) {
-        // Use async to avoid "Publishing changes from within view updates" warning
+        // Use async to avoid "Publishing changes from within view updates" warning.
+        // The menuBarIconConfigChanged notification is posted here, after the
+        // deferred state update, so observers that redraw from providerBadgeStyle
+        // never read the stale value.
         DispatchQueue.main.async { [weak self] in
             self?.providerBadgeTintEnabled = enabled
             self?.profileStore.saveProviderBadgeTintEnabled(enabled)
             LoggingService.shared.log("Updated provider badge tint enabled: \(enabled)")
+            NotificationCenter.default.post(name: .menuBarIconConfigChanged, object: nil)
         }
     }
 

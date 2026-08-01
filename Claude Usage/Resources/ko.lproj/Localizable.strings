@@ -194,6 +194,12 @@
 "appearance.multiprofile_locked_title" = "모양 설정 잠김";
 "appearance.multiprofile_locked_description" = "다중 프로필 표시가 활성화된 동안 이 설정은 비활성화됩니다. 다중 프로필 모드에서는 각 프로필이 자체 모양을 사용합니다.";
 "appearance.disable_multiprofile" = "다중 프로필 표시 끄기";
+"appearance.provider_badge_title" = "제공업체 배지";
+"appearance.provider_badge_description" = "클릭하지 않아도 메뉴 막대에서 Claude와 Codex 항목을 구분할 수 있습니다.";
+"appearance.provider_badge_glyph_title" = "제공업체 기호";
+"appearance.provider_badge_glyph_description" = "각 항목 내용 앞에 작은 제공업체 표시를 보여줍니다.";
+"appearance.provider_badge_tint_title" = "제공업체 배경 색조";
+"appearance.provider_badge_tint_description" = "각 항목 뒤에 옅은 제공업체 색상 배경을 표시합니다.";
 "appearance.all_metrics_off_title" = "앱 로고 모드";
 "appearance.all_metrics_off_description" = "모든 메트릭이 꺼져 있습니다. 메뉴 바에 앱 로고가 표시됩니다. 클릭하여 프로필 및 설정에 액세스하세요.";
 "appearance.menu_bar_icons" = "메뉴 바 아이콘";

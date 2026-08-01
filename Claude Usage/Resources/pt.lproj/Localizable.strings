@@ -437,6 +437,12 @@
 "appearance.multiprofile_locked_title" = "Configurações de Aparência Bloqueadas";
 "appearance.multiprofile_locked_description" = "Estas configurações estão desativadas enquanto a Exibição Multi-Perfil está ativa. Cada perfil usa sua própria aparência no modo multi-perfil.";
 "appearance.disable_multiprofile" = "Desativar Exibição Multi-Perfil";
+"appearance.provider_badge_title" = "Selo do provedor";
+"appearance.provider_badge_description" = "Diferencie itens do Claude e do Codex na barra de menus sem precisar clicar.";
+"appearance.provider_badge_glyph_title" = "Símbolo do provedor";
+"appearance.provider_badge_glyph_description" = "Mostra uma pequena marca do provedor antes do conteúdo de cada item.";
+"appearance.provider_badge_tint_title" = "Tonalidade de fundo do provedor";
+"appearance.provider_badge_tint_description" = "Mostra um fundo sutil colorido conforme o provedor atrás de cada item.";
 
 /* ==================== */
 /* MARK: - Setup Wizard (Additional) */

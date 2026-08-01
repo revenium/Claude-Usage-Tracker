@@ -453,6 +453,12 @@
 "appearance.multiprofile_locked_title" = "外观设置已锁定";
 "appearance.multiprofile_locked_description" = "当多配置文件显示处于活动状态时，这些设置被禁用。在多配置文件模式下，每个配置文件使用自己的外观。";
 "appearance.disable_multiprofile" = "关闭多配置文件显示";
+"appearance.provider_badge_title" = "提供商徽章";
+"appearance.provider_badge_description" = "无需点击即可在菜单栏中区分 Claude 和 Codex 项目。";
+"appearance.provider_badge_glyph_title" = "提供商图标";
+"appearance.provider_badge_glyph_description" = "在每个项目内容前显示一个小的提供商标记。";
+"appearance.provider_badge_tint_title" = "提供商背景色调";
+"appearance.provider_badge_tint_description" = "在每个项目后方显示淡淡的提供商颜色背景。";
 
 /* ==================== */
 /* MARK: - Setup Wizard (Additional) */
