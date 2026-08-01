@@ -180,7 +180,7 @@ struct AppearanceSettingsView: View {
                         comment: ""
                     )
                 ) {
-                    providerBadgePicker
+                    providerBadgeToggles
                 }
 
                 // Metrics Configuration
@@ -259,7 +259,7 @@ struct AppearanceSettingsView: View {
     /// `multiProfileConfig`), not per-profile, since it applies to every
     /// provider's status items at once.
     @ViewBuilder
-    private var providerBadgePicker: some View {
+    private var providerBadgeToggles: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.cardPadding) {
             SettingToggle(
                 title: NSLocalizedString(
