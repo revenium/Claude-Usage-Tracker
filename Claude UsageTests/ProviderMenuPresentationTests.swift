@@ -1534,6 +1534,107 @@ final class ProviderMenuPresentationTests: HostedAppTestCase {
         )
     }
 
+    /// `updateProviderMultiProfileButtons` chooses between the compact
+    /// two-window percentage label and the legacy single-metric label via a
+    /// ternary on `config.iconStyle`. `compactPercentageAccessibilityLabel`
+    /// itself is well covered elsewhere, but that call site -- the branch
+    /// condition -- was not: a regression there (inverted ternary, wrong
+    /// config flag) would slip past that unit test. Drive the real button
+    /// through both branches and assert on the rendered
+    /// `NSStatusBarButton.accessibilityLabel()`.
+    func testUpdateProviderMultiProfileButtonsSelectsAccessibilityLabelBranch()
+        throws
+    {
+        let descriptors = makeDescriptorCatalog(count: 2)
+        let metrics = descriptors.map { descriptor in
+            ProviderMetricPresentation(
+                descriptor: descriptor,
+                state: .ready,
+                usedPercentage: descriptor.usedPercentage,
+                displayedPercentage: descriptor.usedPercentage,
+                showRemaining: false,
+                elapsedFraction: nil,
+                statusLevel: .safe,
+                notice: nil
+            )
+        }
+        let profile = codexProfile(name: "Codex Multi")
+        let presentation = ProviderMenuPresentation(
+            identity: ProviderStatusItemIdentity(
+                profileID: profile.id,
+                providerID: .codex,
+                providerRevision: profile.providerRevision,
+                metricID: nil
+            ),
+            profileName: profile.name,
+            appearance: .forProvider(.codex),
+            metrics: metrics,
+            state: .ready,
+            actions: [],
+            nextFreshnessDeadline: nil
+        )
+
+        let manager = retain(StatusBarUIManager())
+        defer { manager.cleanup() }
+        let target = MenuTarget()
+        manager.setupMultiProfile(
+            profiles: [profile],
+            target: target,
+            action: #selector(MenuTarget.toggle)
+        )
+
+        let percentageConfig = MultiProfileDisplayConfig(
+            iconStyle: .percentage,
+            showWeek: true,
+            showProfileLabel: false,
+            useSystemColor: false,
+            showTimeMarker: false,
+            showPaceMarker: false,
+            usePaceColoring: false,
+            showRemainingPercentage: false
+        )
+        manager.updateProviderMultiProfileButtons(
+            presentations: [presentation],
+            profiles: [profile],
+            config: percentageConfig,
+            activeClaudeProfileID: nil,
+            isActive: { _ in false }
+        )
+        let compactButton = try XCTUnwrap(manager.button(for: profile.id))
+        let compactLabel = try XCTUnwrap(compactButton.accessibilityLabel())
+        // Compact branch: both windows' metric names are present...
+        XCTAssertTrue(compactLabel.contains(descriptors[0].metricName))
+        XCTAssertTrue(compactLabel.contains(descriptors[1].metricName))
+        // ...and the legacy label's group-name framing is not, proving this
+        // took `compactPercentageAccessibilityLabel`, not the legacy path.
+        XCTAssertFalse(compactLabel.contains(descriptors[0].groupName))
+
+        let legacyConfig = MultiProfileDisplayConfig(
+            iconStyle: .concentric,
+            showWeek: true,
+            showProfileLabel: false,
+            useSystemColor: false,
+            showTimeMarker: false,
+            showPaceMarker: false,
+            usePaceColoring: false,
+            showRemainingPercentage: false
+        )
+        manager.updateProviderMultiProfileButtons(
+            presentations: [presentation],
+            profiles: [profile],
+            config: legacyConfig,
+            activeClaudeProfileID: nil,
+            isActive: { _ in false }
+        )
+        let legacyButton = try XCTUnwrap(manager.button(for: profile.id))
+        let legacyLabel = try XCTUnwrap(legacyButton.accessibilityLabel())
+        // Legacy branch: only the primary metric (`metrics.first`) is
+        // described, and it carries the legacy label's group-name framing.
+        XCTAssertTrue(legacyLabel.contains(descriptors[0].metricName))
+        XCTAssertTrue(legacyLabel.contains(descriptors[0].groupName))
+        XCTAssertFalse(legacyLabel.contains(descriptors[1].metricName))
+    }
+
     func testMultiProfileReconciliationRemovesDeletingGhostStatusItem()
         throws
     {
