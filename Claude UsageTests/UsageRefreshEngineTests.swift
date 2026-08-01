@@ -3607,6 +3607,73 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
         )
     }
 
+    func testHTTPStatusAppErrorPublishesSanitizedDetail() async {
+        let identity = makeIdentity()
+        let context = makeContext(visible: [identity.profileID])
+        let harness = makeHarness(
+            identities: [identity],
+            context: context
+        )
+        _ = await enqueue(
+            makeJob(
+                identity: identity,
+                coreFetch: {
+                    throw AppError(
+                        code: .apiRateLimited,
+                        message: "Rate limited by Claude API",
+                        isRecoverable: true,
+                        statusCode: 429
+                    )
+                }
+            ),
+            on: harness,
+            context: context
+        )
+        await assertEventually {
+            harness.batches.snapshot.count == 1
+        }
+
+        let failure = harness.committer.failurePublications.first?
+            .failure
+        XCTAssertEqual(
+            failure?.detail,
+            "HTTP 429 — Rate limited by Claude API"
+        )
+    }
+
+    func testURLErrorPublishesSanitizedDetail() async {
+        let identity = makeIdentity()
+        let context = makeContext(visible: [identity.profileID])
+        let harness = makeHarness(
+            identities: [identity],
+            context: context
+        )
+        let urlError = URLError(.cannotConnectToHost)
+        _ = await enqueue(
+            makeJob(
+                identity: identity,
+                coreFetch: {
+                    throw urlError
+                }
+            ),
+            on: harness,
+            context: context
+        )
+        await assertEventually {
+            harness.batches.snapshot.count == 1
+        }
+
+        let failure = harness.committer.failurePublications.first?
+            .failure
+        XCTAssertNotNil(failure?.detail)
+        XCTAssertTrue(
+            failure?.detail?.contains("NSURLErrorDomain") ?? false
+        )
+        XCTAssertTrue(
+            failure?.detail?.contains("\(urlError.errorCode)") ?? false
+        )
+    }
+
     func testAPISuccessPreservesCachedClaudeReport() async throws {
         let identity = makeIdentity(providerID: .claude)
         let cachedReport = try makeReport(

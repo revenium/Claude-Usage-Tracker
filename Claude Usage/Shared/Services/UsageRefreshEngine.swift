@@ -79,6 +79,14 @@ nonisolated struct ProviderRefreshFailure:
     /// Server-advertised retry delay (e.g. a 429's `Retry-After` header),
     /// when known. `nil` when the failure carried no such hint.
     let retryAfter: TimeInterval?
+    /// Sanitized technical detail for this failure — an HTTP status code
+    /// paired with the error's safe, static message, or a URLError's
+    /// localized description and error code. Never contains request paths,
+    /// organization/account identifiers, tokens, or raw response bodies (see
+    /// `failure(for:count:)`, which is the only place that populates this).
+    /// `nil` when the failure kind carries no such detail (e.g. Codex-typed
+    /// errors, or failures the engine synthesized without an underlying error).
+    let detail: String?
 
     init(
         kind: ProviderRefreshFailureKind,
@@ -86,7 +94,8 @@ nonisolated struct ProviderRefreshFailure:
         isRecoverable: Bool,
         consecutiveCount: Int,
         legacyErrorCode: ErrorCode? = nil,
-        retryAfter: TimeInterval? = nil
+        retryAfter: TimeInterval? = nil,
+        detail: String? = nil
     ) {
         self.kind = kind
         self.occurredAt = occurredAt
@@ -94,6 +103,7 @@ nonisolated struct ProviderRefreshFailure:
         self.consecutiveCount = consecutiveCount
         self.legacyErrorCode = legacyErrorCode
         self.retryAfter = retryAfter
+        self.detail = detail
     }
 
     var isCredentialFailure: Bool {
@@ -2979,6 +2989,7 @@ actor UsageRefreshEngine {
         let recoverable: Bool
         let legacyErrorCode: ErrorCode?
         var retryAfter: TimeInterval?
+        var detail: String?
         if let error = error as? UsageProviderError {
             legacyErrorCode = nil
             switch error {
@@ -3056,6 +3067,11 @@ actor UsageRefreshEngine {
                 kind = .transport
             }
             recoverable = appError.isRecoverable
+            if let statusCode = appError.statusCode {
+                detail = "HTTP \(statusCode) — \(appError.message)"
+            } else {
+                detail = appError.message
+            }
         } else if let urlError = error as? URLError {
             switch urlError.code {
             case .timedOut:
@@ -3071,6 +3087,7 @@ actor UsageRefreshEngine {
                 legacyErrorCode = nil
             }
             recoverable = true
+            detail = "\(urlError.localizedDescription) (NSURLErrorDomain \(urlError.errorCode))"
         } else {
             kind = .unknown
             recoverable = true
@@ -3082,7 +3099,8 @@ actor UsageRefreshEngine {
             isRecoverable: recoverable,
             consecutiveCount: count,
             legacyErrorCode: legacyErrorCode,
-            retryAfter: retryAfter
+            retryAfter: retryAfter,
+            detail: detail
         )
     }
 

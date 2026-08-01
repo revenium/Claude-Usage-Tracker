@@ -617,13 +617,11 @@ struct MenuBarIconRenderer {
                 elapsedFraction: weekElapsed
             )
 
-            let displayText: String
-            if config.weekDisplayMode == .percentage {
-                displayText = "\(Int(displayPercentage))%"
-            } else {
-                // Token display mode - smart formatting
-                displayText = formatTokenCount(usage.weeklyTokensUsed, usage.weeklyLimit)
-            }
+            // Claude's API only reports utilization percentages — it has no
+            // real per-window token counts (see ClaudeUsageProviderAdapter).
+            // Token display mode falls back to percentage rather than
+            // showing a number derived from an assumed plan limit.
+            let displayText = "\(Int(displayPercentage))%"
 
             return MetricData(
                 percentage: displayPercentage,
@@ -1829,28 +1827,4 @@ struct MenuBarIconRenderer {
         return CGFloat(f)
     }
 
-    /// Formats token count intelligently (e.g., 1M instead of 1000K)
-    private func formatTokenCount(_ used: Int, _ limit: Int) -> String {
-        func formatSingleValue(_ value: Int) -> String {
-            if value >= 1_000_000 {
-                let millions = Double(value) / 1_000_000.0
-                if millions.truncatingRemainder(dividingBy: 1.0) == 0 {
-                    return "\(Int(millions))M"
-                } else {
-                    return String(format: "%.1fM", millions)
-                }
-            } else if value >= 1_000 {
-                let thousands = Double(value) / 1_000.0
-                if thousands.truncatingRemainder(dividingBy: 1.0) == 0 {
-                    return "\(Int(thousands))K"
-                } else {
-                    return String(format: "%.1fK", thousands)
-                }
-            } else {
-                return "\(value)"
-            }
-        }
-
-        return "\(formatSingleValue(used))/\(formatSingleValue(limit))"
-    }
 }

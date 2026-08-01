@@ -916,6 +916,7 @@
 "popover.banner.last_success" = "上次成功刷新：%@";
 "popover.banner.never_succeeded" = "尚未成功刷新。";
 "popover.banner.retrying_at" = "将于 %@ 重试";
+"popover.banner.technical_detail" = "详情：%@";
 
 // MARK: - Overage Balance
 "popover.overage_balance" = "余额";

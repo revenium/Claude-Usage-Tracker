@@ -1010,6 +1010,7 @@
 "popover.banner.last_success" = "Last successful refresh: %@";
 "popover.banner.never_succeeded" = "No successful refresh yet.";
 "popover.banner.retrying_at" = "Retrying at %@";
+"popover.banner.technical_detail" = "Details: %@";
 
 // MARK: - Overage Balance
 "popover.overage_balance" = "Balance";

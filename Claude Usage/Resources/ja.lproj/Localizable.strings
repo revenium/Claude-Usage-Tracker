@@ -918,6 +918,7 @@
 "popover.banner.last_success" = "前回の更新成功: %@";
 "popover.banner.never_succeeded" = "まだ更新に成功していません。";
 "popover.banner.retrying_at" = "%@ に再試行します";
+"popover.banner.technical_detail" = "詳細: %@";
 
 // MARK: - Overage Balance
 "popover.overage_balance" = "残高";

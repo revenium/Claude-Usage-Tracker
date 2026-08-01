@@ -9,7 +9,7 @@ final class ClaudeUsageProviderAdapterTests: XCTestCase {
     private let sessionReset = Date(timeIntervalSinceReferenceDate: 20_000)
     private let weeklyReset = Date(timeIntervalSinceReferenceDate: 30_000)
 
-    func testMapsExistingClaudeSubscriptionWindowsAndTokenQuantities() throws {
+    func testMapsExistingClaudeSubscriptionWindowsWithoutFabricatedTokenQuantities() throws {
         let report = try makeReport(
             usage: makeUsage(
                 sessionPercentage: 125,
@@ -35,23 +35,19 @@ final class ClaudeUsageProviderAdapterTests: XCTestCase {
 
         let session = subscription.windows[0]
         XCTAssertEqual(session.usedPercentage, 125)
-        XCTAssertEqual(session.quantity?.used, 1_250)
-        XCTAssertEqual(session.quantity?.limit, 10_000)
-        XCTAssertEqual(session.quantity?.unit, .tokens)
+        XCTAssertNil(session.quantity)
         XCTAssertEqual(session.resetsAt, sessionReset)
         XCTAssertEqual(session.duration, Constants.sessionWindow)
 
         let weekly = subscription.windows[1]
         XCTAssertEqual(weekly.usedPercentage, 48)
-        XCTAssertEqual(weekly.quantity?.used, 480_000)
-        XCTAssertEqual(weekly.quantity?.limit, 1_000_000)
+        XCTAssertNil(weekly.quantity)
         XCTAssertEqual(weekly.resetsAt, weeklyReset)
         XCTAssertEqual(weekly.duration, Constants.weeklyWindow)
 
         let opus = report.limitGroups[1].windows[0]
         XCTAssertEqual(opus.usedPercentage, 12)
-        XCTAssertEqual(opus.quantity?.used, 120)
-        XCTAssertNil(opus.quantity?.limit)
+        XCTAssertNil(opus.quantity)
         XCTAssertNil(opus.resetsAt)
 
         XCTAssertEqual(report.limitGroups[2].windows[0].resetsAt, weeklyReset.addingTimeInterval(10))
@@ -106,7 +102,7 @@ final class ClaudeUsageProviderAdapterTests: XCTestCase {
         let session = report.limitGroups[0].windows[0]
         XCTAssertEqual(session.usedPercentage, 0)
         XCTAssertEqual(session.resetsAt, expiredReset)
-        XCTAssertEqual(session.quantity?.used, 1_250)
+        XCTAssertNil(session.quantity)
     }
 
     func testAccountHealthSourceTimestampAndFreshnessAreExplicitInputs() throws {
@@ -228,14 +224,6 @@ final class ClaudeUsageProviderAdapterTests: XCTestCase {
         XCTAssertEqual(capabilities[.resetCredits], .unavailable)
         XCTAssertEqual(capabilities[.automaticSessionStart], .available)
         XCTAssertEqual(capabilities[.statusLineIntegration], .available)
-    }
-
-    func testInvalidLegacyQuantitiesFailInsteadOfBeingClampedOrInvented() {
-        XCTAssertThrowsError(
-            try makeReport(
-                usage: makeUsage(sessionTokens: -1)
-            )
-        )
     }
 
     private func makeReport(usage: ClaudeUsage) throws -> UsageReport {

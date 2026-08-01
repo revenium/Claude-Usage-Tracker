@@ -844,7 +844,8 @@ class ClaudeAPIService: APIServiceProtocol {
                 message: "Unauthorized. Your session key may have expired.",
                 technicalDetails: "Endpoint: \(endpoint)\nStatus: \(httpResponse.statusCode)\nResponse: \(responsePreview)",
                 isRecoverable: true,
-                recoverySuggestion: "Please update your session key in Settings"
+                recoverySuggestion: "Please update your session key in Settings",
+                statusCode: httpResponse.statusCode
             )
 
         case 429:
@@ -858,7 +859,8 @@ class ClaudeAPIService: APIServiceProtocol {
                     + (retryAfter.map { "\nRetry-After: \($0)s" } ?? ""),
                 isRecoverable: true,
                 recoverySuggestion: "Please wait a few minutes before trying again",
-                retryAfter: retryAfter
+                retryAfter: retryAfter,
+                statusCode: 429
             )
             ErrorLogger.shared.log(appError, severity: .warning)
             throw appError
@@ -870,7 +872,8 @@ class ClaudeAPIService: APIServiceProtocol {
                 message: "Claude API server error",
                 technicalDetails: "Endpoint: \(endpoint)\nStatus: \(httpResponse.statusCode)\nResponse: \(responsePreview)",
                 isRecoverable: true,
-                recoverySuggestion: "Please try again later"
+                recoverySuggestion: "Please try again later",
+                statusCode: httpResponse.statusCode
             )
             ErrorLogger.shared.log(appError, severity: .warning)
             throw appError
@@ -881,7 +884,8 @@ class ClaudeAPIService: APIServiceProtocol {
                 code: .apiGenericError,
                 message: "Unexpected API response",
                 technicalDetails: "Endpoint: \(endpoint)\nStatus: \(httpResponse.statusCode)\nResponse: \(responsePreview)",
-                isRecoverable: true
+                isRecoverable: true,
+                statusCode: httpResponse.statusCode
             )
         }
     }

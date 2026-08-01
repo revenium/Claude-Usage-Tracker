@@ -51,6 +51,15 @@ enum ClaudeUsageProviderAdapter {
         .apiBilling: .available
     ])
 
+    /// Claude's API only ever reports utilization *percentages* for the
+    /// session/weekly/model windows below — it does not expose absolute
+    /// token counts, and without knowing the user's plan tier there is no
+    /// reliable token limit to divide against. Any token count previously
+    /// derived from `percentage * assumedLimit` was fabricated, not real
+    /// usage data. So every Claude `UsageWindow` here intentionally carries
+    /// `quantity: nil`; the UI renders percentage + reset time only. (The
+    /// "extra-usage" currency window below is unrelated real monetary data
+    /// and is unaffected.)
     static func makeReport(
         from usage: ClaudeUsage,
         context: ClaudeUsageProviderContext
@@ -66,20 +75,14 @@ enum ClaudeUsageProviderAdapter {
                         usedPercentage: usage.sessionResetTime < context.fetchedAt
                             ? 0
                             : usage.sessionPercentage,
-                        quantity: try tokenQuantity(
-                            used: usage.sessionTokensUsed,
-                            limit: usage.sessionLimit
-                        ),
+                        quantity: nil,
                         resetsAt: usage.sessionResetTime,
                         duration: Constants.sessionWindow
                     ),
                     try UsageWindow(
                         id: UsageWindowID("weekly"),
                         usedPercentage: usage.weeklyPercentage,
-                        quantity: try tokenQuantity(
-                            used: usage.weeklyTokensUsed,
-                            limit: usage.weeklyLimit
-                        ),
+                        quantity: nil,
                         resetsAt: usage.weeklyResetTime,
                         duration: Constants.weeklyWindow
                     )
@@ -188,28 +191,11 @@ enum ClaudeUsageProviderAdapter {
                 try UsageWindow(
                     id: UsageWindowID("weekly"),
                     usedPercentage: usedPercentage,
-                    quantity: try tokenQuantity(used: tokensUsed, limit: nil),
+                    quantity: nil,
                     resetsAt: resetsAt,
                     duration: Constants.weeklyWindow
                 )
             ]
-        )
-    }
-
-    /// Maps only quantities carried by the legacy model. It never derives
-    /// token counts from utilization percentages.
-    private static func tokenQuantity(
-        used: Int,
-        limit: Int?
-    ) throws -> UsageQuantity? {
-        if let limit, limit < 0 {
-            throw UsageCoreValidationError.invalidValue(field: "tokenQuantity.limit")
-        }
-        guard used != 0 || (limit ?? 0) != 0 else { return nil }
-        return try UsageQuantity(
-            used: Double(used),
-            limit: limit.flatMap { $0 > 0 ? Double($0) : nil },
-            unit: .tokens
         )
     }
 }

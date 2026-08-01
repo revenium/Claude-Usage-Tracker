@@ -892,6 +892,7 @@
 "popover.banner.last_success" = "마지막 성공한 업데이트: %@";
 "popover.banner.never_succeeded" = "아직 성공한 업데이트가 없습니다.";
 "popover.banner.retrying_at" = "%@에 재시도";
+"popover.banner.technical_detail" = "세부 정보: %@";
 
 // MARK: - Overage Balance
 "popover.overage_balance" = "잔액";

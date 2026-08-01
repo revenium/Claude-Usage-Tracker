@@ -164,6 +164,21 @@ enum LegacyPopoverBannerDetail: Equatable {
         )
     }
 
+    /// Formats a sanitized technical detail string (HTTP status / URL error
+    /// domain+code, already free of paths, tokens, org identifiers, and
+    /// response bodies — see `ProviderRefreshFailure.detail`) for display
+    /// below the human explanation. The wrapper text is localized; the
+    /// technical fragment itself is left as-is since it's already a safe,
+    /// English-language system/API string.
+    static func technicalDetailText(_ detail: String?) -> String? {
+        guard let detail else { return nil }
+        return NormalizedUsageStrings.formatted(
+            "popover.banner.technical_detail",
+            default: "Details: %@",
+            arguments: [detail]
+        )
+    }
+
     static func lastSuccessText(
         _ date: Date?,
         formatted: (Date) -> String
@@ -421,6 +436,9 @@ struct PopoverContentView: View {
                     message: banner.message,
                     detail: LegacyPopoverBannerDetail.explanation(
                         for: manager.lastRefreshFailureKind
+                    ),
+                    technicalDetail: LegacyPopoverBannerDetail.technicalDetailText(
+                        manager.lastRefreshFailureDetail
                     ),
                     retryText: LegacyPopoverBannerDetail.retryText(
                         manager.lastRefreshFailureRetryAt,
@@ -1347,6 +1365,11 @@ struct ExpandableStatusBanner: View {
     /// Root-cause explanation for the failure, if any. `nil` for banners
     /// (like staleness) that have no distinct cause beyond time passing.
     let detail: String?
+    /// Sanitized technical diagnostic line (HTTP status or URL error
+    /// domain/code), shown below `detail` when known. `nil` omits the line
+    /// entirely — most banners (credential errors, staleness) have no
+    /// underlying transport error to surface.
+    var technicalDetail: String? = nil
     /// "Retrying at {time}" line, shown only when the engine knows when the
     /// next scheduled attempt will start (backoff / `Retry-After`). `nil`
     /// omits the line entirely.
@@ -1390,6 +1413,15 @@ struct ExpandableStatusBanner: View {
                             .font(.system(size: 10))
                             .foregroundColor(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if let technicalDetail {
+                        Text(technicalDetail)
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier(
+                                "popover.banner.technical_detail"
+                            )
                     }
                     if let retryText {
                         Text(retryText)

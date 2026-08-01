@@ -896,6 +896,7 @@
 "popover.banner.last_success" = "Dernière actualisation réussie : %@";
 "popover.banner.never_succeeded" = "Aucune actualisation réussie pour l'instant.";
 "popover.banner.retrying_at" = "Nouvelle tentative à %@";
+"popover.banner.technical_detail" = "Détails : %@";
 
 // MARK: - Overage Balance
 "popover.overage_balance" = "Solde";

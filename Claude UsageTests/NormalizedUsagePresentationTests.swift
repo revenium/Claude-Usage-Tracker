@@ -170,6 +170,18 @@ final class NormalizedUsagePresentationTests: HostedAppTestCase {
         )
     }
 
+    func testTechnicalDetailTextFormatsWhenKnownAndNilWhenAbsent() {
+        XCTAssertNil(
+            LegacyPopoverBannerDetail.technicalDetailText(nil)
+        )
+        XCTAssertEqual(
+            LegacyPopoverBannerDetail.technicalDetailText(
+                "HTTP 429 — Rate limited by Claude API"
+            ),
+            "Details: HTTP 429 — Rate limited by Claude API"
+        )
+    }
+
     /// `ProviderRefreshFailure.retryNotBefore` is the wiring between a
     /// server's `Retry-After` hint and the UI's "Retrying at" line: it must
     /// be derived from `occurredAt + retryAfter`, and stay nil without one.
