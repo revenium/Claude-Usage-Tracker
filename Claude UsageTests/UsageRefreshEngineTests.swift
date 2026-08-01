@@ -846,9 +846,15 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
         XCTAssertFalse(store.claudeStatus.isRefreshing)
     }
 
-    func testContextActivationClearsInheritedStatusLoadingOwnership()
+    func testContextActivationDoesNotDropInFlightStatusFetch()
         throws
     {
+        // Claude service status is a single global value (one endpoint for
+        // the whole service). Context churn during the network round trip
+        // (profile switch, popover routing, display-mode/credential
+        // changes, etc.) must not cause a completed fetch to be silently
+        // dropped -- that was the root cause of the header getting stuck
+        // on "Status Unknown" forever.
         let identity = makeIdentity(providerID: .claude)
         let oldContext = makeContext(
             epoch: 1,
@@ -895,13 +901,73 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
             newContext.epoch
         )
         XCTAssertFalse(store.claudeStatus.isRefreshing)
-        XCTAssertFalse(
+
+        // The fetch that started under the old context completes after the
+        // context churn. It must still be accepted (order still matches),
+        // and the published presentation must carry the store's *current*
+        // epoch rather than the stale context's epoch.
+        XCTAssertTrue(
             store.publishClaudeStatus(
                 .operational,
                 expected: oldContext,
                 invocationOrder: invocationOrder
             )
         )
+        XCTAssertEqual(store.claudeStatus.status, .operational)
+        XCTAssertEqual(
+            store.claudeStatus.presentationEpoch,
+            newContext.epoch
+        )
+        XCTAssertFalse(store.claudeStatus.isRefreshing)
+    }
+
+    func testStaleStatusFetchRejectedAfterNewerInvocationRegistered()
+        throws
+    {
+        let identity = makeIdentity(providerID: .claude)
+        let context = makeContext(visible: [identity.profileID])
+        let store = retain(UsagePresentationStore())
+        store.activate(
+            context,
+            hydrated: [
+                identity.profileID: makeSnapshot(
+                    identity: identity,
+                    epoch: context.epoch,
+                    report: try makeReport(providerID: .claude)
+                )
+            ]
+        )
+
+        // Invocation 1 begins but never completes before invocation 2 is
+        // registered (e.g. a rapid refresh supersedes it).
+        store.registerClaudeStatusInvocation(1)
+        XCTAssertTrue(
+            store.beginClaudeStatus(expected: context, invocationOrder: 1)
+        )
+        store.registerClaudeStatusInvocation(2)
+        XCTAssertTrue(
+            store.beginClaudeStatus(expected: context, invocationOrder: 2)
+        )
+
+        // The stale invocation-1 fetch completing afterward must not
+        // publish over the newer, still in-flight invocation-2 fetch.
+        XCTAssertFalse(
+            store.publishClaudeStatus(
+                .operational,
+                expected: context,
+                invocationOrder: 1
+            )
+        )
+        XCTAssertTrue(store.claudeStatus.isRefreshing)
+
+        XCTAssertTrue(
+            store.publishClaudeStatus(
+                .operational,
+                expected: context,
+                invocationOrder: 2
+            )
+        )
+        XCTAssertFalse(store.claudeStatus.isRefreshing)
     }
 
     func testEmptyBatchCompletesImmediately() async {

@@ -401,20 +401,28 @@ final class UsagePresentationStore: ObservableObject {
         snapshots[profileID]
     }
 
+    // Claude service status is a single global value (one status.claude.com
+    // endpoint for the whole service), not per-context data. Gating
+    // acceptance on `self.context == context` meant any context churn
+    // during the network round trip (profile switch, popover routing,
+    // display-mode/credential/deletion changes) silently dropped a
+    // completed fetch, leaving the header stuck on "Status Unknown".
+    // Invocation-order gating alone is sufficient to reject stale/
+    // superseded fetches; the presentation epoch is stamped from the
+    // store's *current* context so it always matches what's displayed.
     @discardableResult
     func beginClaudeStatus(
         expected context: UsagePresentationContext,
         invocationOrder: UInt64
     ) -> Bool {
         guard !isShutdown,
-              self.context == context,
               claudeStatusInvocationOrder == invocationOrder,
               invocationOrder
                 > claudeStatusCompletedInvocationOrder else {
             return false
         }
         claudeStatus = ClaudeStatusPresentation(
-            presentationEpoch: context.epoch,
+            presentationEpoch: self.context.epoch,
             status: claudeStatus.status,
             isRefreshing: true,
             failedAt: nil,
@@ -430,8 +438,9 @@ final class UsagePresentationStore: ObservableObject {
         invocationOrder: UInt64
     ) -> Bool {
         guard !isShutdown,
-              self.context == context,
-              claudeStatusInvocationOrder == invocationOrder else {
+              claudeStatusInvocationOrder == invocationOrder,
+              invocationOrder
+                >= claudeStatusCompletedInvocationOrder else {
             return false
         }
         claudeStatusCompletedInvocationOrder = max(
@@ -439,7 +448,7 @@ final class UsagePresentationStore: ObservableObject {
             invocationOrder
         )
         claudeStatus = ClaudeStatusPresentation(
-            presentationEpoch: context.epoch,
+            presentationEpoch: self.context.epoch,
             status: status,
             isRefreshing: false,
             failedAt: nil,
@@ -454,8 +463,9 @@ final class UsagePresentationStore: ObservableObject {
         invocationOrder: UInt64
     ) {
         guard !isShutdown,
-              self.context == context,
-              claudeStatusInvocationOrder == invocationOrder else {
+              claudeStatusInvocationOrder == invocationOrder,
+              invocationOrder
+                >= claudeStatusCompletedInvocationOrder else {
             return
         }
         claudeStatusCompletedInvocationOrder = max(
@@ -463,7 +473,7 @@ final class UsagePresentationStore: ObservableObject {
             invocationOrder
         )
         claudeStatus = ClaudeStatusPresentation(
-            presentationEpoch: context.epoch,
+            presentationEpoch: self.context.epoch,
             status: claudeStatus.status,
             isRefreshing: false,
             failedAt: failure.occurredAt,
