@@ -165,6 +165,24 @@ struct AppearanceSettingsView: View {
                 .disabled(isMultiProfileMode)
                 .opacity(isMultiProfileMode ? 0.5 : 1.0)
 
+                // Provider Badge — global across display modes, so it lives
+                // outside the single-profile-only card above and stays
+                // usable in multi-profile mode too.
+                SettingsSectionCard(
+                    title: NSLocalizedString(
+                        "appearance.provider_badge_title",
+                        value: "Provider badge",
+                        comment: ""
+                    ),
+                    subtitle: NSLocalizedString(
+                        "appearance.provider_badge_description",
+                        value: "Distinguish Claude and Codex items in the menu bar without clicking.",
+                        comment: ""
+                    )
+                ) {
+                    providerBadgePicker
+                }
+
                 // Metrics Configuration
                 SettingsSectionCard(
                     title: "appearance.menu_bar_metrics".localized,
@@ -232,6 +250,31 @@ struct AppearanceSettingsView: View {
     }
 
     // MARK: - Helper Methods
+
+    /// Lets the user pick how Claude vs Codex status items are visually
+    /// distinguished in the menu bar without clicking. Global (like
+    /// `multiProfileConfig`), not per-profile, since it applies to every
+    /// provider's status items at once.
+    @ViewBuilder
+    private var providerBadgePicker: some View {
+        Picker("", selection: Binding(
+            get: { profileManager.providerBadgeStyle },
+            set: { newStyle in
+                profileManager.updateProviderBadgeStyle(newStyle)
+                NotificationCenter.default.post(
+                    name: .menuBarIconConfigChanged,
+                    object: nil
+                )
+            }
+        )) {
+            ForEach(ProviderBadgeStyle.allCases, id: \.self) { style in
+                Text(style.displayName).tag(style)
+            }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
 
     @ViewBuilder
     private var legacyClaudeMetricConfiguration: some View {

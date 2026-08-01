@@ -6,9 +6,17 @@
 //
 
 import Cocoa
+import UsageCore
 
 /// Handles rendering of individual metric icons for the menu bar
 struct MenuBarIconRenderer {
+
+    private static let claudeBadgeColor = NSColor(
+        red: 0.85, green: 0.47, blue: 0.34, alpha: 1.0
+    )
+    private static let codexBadgeColor = NSColor(
+        red: 0.06, green: 0.64, blue: 0.50, alpha: 1.0
+    )
 
     // MARK: - Public Methods
 
@@ -1724,6 +1732,155 @@ struct MenuBarIconRenderer {
         }
 
         return image
+    }
+
+    // MARK: - Provider Badge
+
+    /// Applies the user-selected provider badge to an already-rendered menu
+    /// bar image. Running as a final compositing pass lets every icon style
+    /// (battery, progress bar, rings, concentric, compact, ...) get the same
+    /// treatment without threading provider identity through each style's
+    /// own drawing code.
+    ///
+    /// - `glyph` grows the canvas to the left and draws a small monochrome
+    ///   provider mark there.
+    /// - `tint` draws a low-opacity provider-colored pill behind the
+    ///   existing content, at the existing canvas size.
+    /// - `glyphAndTint` does both; the pill spans the grown canvas.
+    func applyProviderBadge(
+        to image: NSImage,
+        providerID: ProviderID,
+        style: ProviderBadgeStyle,
+        isDarkMode: Bool
+    ) -> NSImage {
+        guard style != .none else { return image }
+
+        let foreground = menuBarForegroundColor(isDarkMode: isDarkMode)
+        let badgeColor = Self.badgeColor(for: providerID)
+        let sourceSize = image.size
+        let glyphColumnWidth: CGFloat = style.showsGlyph ? 11 : 0
+        let glyphGap: CGFloat = style.showsGlyph ? 2 : 0
+        let newSize = NSSize(
+            width: sourceSize.width + glyphColumnWidth + glyphGap,
+            height: sourceSize.height
+        )
+
+        let result = NSImage(size: newSize)
+        result.lockFocus()
+        defer { result.unlockFocus() }
+
+        if style.showsTint {
+            let pillAlpha: CGFloat = isDarkMode ? 0.20 : 0.15
+            let pillRect = NSRect(origin: .zero, size: newSize)
+                .insetBy(dx: 1, dy: 1)
+            let pillPath = NSBezierPath(
+                roundedRect: pillRect,
+                xRadius: 4.5,
+                yRadius: 4.5
+            )
+            badgeColor.withAlphaComponent(pillAlpha).setFill()
+            pillPath.fill()
+        }
+
+        if style.showsGlyph {
+            let glyphRect = NSRect(
+                x: 0,
+                y: 0,
+                width: glyphColumnWidth,
+                height: newSize.height
+            )
+            drawProviderGlyph(
+                providerID: providerID,
+                in: glyphRect,
+                color: foreground
+            )
+        }
+
+        image.draw(
+            at: NSPoint(x: glyphColumnWidth + glyphGap, y: 0),
+            from: NSRect(origin: .zero, size: sourceSize),
+            operation: .sourceOver,
+            fraction: 1.0
+        )
+
+        return result
+    }
+
+    private static func badgeColor(for providerID: ProviderID) -> NSColor {
+        switch providerID {
+        case .claude:
+            return claudeBadgeColor
+        case .codex:
+            return codexBadgeColor
+        default:
+            return NSColor.systemGray
+        }
+    }
+
+    private func drawProviderGlyph(
+        providerID: ProviderID,
+        in rect: NSRect,
+        color: NSColor
+    ) {
+        switch providerID {
+        case .claude:
+            drawSparkGlyph(in: rect, color: color)
+        case .codex:
+            drawTerminalGlyph(in: rect, color: color)
+        default:
+            let dotSize: CGFloat = 4
+            color.setFill()
+            NSBezierPath(
+                ovalIn: NSRect(
+                    x: rect.midX - dotSize / 2,
+                    y: rect.midY - dotSize / 2,
+                    width: dotSize,
+                    height: dotSize
+                )
+            ).fill()
+        }
+    }
+
+    /// A generic four-point spark/starburst for Claude items. Deliberately a
+    /// plain geometric mark (two crossing pointed lozenges), not Anthropic's
+    /// logo artwork.
+    private func drawSparkGlyph(in rect: NSRect, color: NSColor) {
+        let size: CGFloat = min(rect.width, rect.height, 10)
+        let center = NSPoint(x: rect.midX, y: rect.midY)
+        let outerRadius = size / 2
+        let innerRadius = outerRadius * 0.35
+        let path = NSBezierPath()
+        for i in 0..<8 {
+            let angle = CGFloat(i) * .pi / 4 - .pi / 2
+            let radius = i % 2 == 0 ? outerRadius : innerRadius
+            let point = NSPoint(
+                x: center.x + radius * cos(angle),
+                y: center.y + radius * sin(angle)
+            )
+            if i == 0 {
+                path.move(to: point)
+            } else {
+                path.line(to: point)
+            }
+        }
+        path.close()
+        color.setFill()
+        path.fill()
+    }
+
+    /// A terminal-prompt mark (">_") for Codex items.
+    private func drawTerminalGlyph(in rect: NSRect, color: NSColor) {
+        let text = ">_" as NSString
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedSystemFont(ofSize: 8, weight: .bold),
+            .foregroundColor: color
+        ]
+        let textSize = text.size(withAttributes: attributes)
+        let point = NSPoint(
+            x: rect.midX - textSize.width / 2,
+            y: rect.midY - textSize.height / 2
+        )
+        text.draw(at: point, withAttributes: attributes)
     }
 
     // MARK: - Helper Methods

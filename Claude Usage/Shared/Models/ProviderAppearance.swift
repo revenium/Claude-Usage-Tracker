@@ -56,6 +56,32 @@ struct ProviderAppearance: Equatable, Sendable {
     }
 }
 
+/// User-selectable indicator that distinguishes a status item's provider
+/// (Claude vs Codex) without requiring a click. Purely visual — it never
+/// changes what data is fetched or how it is computed.
+enum ProviderBadgeStyle: String, CaseIterable, Codable, Sendable {
+    /// Current behavior: no provider indicator.
+    case none
+    /// A small monochrome provider mark drawn left of the item's content.
+    case glyph
+    /// A low-opacity provider-colored pill behind the item's content.
+    case tint
+    /// Both the glyph and the background tint.
+    case glyphAndTint
+
+    var displayName: String {
+        switch self {
+        case .none: return "None"
+        case .glyph: return "Glyph"
+        case .tint: return "Background tint"
+        case .glyphAndTint: return "Glyph + tint"
+        }
+    }
+
+    var showsGlyph: Bool { self == .glyph || self == .glyphAndTint }
+    var showsTint: Bool { self == .tint || self == .glyphAndTint }
+}
+
 enum ProviderMetricDisplayState: String, Equatable, Sendable {
     case ready
     case loading

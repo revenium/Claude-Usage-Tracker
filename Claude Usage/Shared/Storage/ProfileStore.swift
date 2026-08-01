@@ -102,6 +102,7 @@ class ProfileStore {
         static let lastFocusedProfileId = "lastFocusedProfileId_v1"
         static let displayMode = "profileDisplayMode"
         static let multiProfileConfig = "multiProfileDisplayConfig"
+        static let providerBadgeStyle = "providerBadgeStyle_v1"
         static let pendingCredentialUsageUnlinks =
             "profileCredentialUsageUnlinks_v1"
         static let pendingCodexConfigurationMutations =
@@ -508,6 +509,20 @@ class ProfileStore {
             LoggingService.shared.logStorageError("loadMultiProfileConfig", error: error)
             return .default
         }
+    }
+
+    // MARK: - Provider Badge Style
+
+    func saveProviderBadgeStyle(_ style: ProviderBadgeStyle) {
+        defaults.set(style.rawValue, forKey: Keys.providerBadgeStyle)
+    }
+
+    func loadProviderBadgeStyle() -> ProviderBadgeStyle {
+        guard let rawValue = defaults.string(forKey: Keys.providerBadgeStyle),
+              let style = ProviderBadgeStyle(rawValue: rawValue) else {
+            return .none
+        }
+        return style
     }
 
     // MARK: - Credential Helpers

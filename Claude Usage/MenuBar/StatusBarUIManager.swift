@@ -362,7 +362,7 @@ final class StatusBarUIManager {
                 metricID: metricID,
                 isEnabled: metric != nil
             )
-            let image = renderer.createProviderMetricImage(
+            let renderedImage = renderer.createProviderMetricImage(
                 metric,
                 appearance: presentation.appearance,
                 metricConfig: metricConfig,
@@ -376,8 +376,16 @@ final class StatusBarUIManager {
                 ),
                 placeholderState: presentation.state
             )
+            let badgeStyle = ProfileManager.shared.providerBadgeStyle
+            let image = renderer.applyProviderBadge(
+                to: renderedImage,
+                providerID: presentation.identity.providerID,
+                style: badgeStyle,
+                isDarkMode: menuBarIsDark
+            )
             image.isTemplate = config.colorMode == .monochrome
                 && !config.showPaceMarker
+                && !badgeStyle.showsTint
             setButtonImage(button, image: image)
             let accessibility = metric?.accessibilityLabel
                 ?? "\(presentation.appearance.displayName), "
@@ -794,14 +802,24 @@ final class StatusBarUIManager {
                 )
             }
 
+            let badgeStyle = ProfileManager.shared.providerBadgeStyle
+            let badgedImage = renderer.applyProviderBadge(
+                to: image,
+                providerID: .claude,
+                style: badgeStyle,
+                isDarkMode: menuBarIsDark
+            )
+
             let isActive = profile.id == activeProfileId
             if isActive {
-                let underlinedImage = addGreenUnderline(to: image)
+                let underlinedImage = addGreenUnderline(to: badgedImage)
                 underlinedImage.isTemplate = false
                 button.image = underlinedImage
             } else {
-                image.isTemplate = useMonochrome && !config.showPaceMarker
-                button.image = image
+                badgedImage.isTemplate = useMonochrome
+                    && !config.showPaceMarker
+                    && !badgeStyle.showsTint
+                button.image = badgedImage
             }
             statusItemIdentities[ObjectIdentifier(button)] =
                 ProviderStatusItemIdentity(
@@ -1039,14 +1057,22 @@ final class StatusBarUIManager {
                     placeholderState: presentation.state
                 )
             }
-            image.isTemplate = config.useSystemColor
+            let badgeStyle = ProfileManager.shared.providerBadgeStyle
+            let badgedImage = renderer.applyProviderBadge(
+                to: image,
+                providerID: presentation.identity.providerID,
+                style: badgeStyle,
+                isDarkMode: menuBarIsDark
+            )
+            badgedImage.isTemplate = config.useSystemColor
                 && !iconConfig.showPaceMarker
+                && !badgeStyle.showsTint
             if let profile, isActive(profile) {
-                let underlined = addGreenUnderline(to: image)
+                let underlined = addGreenUnderline(to: badgedImage)
                 underlined.isTemplate = false
                 setButtonImage(button, image: underlined)
             } else {
-                setButtonImage(button, image: image)
+                setButtonImage(button, image: badgedImage)
             }
             statusItemIdentities[ObjectIdentifier(button)] =
                 ProviderStatusItemReconciliation.multiIdentity(
@@ -1146,7 +1172,7 @@ final class StatusBarUIManager {
             let menuBarIsDark = button.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
 
             // Create image directly using our renderer
-            let image = renderer.createImage(
+            let renderedImage = renderer.createImage(
                 for: metricConfig.metricType,
                 config: metricConfig,
                 globalConfig: config,
@@ -1159,7 +1185,16 @@ final class StatusBarUIManager {
                 showNextSessionTime: metricConfig.showNextSessionTime
             )
 
-            image.isTemplate = config.colorMode == .monochrome && !config.showPaceMarker
+            let badgeStyle = ProfileManager.shared.providerBadgeStyle
+            let image = renderer.applyProviderBadge(
+                to: renderedImage,
+                providerID: .claude,
+                style: badgeStyle,
+                isDarkMode: menuBarIsDark
+            )
+            image.isTemplate = config.colorMode == .monochrome
+                && !config.showPaceMarker
+                && !badgeStyle.showsTint
             button.image = image
         }
     }
@@ -1191,7 +1226,7 @@ final class StatusBarUIManager {
         let menuBarIsDark = button.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
 
         // Create image directly using our renderer
-        let image = renderer.createImage(
+        let renderedImage = renderer.createImage(
             for: metricType,
             config: metricConfig,
             globalConfig: config,
@@ -1204,7 +1239,16 @@ final class StatusBarUIManager {
             showNextSessionTime: metricConfig.showNextSessionTime
         )
 
-        image.isTemplate = config.colorMode == .monochrome && !config.showPaceMarker
+        let badgeStyle = ProfileManager.shared.providerBadgeStyle
+        let image = renderer.applyProviderBadge(
+            to: renderedImage,
+            providerID: .claude,
+            style: badgeStyle,
+            isDarkMode: menuBarIsDark
+        )
+        image.isTemplate = config.colorMode == .monochrome
+            && !config.showPaceMarker
+            && !badgeStyle.showsTint
         button.image = image
     }
 

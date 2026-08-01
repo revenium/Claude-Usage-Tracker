@@ -189,6 +189,7 @@ class ProfileManager: ObservableObject {
     }
     @Published var displayMode: ProfileDisplayMode = .single
     @Published var multiProfileConfig: MultiProfileDisplayConfig = .default
+    @Published var providerBadgeStyle: ProviderBadgeStyle = .none
     @Published var isSwitchingProfile: Bool = false
     @Published private(set) var legacyMigrationPendingProfileID: UUID?
 
@@ -293,6 +294,7 @@ class ProfileManager: ObservableObject {
 
         displayMode = profileStore.loadDisplayMode()
         multiProfileConfig = profileStore.loadMultiProfileConfig()
+        providerBadgeStyle = profileStore.loadProviderBadgeStyle()
 
         LoggingService.shared.log("ProfileManager: Loaded \(profiles.count) profile(s), active: \(activeProfile?.name ?? "none")")
     }
@@ -967,6 +969,15 @@ class ProfileManager: ObservableObject {
             self?.multiProfileConfig = config
             self?.profileStore.saveMultiProfileConfig(config)
             LoggingService.shared.log("Updated multi-profile config: style=\(config.iconStyle.rawValue), showWeek=\(config.showWeek)")
+        }
+    }
+
+    func updateProviderBadgeStyle(_ style: ProviderBadgeStyle) {
+        // Use async to avoid "Publishing changes from within view updates" warning
+        DispatchQueue.main.async { [weak self] in
+            self?.providerBadgeStyle = style
+            self?.profileStore.saveProviderBadgeStyle(style)
+            LoggingService.shared.log("Updated provider badge style: \(style.rawValue)")
         }
     }
 
