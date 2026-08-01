@@ -825,6 +825,25 @@ final class StatusBarUIManager {
         }
     }
 
+    /// Resolves the up-to-two rendered metrics (primary/secondary window)
+    /// shown by the shared compact two-row percentage icon, so the image
+    /// renderer and the accessibility label are always built from the same
+    /// data instead of drifting apart.
+    static func compactPercentageMetrics(
+        presentation: ProviderMenuPresentation,
+        config: MultiProfileDisplayConfig
+    ) -> (
+        primary: ProviderMetricPresentation?,
+        secondary: ProviderMetricPresentation?
+    ) {
+        let rendered = presentation.metrics.prefix(2).map {
+            ProviderMenuPresentationBuilder.metric($0, applying: config)
+        }
+        let primary = rendered.first ?? nil
+        let secondary = config.showWeek && rendered.count > 1 ? rendered[1] : nil
+        return (primary, secondary)
+    }
+
     /// Renders the shared compact two-row percentage image (top row: up to
     /// two window percentages separated by a dimmed " · "; bottom row: a
     /// 3-char profile label) for any provider's multi-profile status item.
@@ -836,11 +855,10 @@ final class StatusBarUIManager {
         config: MultiProfileDisplayConfig,
         isDarkMode: Bool
     ) -> NSImage {
-        let rendered = presentation.metrics.prefix(2).map {
-            ProviderMenuPresentationBuilder.metric($0, applying: config)
-        }
-        let primary = rendered.first ?? nil
-        let secondary = config.showWeek && rendered.count > 1 ? rendered[1] : nil
+        let (primary, secondary) = compactPercentageMetrics(
+            presentation: presentation,
+            config: config
+        )
 
         func paceStatus(
             for metric: ProviderMetricPresentation?
@@ -872,6 +890,36 @@ final class StatusBarUIManager {
             weekPaceStatus: paceStatus(for: secondary),
             showPaceMarker: config.showPaceMarker
         )
+    }
+
+    /// Accessibility label for the compact two-row percentage icon. The icon
+    /// packs up to two windows (e.g. session + weekly) into one image, but a
+    /// label built from only the primary metric silently drops the second
+    /// window from VoiceOver. Describe every window the icon actually shows.
+    static func compactPercentageAccessibilityLabel(
+        presentation: ProviderMenuPresentation,
+        config: MultiProfileDisplayConfig
+    ) -> String {
+        let (primary, secondary) = compactPercentageMetrics(
+            presentation: presentation,
+            config: config
+        )
+        let parts = [primary, secondary].compactMap {
+            metric -> String? in
+            guard let metric else { return nil }
+            let stateSuffix = metric.state == .ready
+                ? ""
+                : ", \(metric.state.accessibilityText)"
+            return "\(metric.descriptor.metricName), "
+                + "\(metric.percentageText) \(metric.modeText)"
+                + stateSuffix
+        }
+        guard !parts.isEmpty else {
+            return "\(presentation.appearance.displayName), "
+                + presentation.state.accessibilityText
+        }
+        return "\(presentation.appearance.displayName), "
+            + parts.joined(separator: ", ")
     }
 
     /// Overrides non-Claude multi-profile buttons with provider-neutral
@@ -1005,9 +1053,14 @@ final class StatusBarUIManager {
                     for: presentation
                 )
             let baseLabel = "\(presentation.profileName), "
-                + (presentation.metric?.accessibilityLabel
-                    ?? "\(presentation.appearance.displayName), "
-                        + presentation.state.accessibilityText)
+                + (config.iconStyle == .percentage
+                    ? Self.compactPercentageAccessibilityLabel(
+                        presentation: presentation,
+                        config: config
+                    )
+                    : presentation.metric?.accessibilityLabel
+                        ?? "\(presentation.appearance.displayName), "
+                            + presentation.state.accessibilityText)
             let label = Self.profileAccessibilityLabel(
                 baseLabel,
                 isActive: profile.map(isActive) ?? false

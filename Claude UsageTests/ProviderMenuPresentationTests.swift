@@ -1451,6 +1451,89 @@ final class ProviderMenuPresentationTests: HostedAppTestCase {
         XCTAssertEqual(withPace?.elapsedFraction, 0.9)
     }
 
+    /// The compact two-row percentage icon packs up to two windows (e.g.
+    /// session + weekly) into one image, but its accessibility label was
+    /// built from only the primary metric -- silently dropping the second
+    /// window from VoiceOver. Both windows must be described when the icon
+    /// actually renders both, and the secondary window must drop out when
+    /// `showWeek` is off (matching what the icon itself renders).
+    func testCompactPercentageAccessibilityLabelDescribesBothWindows()
+        throws
+    {
+        let descriptors = makeDescriptorCatalog(count: 2)
+        let metrics = descriptors.map { descriptor in
+            ProviderMetricPresentation(
+                descriptor: descriptor,
+                state: .ready,
+                usedPercentage: descriptor.usedPercentage,
+                displayedPercentage: descriptor.usedPercentage,
+                showRemaining: false,
+                elapsedFraction: nil,
+                statusLevel: .safe,
+                notice: nil
+            )
+        }
+        let presentation = ProviderMenuPresentation(
+            identity: ProviderStatusItemIdentity(
+                profileID: UUID(),
+                providerID: .codex,
+                providerRevision: 0,
+                metricID: nil
+            ),
+            profileName: "Work",
+            appearance: .forProvider(.codex),
+            metrics: metrics,
+            state: .ready,
+            actions: [],
+            nextFreshnessDeadline: nil
+        )
+
+        let bothWindowsConfig = MultiProfileDisplayConfig(
+            iconStyle: .percentage,
+            showWeek: true,
+            showProfileLabel: false,
+            useSystemColor: false,
+            showTimeMarker: false,
+            showPaceMarker: false,
+            usePaceColoring: false,
+            showRemainingPercentage: false
+        )
+        let bothWindowsLabel =
+            StatusBarUIManager.compactPercentageAccessibilityLabel(
+                presentation: presentation,
+                config: bothWindowsConfig
+            )
+        XCTAssertTrue(
+            bothWindowsLabel.contains(descriptors[0].metricName)
+        )
+        XCTAssertTrue(
+            bothWindowsLabel.contains(descriptors[1].metricName)
+        )
+        XCTAssertTrue(bothWindowsLabel.contains("42%"))
+
+        let sessionOnlyConfig = MultiProfileDisplayConfig(
+            iconStyle: .percentage,
+            showWeek: false,
+            showProfileLabel: false,
+            useSystemColor: false,
+            showTimeMarker: false,
+            showPaceMarker: false,
+            usePaceColoring: false,
+            showRemainingPercentage: false
+        )
+        let sessionOnlyLabel =
+            StatusBarUIManager.compactPercentageAccessibilityLabel(
+                presentation: presentation,
+                config: sessionOnlyConfig
+            )
+        XCTAssertTrue(
+            sessionOnlyLabel.contains(descriptors[0].metricName)
+        )
+        XCTAssertFalse(
+            sessionOnlyLabel.contains(descriptors[1].metricName)
+        )
+    }
+
     func testMultiProfileReconciliationRemovesDeletingGhostStatusItem()
         throws
     {
