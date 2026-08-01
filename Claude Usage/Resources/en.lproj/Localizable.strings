@@ -611,6 +611,7 @@
 /* ==================== */
 /* MARK: - Popover/Menu Bar */
 /* ==================== */
+"popover.active_accounts.title" = "Active accounts";
 "popover.manage_profiles" = "Manage Profiles";
 "popover.no_profile" = "No Profile";
 "popover.profiles_count" = "%d profiles";
@@ -1148,6 +1149,7 @@
 "popover.normalized.profile.not_connected" = "Not connected";
 "popover.normalized.profile.not_linked" = "Not linked";
 "popover.normalized.profile.relink_required" = "Relink required";
+"popover.normalized.profile.viewing" = "Viewing";
 "popover.normalized.reset.at" = "Resets %@";
 "popover.normalized.reset.both" = "Resets in %@ (%@)";
 "popover.normalized.reset.in" = "Resets in %@";

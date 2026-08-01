@@ -1424,6 +1424,11 @@ private struct UITestPopoverSurface: View {
                 presentation: current,
                 claudeStatus: .unknown,
                 isRefreshing: isRefreshing,
+                onSelectProfile: { id in
+                    Task {
+                        await profileManager.activateProfile(id)
+                    }
+                },
                 onRefresh: onRefreshOverride ?? refresh,
                 onManageProfiles: {
                     if let onManageProfilesOverride {

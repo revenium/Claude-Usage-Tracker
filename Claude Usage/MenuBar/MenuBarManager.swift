@@ -743,6 +743,24 @@ class MenuBarManager: NSObject, ObservableObject {
         }
     }
 
+    /// Changes which profile's data the popover displays, without touching
+    /// activation state for either provider. The header's profile switcher
+    /// and the "Active accounts" chips both call this — selecting or
+    /// tapping a profile there is a pure view change; the only way to
+    /// change which profile is *active* for a provider remains the
+    /// explicit "Make Active" affordance / context menu, which continues
+    /// to call `ProfileManager.activateProfile(_:)` directly.
+    func setViewedProfile(_ id: UUID) {
+        guard profileManager.profiles.contains(where: { $0.id == id }) else {
+            return
+        }
+        clickedProfileId = id
+        let snapshot = refreshRuntime.presentationStore.snapshot(for: id)
+        clickedProfileUsage = snapshot?.claudeUsage
+        clickedProfileAPIUsage = snapshot?.claudeAPIUsage
+        applyBannerProjection(from: snapshot)
+    }
+
     static func popoverUsage(
         clickedProfileID: UUID?,
         clickedProfileUsage: ClaudeUsage?,

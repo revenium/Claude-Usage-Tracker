@@ -598,6 +598,7 @@
 /* ==================== */
 /* MARK: - Popover/Menu Bar */
 /* ==================== */
+"popover.active_accounts.title" = "活跃账户";
 "popover.manage_profiles" = "管理配置文件";
 "popover.no_profile" = "无配置文件";
 "popover.profiles_count" = "%d 个配置文件";
@@ -1129,6 +1130,7 @@
 "popover.normalized.profile.not_connected" = "未连接";
 "popover.normalized.profile.not_linked" = "未链接";
 "popover.normalized.profile.relink_required" = "需要重新链接";
+"popover.normalized.profile.viewing" = "正在查看";
 "popover.normalized.reset.at" = "将于 %@ 重置";
 "popover.normalized.reset.both" = "将于 %@ 后重置（%@）";
 "popover.normalized.reset.in" = "将于 %@ 后重置";

@@ -70,6 +70,10 @@ struct ProviderProfileRowPresentation: Equatable, Identifiable {
     let connectionDescription: String
     let systemImage: String
     let isActive: Bool
+    /// Whether this row is the profile the popover is currently showing.
+    /// Independent of `isActive`: a profile can be viewed without being
+    /// its provider's active profile, and vice versa.
+    let isViewing: Bool
 
     var accessibilityIdentifier: String {
         "popover.profile.switcher.\(id.uuidString)"
@@ -80,7 +84,8 @@ struct ProviderProfileRowPresentation: Equatable, Identifiable {
     /// own independent active slot — pass `ProfileManager.isActive(_:)`.
     static func make(
         profiles: [Profile],
-        isActive: (Profile) -> Bool
+        isActive: (Profile) -> Bool,
+        viewedProfileID: UUID? = nil
     ) -> [ProviderProfileRowPresentation] {
         profiles.map { profile in
             switch profile.providerConfiguration {
@@ -92,7 +97,8 @@ struct ProviderProfileRowPresentation: Equatable, Identifiable {
                     connectionDescription:
                         claudeConnectionDescription(profile),
                     systemImage: "sparkles",
-                    isActive: isActive(profile)
+                    isActive: isActive(profile),
+                    isViewing: profile.id == viewedProfileID
                 )
             case .codex(let configuration):
                 let connectionDescription: String
@@ -121,7 +127,8 @@ struct ProviderProfileRowPresentation: Equatable, Identifiable {
                     connectionDescription: connectionDescription,
                     systemImage:
                         "chevron.left.forwardslash.chevron.right",
-                    isActive: isActive(profile)
+                    isActive: isActive(profile),
+                    isViewing: profile.id == viewedProfileID
                 )
             }
         }
@@ -153,6 +160,45 @@ struct ProviderProfileRowPresentation: Equatable, Identifiable {
             "popover.normalized.profile.not_connected",
             default: "Not connected"
         )
+    }
+}
+
+/// One chip in the popover's "Active accounts" section: the currently
+/// active profile for a single provider. Surfaces the one-active-profile-
+/// per-provider state (a Claude profile and a Codex profile can be active
+/// simultaneously) that the header alone cannot show, since the header
+/// only ever describes the single profile being viewed.
+struct ActiveAccountChipPresentation: Equatable, Identifiable {
+    let id: UUID
+    let providerName: String
+    let profileName: String
+    let isViewing: Bool
+
+    var accessibilityIdentifier: String {
+        "popover.active_accounts.chip.\(id.uuidString)"
+    }
+
+    /// Builds one chip per provider that currently has an active profile.
+    /// A provider with no active profile (e.g. never configured) is
+    /// omitted rather than shown as empty.
+    static func make(
+        activeClaudeProfile: Profile?,
+        activeCodexProfile: Profile?,
+        viewedProfileID: UUID?
+    ) -> [ActiveAccountChipPresentation] {
+        [
+            activeClaudeProfile.map { ($0, "Claude") },
+            activeCodexProfile.map { ($0, "Codex") }
+        ]
+        .compactMap { $0 }
+        .map { profile, providerName in
+            ActiveAccountChipPresentation(
+                id: profile.id,
+                providerName: providerName,
+                profileName: profile.name,
+                isViewing: profile.id == viewedProfileID
+            )
+        }
     }
 }
 
@@ -788,6 +834,9 @@ struct ProviderPopoverHeader: View {
     let presentation: NormalizedUsagePresentation
     let claudeStatus: ClaudeStatus
     let isRefreshing: Bool
+    /// Selecting a profile from the switcher menu — a view change, not an
+    /// activation. See `MenuBarManager.setViewedProfile(_:)`.
+    let onSelectProfile: (UUID) -> Void
     let onRefresh: () -> Void
     let onManageProfiles: () -> Void
     let onPreferences: () -> Void
@@ -884,6 +933,9 @@ struct ProviderPopoverHeader: View {
             VStack(alignment: .leading, spacing: 2) {
                 ProfileSwitcherCompact(
                     profileManager: profileManager,
+                    viewedProfileName: presentation.profileName,
+                    viewedProfileID: presentation.profileID,
+                    onSelectProfile: onSelectProfile,
                     onManageProfiles: onManageProfiles
                 )
 

@@ -261,6 +261,7 @@
 /* ==================== */
 /* MARK: - Popover/Menu Bar */
 /* ==================== */
+"popover.active_accounts.title" = "활성 계정";
 "popover.manage_profiles" = "프로필 관리";
 "popover.no_profile" = "프로필 없음";
 "popover.profiles_count" = "%d개 프로필";
@@ -1105,6 +1106,7 @@
 "popover.normalized.profile.not_connected" = "연결되지 않음";
 "popover.normalized.profile.not_linked" = "연결되지 않음";
 "popover.normalized.profile.relink_required" = "다시 연결 필요";
+"popover.normalized.profile.viewing" = "보는 중";
 "popover.normalized.reset.at" = "%@에 재설정";
 "popover.normalized.reset.both" = "%@ 후 재설정(%@)";
 "popover.normalized.reset.in" = "%@ 후 재설정";

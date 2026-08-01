@@ -610,6 +610,7 @@
 /* ==================== */
 /* MARK: - Popover/Menu Bar */
 /* ==================== */
+"popover.active_accounts.title" = "アクティブなアカウント";
 "popover.manage_profiles" = "プロファイル管理";
 "popover.no_profile" = "プロファイルなし";
 "popover.profiles_count" = "%dプロファイル";
@@ -1133,6 +1134,7 @@
 "popover.normalized.profile.not_connected" = "未接続";
 "popover.normalized.profile.not_linked" = "未リンク";
 "popover.normalized.profile.relink_required" = "再リンクが必要です";
+"popover.normalized.profile.viewing" = "表示中";
 "popover.normalized.reset.at" = "%@にリセット";
 "popover.normalized.reset.both" = "%@後にリセット（%@）";
 "popover.normalized.reset.in" = "%@後にリセット";
