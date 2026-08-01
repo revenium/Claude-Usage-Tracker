@@ -786,14 +786,30 @@ final class CodexParityUITests: XCTestCase {
         )
         // Selecting a row from the popover's profile switcher is a pure
         // view change now (see `MenuBarManager.setViewedProfile(_:)`); it
-        // never activates. Activation only happens via the explicit
-        // "Make Active" affordance, exercised here through profile B's
-        // status-item context menu.
+        // never activates. Do that first — still inside the detached
+        // window — then use the explicit "Make Active" affordance the
+        // view change reveals, which is the real activation path. (A
+        // right click on the background status-item stack was tried here
+        // and is unreliable: the detached surface is a floating panel
+        // that visually sits on top of the synthetic status-item window
+        // in this harness and can swallow the synthesized click.)
         element(
             app,
-            identifier: "ui-testing.status.multi.codex.inactive"
-        ).rightClick()
-        let activateWhileDetached = app.menuItems["Make Active"]
+            identifier: "popover.profile.switcher"
+        ).click()
+        let selectWhileDetached = element(
+            app,
+            identifier:
+                "popover.profile.switcher.\(Self.secondaryCodexProfileID)"
+        )
+        XCTAssertTrue(
+            selectWhileDetached.waitForExistence(timeout: 3)
+        )
+        selectWhileDetached.click()
+        let activateWhileDetached = element(
+            app,
+            identifier: "popover.profile.make_active"
+        )
         XCTAssertTrue(
             activateWhileDetached.waitForExistence(timeout: 3)
         )

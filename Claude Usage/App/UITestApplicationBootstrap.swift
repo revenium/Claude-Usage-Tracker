@@ -1484,6 +1484,28 @@ private struct UITestPopoverSurface: View {
                 .accessibilityIdentifier(
                     "ui-testing.popover.profile-id"
                 )
+            // Mirrors PopoverContentView's `makeActiveButton(for:)`: the
+            // real, click-in-place activation affordance shown whenever the
+            // viewed profile isn't its provider's active one. Exercising
+            // activation this way (rather than through the background
+            // status-item context menu) avoids any dependence on window
+            // stacking order relative to a detached surface.
+            if let viewedProfileID,
+               viewedProfileID != profileManager.activeProfile?.id,
+               let viewedProfile = profileManager.profiles.first(
+                   where: { $0.id == viewedProfileID }
+               ) {
+                Button("Make Active") {
+                    Task {
+                        await profileManager.activateProfile(
+                            viewedProfile.id
+                        )
+                    }
+                }
+                .accessibilityIdentifier(
+                    "popover.profile.make_active"
+                )
+            }
             if let onDetach {
                 Button("Detach", action: onDetach)
                     .accessibilityIdentifier(
