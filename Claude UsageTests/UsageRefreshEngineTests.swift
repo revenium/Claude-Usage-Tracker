@@ -141,6 +141,30 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
         }
     }
 
+    /// A test-controlled clock so backoff-window math can be exercised
+    /// without real sleeps: the engine's `now` closure reads this instead
+    /// of the wall clock, and tests advance it explicitly.
+    private final class MutableClock: @unchecked Sendable {
+        private let lock = NSLock()
+        private var date: Date
+
+        init(_ date: Date) {
+            self.date = date
+        }
+
+        func now() -> Date {
+            lock.lock()
+            defer { lock.unlock() }
+            return date
+        }
+
+        func advance(by interval: TimeInterval) {
+            lock.lock()
+            defer { lock.unlock() }
+            date = date.addingTimeInterval(interval)
+        }
+    }
+
     @MainActor
     private final class FakeCommitter: UsageRefreshCommitting {
         private let ledger: UsageRefreshInputLedger
@@ -411,6 +435,7 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
         case failed
         case superseded
         case unavailable
+        case backoffSkipped
     }
 
     private enum TestValues {
@@ -1229,9 +1254,14 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
         let context = makeContext(
             visible: [first.profileID, second.profileID]
         )
+        // This test asserts the engine's underlying slot state machine can
+        // run two profiles' fetches truly concurrently; it is orthogonal to
+        // the fan-out stagger policy (covered separately), so disable it
+        // here rather than couple this assertion to a specific delay.
         let harness = makeHarness(
             identities: [first, second],
-            context: context
+            context: context,
+            staggerPolicy: IndexedRefreshStaggerPolicy(step: 0)
         )
         let firstGate = ManualGate<ProviderFetchResult>()
         let secondGate = ManualGate<ProviderFetchResult>()
@@ -1379,9 +1409,13 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
         let context = makeContext(
             visible: [first.profileID, second.profileID]
         )
+        // See testDifferentProfilesFetchConcurrently: this test's slot
+        // invalidation/supersession assertions are independent of the
+        // fan-out stagger policy.
         let harness = makeHarness(
             identities: [first, second],
-            context: context
+            context: context,
+            staggerPolicy: IndexedRefreshStaggerPolicy(step: 0)
         )
         let newerFirst = ManualGate<ProviderFetchResult>()
         let newerSecond = ManualGate<ProviderFetchResult>()
@@ -6115,6 +6149,643 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
         XCTAssertFalse(batches.snapshot[0].isLatestBatch)
     }
 
+    // MARK: - Error fidelity: 429/5xx classification
+
+    func testAppErrorRateLimitedClassifiesAsRateLimitedWithRetryAfterAndLegacyCode()
+        async
+    {
+        let identity = makeIdentity()
+        let context = makeContext(visible: [identity.profileID])
+        let harness = makeHarness(
+            identities: [identity],
+            context: context
+        )
+
+        _ = await enqueue(
+            makeJob(
+                identity: identity,
+                coreFetch: {
+                    throw AppError.apiRateLimited(retryAfter: 42)
+                }
+            ),
+            on: harness,
+            context: context
+        )
+        await assertEventually {
+            harness.batches.snapshot.count == 1
+        }
+
+        let failure = harness.store.snapshot(
+            for: identity.profileID
+        )?.currentFailure
+        XCTAssertEqual(failure?.kind, .rateLimited)
+        XCTAssertEqual(failure?.retryAfter, 42)
+        XCTAssertEqual(failure?.legacyErrorCode, .apiRateLimited)
+        XCTAssertEqual(
+            failure?.retryNotBefore,
+            TestValues.now.addingTimeInterval(42)
+        )
+    }
+
+    func testAppErrorServerErrorClassifiesAsServerErrorWithLegacyCode()
+        async
+    {
+        let identity = makeIdentity()
+        let context = makeContext(visible: [identity.profileID])
+        let harness = makeHarness(
+            identities: [identity],
+            context: context
+        )
+
+        _ = await enqueue(
+            makeJob(
+                identity: identity,
+                coreFetch: {
+                    throw AppError.apiServerError(statusCode: 503)
+                }
+            ),
+            on: harness,
+            context: context
+        )
+        await assertEventually {
+            harness.batches.snapshot.count == 1
+        }
+
+        let failure = harness.store.snapshot(
+            for: identity.profileID
+        )?.currentFailure
+        XCTAssertEqual(failure?.kind, .serverError)
+        XCTAssertNil(failure?.retryAfter)
+        XCTAssertEqual(failure?.legacyErrorCode, .apiServerError)
+    }
+
+    // MARK: - Cadence: consecutive-failure backoff
+
+    func testBackoffSkipsScheduledRetryUntilExponentialWindowElapses()
+        async
+    {
+        let identity = makeIdentity()
+        let context = makeContext(visible: [identity.profileID])
+        let clock = MutableClock(TestValues.now)
+        let harness = makeHarness(
+            identities: [identity],
+            context: context,
+            now: { clock.now() }
+        )
+
+        func timerJob() -> CapturedProviderRefreshJob {
+            Self.makeJob(
+                identity: identity,
+                refreshInterval: 10,
+                trigger: .timer,
+                coreFetch: {
+                    throw UsageProviderError.transportFailure
+                }
+            )
+        }
+
+        // First scheduled attempt fails. refreshInterval is 10s, so the
+        // first backoff window is 2^1 * 10 = 20s.
+        _ = await harness.engine.enqueue(
+            [timerJob()],
+            trigger: .timer,
+            presentationContext: context,
+            inputGenerations: [identity.profileID: 0],
+            invocationOrder: 1
+        )
+        await assertEventually {
+            harness.batches.snapshot.count == 1
+        }
+        XCTAssertEqual(
+            outcome(
+                harness.batches.snapshot[0]
+                    .outcomes[identity.profileID]
+            ),
+            .failed
+        )
+
+        // A second scheduled attempt inside the 20s window is withheld
+        // rather than launched and immediately re-failed.
+        _ = await harness.engine.enqueue(
+            [timerJob()],
+            trigger: .timer,
+            presentationContext: context,
+            inputGenerations: [identity.profileID: 0],
+            invocationOrder: 2
+        )
+        await assertEventually {
+            harness.batches.snapshot.count == 2
+        }
+        XCTAssertEqual(
+            outcome(
+                harness.batches.snapshot[1]
+                    .outcomes[identity.profileID]
+            ),
+            .backoffSkipped
+        )
+
+        // Once the window elapses, a scheduled attempt runs again.
+        clock.advance(by: 21)
+        _ = await harness.engine.enqueue(
+            [timerJob()],
+            trigger: .timer,
+            presentationContext: context,
+            inputGenerations: [identity.profileID: 0],
+            invocationOrder: 3
+        )
+        await assertEventually {
+            harness.batches.snapshot.count == 3
+        }
+        XCTAssertEqual(
+            outcome(
+                harness.batches.snapshot[2]
+                    .outcomes[identity.profileID]
+            ),
+            .failed
+        )
+    }
+
+    func testManualRefreshBypassesBackoffWindow() async throws {
+        let identity = makeIdentity()
+        let context = makeContext(visible: [identity.profileID])
+        let clock = MutableClock(TestValues.now)
+        let harness = makeHarness(
+            identities: [identity],
+            context: context,
+            now: { clock.now() }
+        )
+
+        _ = await harness.engine.enqueue(
+            [
+                Self.makeJob(
+                    identity: identity,
+                    refreshInterval: 10,
+                    trigger: .timer,
+                    coreFetch: {
+                        throw UsageProviderError.transportFailure
+                    }
+                )
+            ],
+            trigger: .timer,
+            presentationContext: context,
+            inputGenerations: [identity.profileID: 0],
+            invocationOrder: 1
+        )
+        await assertEventually {
+            harness.batches.snapshot.count == 1
+        }
+
+        // Immediately after, well inside the backoff window, a manual
+        // refresh (the Refresh button) still runs rather than being
+        // withheld.
+        let fetches = Locked(0)
+        _ = await harness.engine.enqueue(
+            [
+                Self.makeJob(
+                    identity: identity,
+                    refreshInterval: 10,
+                    trigger: .manual,
+                    coreFetch: {
+                        fetches.withValue { $0 += 1 }
+                        return ProviderFetchResult(
+                            report: try Self.makeReport(
+                                providerID: .codex,
+                                marker: 2
+                            )
+                        )
+                    }
+                )
+            ],
+            trigger: .manual,
+            presentationContext: context,
+            inputGenerations: [identity.profileID: 0],
+            invocationOrder: 2
+        )
+        await assertEventually {
+            harness.batches.snapshot.count == 2
+        }
+
+        XCTAssertEqual(fetches.snapshot(), 1)
+        XCTAssertEqual(
+            outcome(
+                harness.batches.snapshot[1]
+                    .outcomes[identity.profileID]
+            ),
+            .accepted
+        )
+    }
+
+    func testRetryAfterHintExtendsBackoffBeyondExponentialWindow()
+        async
+    {
+        let identity = makeIdentity()
+        let context = makeContext(visible: [identity.profileID])
+        let clock = MutableClock(TestValues.now)
+        let harness = makeHarness(
+            identities: [identity],
+            context: context,
+            now: { clock.now() }
+        )
+
+        func timerJob() -> CapturedProviderRefreshJob {
+            Self.makeJob(
+                identity: identity,
+                refreshInterval: 5,
+                trigger: .timer,
+                coreFetch: {
+                    throw AppError.apiRateLimited(retryAfter: 120)
+                }
+            )
+        }
+
+        // refreshInterval is 5s, so the exponential window alone would be
+        // 2^1 * 5 = 10s, but the server's Retry-After (120s) must win.
+        _ = await harness.engine.enqueue(
+            [timerJob()],
+            trigger: .timer,
+            presentationContext: context,
+            inputGenerations: [identity.profileID: 0],
+            invocationOrder: 1
+        )
+        await assertEventually {
+            harness.batches.snapshot.count == 1
+        }
+
+        // Past the exponential window but still well inside Retry-After.
+        clock.advance(by: 15)
+        _ = await harness.engine.enqueue(
+            [timerJob()],
+            trigger: .timer,
+            presentationContext: context,
+            inputGenerations: [identity.profileID: 0],
+            invocationOrder: 2
+        )
+        await assertEventually {
+            harness.batches.snapshot.count == 2
+        }
+        XCTAssertEqual(
+            outcome(
+                harness.batches.snapshot[1]
+                    .outcomes[identity.profileID]
+            ),
+            .backoffSkipped
+        )
+
+        // Past Retry-After (125s total elapsed): runs again.
+        clock.advance(by: 110)
+        _ = await harness.engine.enqueue(
+            [timerJob()],
+            trigger: .timer,
+            presentationContext: context,
+            inputGenerations: [identity.profileID: 0],
+            invocationOrder: 3
+        )
+        await assertEventually {
+            harness.batches.snapshot.count == 3
+        }
+        XCTAssertEqual(
+            outcome(
+                harness.batches.snapshot[2]
+                    .outcomes[identity.profileID]
+            ),
+            .failed
+        )
+    }
+
+    func testSuccessResetsBackoffWindow() async {
+        let identity = makeIdentity()
+        let context = makeContext(visible: [identity.profileID])
+        let clock = MutableClock(TestValues.now)
+        let harness = makeHarness(
+            identities: [identity],
+            context: context,
+            now: { clock.now() }
+        )
+
+        _ = await harness.engine.enqueue(
+            [
+                Self.makeJob(
+                    identity: identity,
+                    refreshInterval: 10,
+                    trigger: .timer,
+                    coreFetch: {
+                        throw UsageProviderError.transportFailure
+                    }
+                )
+            ],
+            trigger: .timer,
+            presentationContext: context,
+            inputGenerations: [identity.profileID: 0],
+            invocationOrder: 1
+        )
+        await assertEventually {
+            harness.batches.snapshot.count == 1
+        }
+
+        // A manual refresh bypasses the window and succeeds, which must
+        // clear it for the next scheduled attempt.
+        _ = await harness.engine.enqueue(
+            [
+                Self.makeJob(
+                    identity: identity,
+                    refreshInterval: 10,
+                    trigger: .manual,
+                    coreFetch: {
+                        ProviderFetchResult(
+                            report: try Self.makeReport(
+                                providerID: .codex,
+                                marker: 2
+                            )
+                        )
+                    }
+                )
+            ],
+            trigger: .manual,
+            presentationContext: context,
+            inputGenerations: [identity.profileID: 0],
+            invocationOrder: 2
+        )
+        await assertEventually {
+            harness.batches.snapshot.count == 2
+        }
+
+        // The very next scheduled attempt (no clock advance) now runs
+        // instead of being withheld, because success cleared the backoff.
+        let fetches = Locked(0)
+        _ = await harness.engine.enqueue(
+            [
+                Self.makeJob(
+                    identity: identity,
+                    refreshInterval: 10,
+                    trigger: .timer,
+                    coreFetch: {
+                        fetches.withValue { $0 += 1 }
+                        return ProviderFetchResult(
+                            report: try Self.makeReport(
+                                providerID: .codex,
+                                marker: 3
+                            )
+                        )
+                    }
+                )
+            ],
+            trigger: .timer,
+            presentationContext: context,
+            inputGenerations: [identity.profileID: 0],
+            invocationOrder: 3
+        )
+        await assertEventually {
+            harness.batches.snapshot.count == 3
+        }
+        XCTAssertEqual(fetches.snapshot(), 1)
+        XCTAssertEqual(
+            outcome(
+                harness.batches.snapshot[2]
+                    .outcomes[identity.profileID]
+            ),
+            .accepted
+        )
+    }
+
+    // MARK: - Cadence: multi-profile fan-out stagger
+
+    func testIndexedStaggerPolicyDelaysNonFocusedProfilesByIndexedStep() {
+        let policy = IndexedRefreshStaggerPolicy(step: 0.4)
+
+        XCTAssertEqual(
+            policy.delay(
+                forProfileAt: 0,
+                of: 3,
+                trigger: .timer,
+                isFocusedProfile: false
+            ),
+            0
+        )
+        XCTAssertEqual(
+            policy.delay(
+                forProfileAt: 1,
+                of: 3,
+                trigger: .timer,
+                isFocusedProfile: false
+            ),
+            0.4,
+            accuracy: 0.0001
+        )
+        XCTAssertEqual(
+            policy.delay(
+                forProfileAt: 2,
+                of: 3,
+                trigger: .timer,
+                isFocusedProfile: false
+            ),
+            0.8,
+            accuracy: 0.0001
+        )
+
+        // A single-profile batch never staggers.
+        XCTAssertEqual(
+            policy.delay(
+                forProfileAt: 0,
+                of: 1,
+                trigger: .timer,
+                isFocusedProfile: false
+            ),
+            0
+        )
+    }
+
+    func testIndexedStaggerPolicySkipsDelayOnlyForManualFocusedProfile() {
+        let policy = IndexedRefreshStaggerPolicy(step: 0.4)
+
+        // Manual + the profile on screen: always immediate.
+        XCTAssertEqual(
+            policy.delay(
+                forProfileAt: 2,
+                of: 3,
+                trigger: .manual,
+                isFocusedProfile: true
+            ),
+            0
+        )
+
+        // Manual, but a different profile in the same "refresh all" batch:
+        // still staggers, since a manual multi-profile refresh can recreate
+        // the same thundering herd a timer tick does.
+        XCTAssertEqual(
+            policy.delay(
+                forProfileAt: 2,
+                of: 3,
+                trigger: .manual,
+                isFocusedProfile: false
+            ),
+            0.8,
+            accuracy: 0.0001
+        )
+
+        // Scheduled (non-manual) refresh of the focused profile still
+        // staggers — only a user-initiated trigger bypasses it.
+        XCTAssertEqual(
+            policy.delay(
+                forProfileAt: 2,
+                of: 3,
+                trigger: .timer,
+                isFocusedProfile: true
+            ),
+            0.8,
+            accuracy: 0.0001
+        )
+    }
+
+    func testStaggerPolicyDelaysSecondScheduledProfileAgainstTheFirst()
+        async
+    {
+        let first = makeIdentity()
+        let second = makeIdentity()
+        let context = makeContext(
+            visible: [first.profileID, second.profileID]
+        )
+        let harness = makeHarness(
+            identities: [first, second],
+            context: context,
+            staggerPolicy: IndexedRefreshStaggerPolicy(step: 0.05)
+        )
+        let startTimes = Locked<[UUID: Date]>([:])
+
+        _ = await harness.engine.enqueue(
+            [
+                Self.makeJob(
+                    identity: first,
+                    trigger: .timer,
+                    coreFetch: {
+                        startTimes.withValue {
+                            $0[first.profileID] = Date()
+                        }
+                        return ProviderFetchResult(
+                            report: try Self.makeReport(
+                                providerID: .codex,
+                                marker: 1
+                            )
+                        )
+                    }
+                ),
+                Self.makeJob(
+                    identity: second,
+                    trigger: .timer,
+                    coreFetch: {
+                        startTimes.withValue {
+                            $0[second.profileID] = Date()
+                        }
+                        return ProviderFetchResult(
+                            report: try Self.makeReport(
+                                providerID: .codex,
+                                marker: 2
+                            )
+                        )
+                    }
+                )
+            ],
+            trigger: .timer,
+            presentationContext: context,
+            inputGenerations: [
+                first.profileID: 0,
+                second.profileID: 0
+            ],
+            invocationOrder: 1
+        )
+        // The stagger delay is a real `Task.sleep`, which the fast
+        // `Task.yield()`-based `eventually` polling loop used elsewhere in
+        // this file can outrun without ever letting real time elapse.
+        // Sleep past the whole batch's expected stagger window instead.
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertEqual(harness.batches.snapshot.count, 1)
+
+        let times = startTimes.snapshot()
+        guard let firstStart = times[first.profileID],
+              let secondStart = times[second.profileID] else {
+            XCTFail("Expected both profiles to fetch")
+            return
+        }
+        // Index 0 (also the focused profile, per makeContext) starts
+        // essentially immediately; index 1 is held back by ~one stagger
+        // step. A generous tolerance keeps this from flaking under load.
+        XCTAssertGreaterThan(
+            secondStart.timeIntervalSince(firstStart),
+            0.03
+        )
+    }
+
+    func testManualRefreshStaysImmediateForFocusedProfileEvenAtLaterIndex()
+        async
+    {
+        let notFocused = makeIdentity()
+        let focused = makeIdentity()
+        let context = UsagePresentationContext(
+            epoch: 1,
+            focusedProfileID: focused.profileID,
+            visibleProfileIDs: [
+                notFocused.profileID, focused.profileID
+            ],
+            mode: .multi
+        )
+        let harness = makeHarness(
+            identities: [notFocused, focused],
+            context: context,
+            staggerPolicy: IndexedRefreshStaggerPolicy(step: 0.3)
+        )
+        let notFocusedGate = ManualGate<ProviderFetchResult>()
+        let focusedGate = ManualGate<ProviderFetchResult>()
+
+        _ = await harness.engine.enqueue(
+            [
+                makeGatedJob(
+                    identity: notFocused,
+                    gate: notFocusedGate,
+                    trigger: .manual
+                ),
+                makeGatedJob(
+                    identity: focused,
+                    gate: focusedGate,
+                    trigger: .manual
+                )
+            ],
+            trigger: .manual,
+            presentationContext: context,
+            inputGenerations: [
+                notFocused.profileID: 0,
+                focused.profileID: 0
+            ],
+            invocationOrder: 1
+        )
+
+        // `focused` is index 1 in this batch, yet a manual trigger never
+        // delays the profile currently on screen.
+        let focusedStarted = await waitForStarts(
+            focusedGate,
+            count: 1
+        )
+        XCTAssertTrue(focusedStarted)
+
+        notFocusedGate.resolve(
+            ProviderFetchResult(
+                report: try! Self.makeReport(
+                    providerID: .codex,
+                    marker: 1
+                )
+            )
+        )
+        focusedGate.resolve(
+            ProviderFetchResult(
+                report: try! Self.makeReport(
+                    providerID: .codex,
+                    marker: 2
+                )
+            )
+        )
+        await assertEventually {
+            harness.batches.snapshot.count == 1
+        }
+    }
+
     // MARK: - Helpers
 
     private func makeHarness(
@@ -6125,7 +6796,11 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
             .operational
         },
         memberEnqueueObserver:
-            UsageRefreshEngine.MemberEnqueueObserver? = nil
+            UsageRefreshEngine.MemberEnqueueObserver? = nil,
+        now: @escaping @Sendable () -> Date = { TestValues.now },
+        staggerPolicy: any RefreshStaggerPolicy =
+            IndexedRefreshStaggerPolicy(),
+        maximumBackoffWindow: TimeInterval = 30 * 60
     ) -> Harness {
         let ledger = retain(UsageRefreshInputLedger())
         let committer = retain(FakeCommitter(ledger: ledger))
@@ -6142,11 +6817,13 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
             committer: committer,
             presentationStore: store,
             statusFetch: statusFetch,
-            now: { TestValues.now },
+            now: now,
             batchObserver: { result in
                 batches.append(result)
             },
-            memberEnqueueObserver: memberEnqueueObserver
+            memberEnqueueObserver: memberEnqueueObserver,
+            staggerPolicy: staggerPolicy,
+            maximumBackoffWindow: maximumBackoffWindow
         ))
         return Harness(
             ledger: ledger,
@@ -6166,7 +6843,13 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
             .production,
         statusFetch: @escaping UsageRefreshEngine.StatusFetch = {
             .operational
-        }
+        },
+        // Runtime-level tests assert on fast `Task.yield()` polling and
+        // predate the fan-out stagger policy; disable it by default so
+        // they keep exercising true multi-profile concurrency. Tests that
+        // specifically cover staggering pass a real policy explicitly.
+        staggerPolicy: any RefreshStaggerPolicy =
+            IndexedRefreshStaggerPolicy(step: 0)
     ) -> UsageRefreshRuntime {
         let registry = customRegistry ?? UsageProviderRegistry(
             featureAvailability: featureAvailability,
@@ -6191,7 +6874,8 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
             now: { TestValues.now },
             batchObserver: { result in
                 batches.append(result)
-            }
+            },
+            staggerPolicy: staggerPolicy
         ))
     }
 
@@ -6518,6 +7202,8 @@ final class UsageRefreshEngineTests: HostedAppTestCase {
             return .superseded
         case .unavailable:
             return .unavailable
+        case .backoffSkipped:
+            return .backoffSkipped
         case nil:
             return nil
         }

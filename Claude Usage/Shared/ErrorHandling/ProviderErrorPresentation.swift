@@ -453,7 +453,7 @@ nonisolated enum ProviderErrorMapper {
             return .unsupportedAccount
         case .persistence:
             return nil
-        case .transport, .unknown:
+        case .transport, .unknown, .rateLimited, .serverError:
             return .transientFailure
         case .protocolMismatch:
             return .incompatibleAppServer

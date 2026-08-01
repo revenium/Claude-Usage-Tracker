@@ -915,6 +915,7 @@
 "popover.banner.updated_ago" = "%d分钟前更新";
 "popover.banner.last_success" = "上次成功刷新：%@";
 "popover.banner.never_succeeded" = "尚未成功刷新。";
+"popover.banner.retrying_at" = "将于 %@ 重试";
 
 // MARK: - Overage Balance
 "popover.overage_balance" = "余额";
@@ -1116,8 +1117,10 @@
 "popover.normalized.health.unsupported" = "不受支持的账户";
 "popover.normalized.notice.configuration" = "此配置文件需要处理后才能刷新。";
 "popover.normalized.notice.degraded" = "部分用量详情不可用。";
+"popover.normalized.notice.rate_limited" = "已被 Claude 限流，将自动重试。";
 "popover.normalized.notice.refresh_failed" = "无法刷新用量。";
 "popover.normalized.notice.refreshing" = "正在刷新用量…";
+"popover.normalized.notice.server_error" = "Claude 服务返回了错误，将自动重试。";
 "popover.normalized.notice.stale" = "用量数据可能已过期。";
 "popover.normalized.notice.unauthenticated" = "请重新登录以刷新用量。";
 "popover.normalized.notice.unavailable" = "服务商当前不可用。";

@@ -917,6 +917,7 @@
 "popover.banner.updated_ago" = "Vor %dm aktualisiert";
 "popover.banner.last_success" = "Letzte erfolgreiche Aktualisierung: %@";
 "popover.banner.never_succeeded" = "Noch keine erfolgreiche Aktualisierung.";
+"popover.banner.retrying_at" = "Erneuter Versuch um %@";
 
 // MARK: - Overage Balance
 "popover.overage_balance" = "Guthaben";
@@ -1120,8 +1121,10 @@
 "popover.normalized.health.unsupported" = "Nicht unterstütztes Konto";
 "popover.normalized.notice.configuration" = "Dieses Profil erfordert Aufmerksamkeit, bevor es aktualisiert werden kann.";
 "popover.normalized.notice.degraded" = "Einige Nutzungsdetails sind nicht verfügbar.";
+"popover.normalized.notice.rate_limited" = "Von Claude ratenbegrenzt – wird automatisch erneut versucht.";
 "popover.normalized.notice.refresh_failed" = "Die Nutzung konnte nicht aktualisiert werden.";
 "popover.normalized.notice.refreshing" = "Nutzung wird aktualisiert …";
+"popover.normalized.notice.server_error" = "Der Claude-Dienst hat einen Fehler zurückgegeben – wird automatisch erneut versucht.";
 "popover.normalized.notice.stale" = "Die Nutzung ist möglicherweise veraltet.";
 "popover.normalized.notice.unauthenticated" = "Melden Sie sich erneut an, um die Nutzung zu aktualisieren.";
 "popover.normalized.notice.unavailable" = "Der Anbieter ist derzeit nicht verfügbar.";

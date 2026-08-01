@@ -917,6 +917,7 @@
 "popover.banner.updated_ago" = "%d分前に更新";
 "popover.banner.last_success" = "前回の更新成功: %@";
 "popover.banner.never_succeeded" = "まだ更新に成功していません。";
+"popover.banner.retrying_at" = "%@ に再試行します";
 
 // MARK: - Overage Balance
 "popover.overage_balance" = "残高";
@@ -1120,8 +1121,10 @@
 "popover.normalized.health.unsupported" = "サポートされていないアカウント";
 "popover.normalized.notice.configuration" = "更新する前に、このプロファイルの確認が必要です。";
 "popover.normalized.notice.degraded" = "一部の使用状況の詳細が利用できません。";
+"popover.normalized.notice.rate_limited" = "Claude によってレート制限されました。自動的に再試行します。";
 "popover.normalized.notice.refresh_failed" = "使用状況を更新できませんでした。";
 "popover.normalized.notice.refreshing" = "使用状況を更新中…";
+"popover.normalized.notice.server_error" = "Claude のサービスがエラーを返しました。自動的に再試行します。";
 "popover.normalized.notice.stale" = "使用状況が最新でない可能性があります。";
 "popover.normalized.notice.unauthenticated" = "使用状況を更新するには再度サインインしてください。";
 "popover.normalized.notice.unavailable" = "プロバイダーは現在利用できません。";

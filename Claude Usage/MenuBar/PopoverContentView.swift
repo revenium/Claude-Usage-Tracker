@@ -144,6 +144,10 @@ enum LegacyPopoverBannerDetail: Equatable {
         case .disabled, .unlinked, .dependencyMissing,
              .invalidConfiguration:
             return NormalizedUsageFailureVocabulary.configuration
+        case .rateLimited:
+            return NormalizedUsageFailureVocabulary.rateLimited
+        case .serverError:
+            return NormalizedUsageFailureVocabulary.serverError
         case .transport, .protocolMismatch, .malformedResponse,
              .timedOut, .persistence, .unknown, nil:
             return NormalizedUsageFailureVocabulary.refreshFailed
@@ -174,6 +178,23 @@ enum LegacyPopoverBannerDetail: Equatable {
             "popover.banner.last_success",
             default: "Last successful refresh: %@",
             arguments: [formatted(date)]
+        )
+    }
+
+    /// A "Retrying at {time}" line shown alongside the explanation when the
+    /// engine knows the next scheduled attempt won't start before a
+    /// specific time (backoff, or a server-provided `Retry-After` hint).
+    /// `nil` when no such time is known, so the caller can omit the line
+    /// entirely rather than show empty/placeholder text.
+    static func retryText(
+        _ retryNotBefore: Date?,
+        formatted: (Date) -> String
+    ) -> String? {
+        guard let retryNotBefore else { return nil }
+        return NormalizedUsageStrings.formatted(
+            "popover.banner.retrying_at",
+            default: "Retrying at %@",
+            arguments: [formatted(retryNotBefore)]
         )
     }
 }
@@ -400,6 +421,10 @@ struct PopoverContentView: View {
                     message: banner.message,
                     detail: LegacyPopoverBannerDetail.explanation(
                         for: manager.lastRefreshFailureKind
+                    ),
+                    retryText: LegacyPopoverBannerDetail.retryText(
+                        manager.lastRefreshFailureRetryAt,
+                        formatted: Self.absoluteTimeText
                     ),
                     lastSuccessText:
                         LegacyPopoverBannerDetail.lastSuccessText(
@@ -1322,6 +1347,10 @@ struct ExpandableStatusBanner: View {
     /// Root-cause explanation for the failure, if any. `nil` for banners
     /// (like staleness) that have no distinct cause beyond time passing.
     let detail: String?
+    /// "Retrying at {time}" line, shown only when the engine knows when the
+    /// next scheduled attempt will start (backoff / `Retry-After`). `nil`
+    /// omits the line entirely.
+    var retryText: String? = nil
     let lastSuccessText: String
     let color: Color
     let onRetry: () -> Void
@@ -1361,6 +1390,14 @@ struct ExpandableStatusBanner: View {
                             .font(.system(size: 10))
                             .foregroundColor(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if let retryText {
+                        Text(retryText)
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                            .accessibilityIdentifier(
+                                "popover.banner.retry_text"
+                            )
                     }
                     Text(lastSuccessText)
                         .font(.system(size: 10))

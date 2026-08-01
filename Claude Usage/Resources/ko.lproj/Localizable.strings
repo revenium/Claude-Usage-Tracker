@@ -891,6 +891,7 @@
 "popover.banner.updated_ago" = "%d분 전에 업데이트됨";
 "popover.banner.last_success" = "마지막 성공한 업데이트: %@";
 "popover.banner.never_succeeded" = "아직 성공한 업데이트가 없습니다.";
+"popover.banner.retrying_at" = "%@에 재시도";
 
 // MARK: - Overage Balance
 "popover.overage_balance" = "잔액";
@@ -1092,8 +1093,10 @@
 "popover.normalized.health.unsupported" = "지원되지 않는 계정";
 "popover.normalized.notice.configuration" = "새로고침하기 전에 이 프로필에 조치가 필요합니다.";
 "popover.normalized.notice.degraded" = "일부 사용량 세부 정보를 사용할 수 없습니다.";
+"popover.normalized.notice.rate_limited" = "Claude에서 속도 제한이 적용되었습니다. 자동으로 재시도합니다.";
 "popover.normalized.notice.refresh_failed" = "사용량을 새로고침할 수 없습니다.";
 "popover.normalized.notice.refreshing" = "사용량 새로고침 중…";
+"popover.normalized.notice.server_error" = "Claude 서비스에서 오류가 반환되었습니다. 자동으로 재시도합니다.";
 "popover.normalized.notice.stale" = "사용량이 최신이 아닐 수 있습니다.";
 "popover.normalized.notice.unauthenticated" = "사용량을 새로고침하려면 다시 로그인하세요.";
 "popover.normalized.notice.unavailable" = "현재 제공업체를 사용할 수 없습니다.";

@@ -451,25 +451,23 @@ class ClaudeAPIService: APIServiceProtocol {
         organizationId: String,
         checkOverageLimitEnabled: Bool = true
     ) async throws -> ClaudeUsage {
-        async let usageDataTask = performRequest(endpoint: "/organizations/\(organizationId)/usage", sessionKey: sessionKey)
-        async let overageDataTask: Data? = checkOverageLimitEnabled
-            ? performRequest(
-                endpoint: "/organizations/\(organizationId)/overage_spend_limit",
-                sessionKey: sessionKey
-            )
-            : nil
-        async let creditGrantTask: Data? = checkOverageLimitEnabled
-            ? performRequest(
-                endpoint: "/organizations/\(organizationId)/overage_credit_grant",
-                sessionKey: sessionKey
-            )
-            : nil
-
-        let usageData = try await usageDataTask
+        // Sequenced rather than fired concurrently (async let): three
+        // simultaneous requests per profile, multiplied across every
+        // selected profile on each refresh tick, was a meaningful
+        // contributor to the Claude API's 429 responses. Sequencing keeps
+        // each profile's own request volume modest; multi-profile spacing
+        // is handled separately by the refresh engine's stagger policy.
+        let usageData = try await performRequest(
+            endpoint: "/organizations/\(organizationId)/usage",
+            sessionKey: sessionKey
+        )
         var claudeUsage = try parseUsageResponse(usageData)
 
         if checkOverageLimitEnabled,
-           let data = try? await overageDataTask,
+           let data = try? await performRequest(
+                endpoint: "/organizations/\(organizationId)/overage_spend_limit",
+                sessionKey: sessionKey
+           ),
            let overage = try? JSONDecoder().decode(OverageSpendLimitResponse.self, from: data),
            overage.isEnabled == true {
             claudeUsage.costUsed = overage.usedCredits
@@ -478,7 +476,10 @@ class ClaudeAPIService: APIServiceProtocol {
         }
 
         if checkOverageLimitEnabled,
-           let creditData = try? await creditGrantTask,
+           let creditData = try? await performRequest(
+                endpoint: "/organizations/\(organizationId)/overage_credit_grant",
+                sessionKey: sessionKey
+           ),
            let creditGrant = try? JSONDecoder().decode(OverageCreditGrantResponse.self, from: creditData) {
             claudeUsage.overageBalance = creditGrant.remainingBalance
             claudeUsage.overageBalanceCurrency = creditGrant.currency
@@ -703,18 +704,22 @@ class ClaudeAPIService: APIServiceProtocol {
             // Use existing claude.ai flow
             let orgId = try await fetchOrganizationId(sessionKey: sessionKey)
 
-            async let usageDataTask = performRequest(endpoint: "/organizations/\(orgId)/usage", sessionKey: sessionKey)
-
             // Use active profile's checkOverageLimitEnabled setting
             let checkOverage = profileManager.activeClaudeProfile?.checkOverageLimitEnabled ?? true
-            async let overageDataTask: Data? = checkOverage ? performRequest(endpoint: "/organizations/\(orgId)/overage_spend_limit", sessionKey: sessionKey) : nil
-            async let creditGrantTask: Data? = checkOverage ? performRequest(endpoint: "/organizations/\(orgId)/overage_credit_grant", sessionKey: sessionKey) : nil
 
-            let usageData = try await usageDataTask
+            // Sequenced rather than fired concurrently (async let): see the
+            // comment on the credentials-based fetchUsageData overload above.
+            let usageData = try await performRequest(
+                endpoint: "/organizations/\(orgId)/usage",
+                sessionKey: sessionKey
+            )
             var claudeUsage = try parseUsageResponse(usageData)
 
             if checkOverage,
-               let data = try? await overageDataTask,
+               let data = try? await performRequest(
+                    endpoint: "/organizations/\(orgId)/overage_spend_limit",
+                    sessionKey: sessionKey
+               ),
                let overage = try? JSONDecoder().decode(OverageSpendLimitResponse.self, from: data),
                overage.isEnabled == true {
                 claudeUsage.costUsed = overage.usedCredits
@@ -723,7 +728,10 @@ class ClaudeAPIService: APIServiceProtocol {
             }
 
             if checkOverage,
-               let creditData = try? await creditGrantTask,
+               let creditData = try? await performRequest(
+                    endpoint: "/organizations/\(orgId)/overage_credit_grant",
+                    sessionKey: sessionKey
+               ),
                let creditGrant = try? JSONDecoder().decode(OverageCreditGrantResponse.self, from: creditData) {
                 claudeUsage.overageBalance = creditGrant.remainingBalance
                 claudeUsage.overageBalanceCurrency = creditGrant.currency
@@ -840,23 +848,32 @@ class ClaudeAPIService: APIServiceProtocol {
             )
 
         case 429:
-            throw AppError(
+            let retryAfter = Self.parseRetryAfterSeconds(
+                from: httpResponse
+            )
+            let appError = AppError(
                 code: .apiRateLimited,
                 message: "Rate limited by Claude API",
-                technicalDetails: "Endpoint: \(endpoint)",
+                technicalDetails: "Endpoint: \(endpoint)\nStatus: 429"
+                    + (retryAfter.map { "\nRetry-After: \($0)s" } ?? ""),
                 isRecoverable: true,
-                recoverySuggestion: "Please wait a few minutes before trying again"
+                recoverySuggestion: "Please wait a few minutes before trying again",
+                retryAfter: retryAfter
             )
+            ErrorLogger.shared.log(appError, severity: .warning)
+            throw appError
 
         case 500...599:
             let responsePreview = String(data: data, encoding: .utf8)?.prefix(200) ?? "Unable to read response"
-            throw AppError(
+            let appError = AppError(
                 code: .apiServerError,
                 message: "Claude API server error",
                 technicalDetails: "Endpoint: \(endpoint)\nStatus: \(httpResponse.statusCode)\nResponse: \(responsePreview)",
                 isRecoverable: true,
                 recoverySuggestion: "Please try again later"
             )
+            ErrorLogger.shared.log(appError, severity: .warning)
+            throw appError
 
         default:
             let responsePreview = String(data: data, encoding: .utf8)?.prefix(200) ?? "Unable to read response"
@@ -867,6 +884,34 @@ class ClaudeAPIService: APIServiceProtocol {
                 isRecoverable: true
             )
         }
+    }
+
+    // MARK: - Rate Limit Retry Parsing
+
+    /// Parses a `Retry-After` response header, which per RFC 9110 may be
+    /// either a delay in seconds or an HTTP-date. Returns `nil` when the
+    /// header is absent or unparseable in either form.
+    static func parseRetryAfterSeconds(
+        from response: HTTPURLResponse
+    ) -> TimeInterval? {
+        guard let value = response.value(
+            forHTTPHeaderField: "Retry-After"
+        ) else {
+            return nil
+        }
+        if let seconds = TimeInterval(value.trimmingCharacters(in: .whitespaces)),
+           seconds >= 0 {
+            return seconds
+        }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "GMT")
+        formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
+        if let date = formatter.date(from: value) {
+            let interval = date.timeIntervalSinceNow
+            return interval > 0 ? interval : 0
+        }
+        return nil
     }
 
     // MARK: - Response Parsing

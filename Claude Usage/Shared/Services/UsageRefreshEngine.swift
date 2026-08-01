@@ -3,7 +3,7 @@ import Combine
 import UsageCore
 
 extension UsageRefreshTrigger {
-    var isUserInitiated: Bool {
+    nonisolated var isUserInitiated: Bool {
         self == .manual
     }
 }
@@ -62,6 +62,8 @@ nonisolated enum ProviderRefreshFailureKind: Equatable, Sendable {
     case malformedResponse
     case timedOut
     case persistence
+    case rateLimited
+    case serverError
     case unknown
 }
 
@@ -74,23 +76,36 @@ nonisolated struct ProviderRefreshFailure:
     let isRecoverable: Bool
     let consecutiveCount: Int
     let legacyErrorCode: ErrorCode?
+    /// Server-advertised retry delay (e.g. a 429's `Retry-After` header),
+    /// when known. `nil` when the failure carried no such hint.
+    let retryAfter: TimeInterval?
 
     init(
         kind: ProviderRefreshFailureKind,
         occurredAt: Date,
         isRecoverable: Bool,
         consecutiveCount: Int,
-        legacyErrorCode: ErrorCode? = nil
+        legacyErrorCode: ErrorCode? = nil,
+        retryAfter: TimeInterval? = nil
     ) {
         self.kind = kind
         self.occurredAt = occurredAt
         self.isRecoverable = isRecoverable
         self.consecutiveCount = consecutiveCount
         self.legacyErrorCode = legacyErrorCode
+        self.retryAfter = retryAfter
     }
 
     var isCredentialFailure: Bool {
         kind == .unauthenticated
+    }
+
+    /// The earliest time a subsequent scheduled attempt should occur,
+    /// derived from the server's own hint. `nil` when no hint was given;
+    /// callers combine this with their own backoff window.
+    var retryNotBefore: Date? {
+        guard let retryAfter else { return nil }
+        return occurredAt.addingTimeInterval(retryAfter)
     }
 }
 
@@ -1023,7 +1038,9 @@ final class UsageRefreshRuntime {
         committer: any UsageRefreshCommitting,
         statusFetch: @escaping UsageRefreshEngine.StatusFetch,
         now: @escaping @Sendable () -> Date = Date.init,
-        batchObserver: UsageRefreshEngine.BatchObserver? = nil
+        batchObserver: UsageRefreshEngine.BatchObserver? = nil,
+        staggerPolicy: any RefreshStaggerPolicy = IndexedRefreshStaggerPolicy(),
+        maximumBackoffWindow: TimeInterval = 30 * 60
     ) {
         self.registry = registry
         self.presentationStore = presentationStore
@@ -1070,7 +1087,9 @@ final class UsageRefreshRuntime {
                     return
                 }
                 await batchObserver?(normalized)
-            }
+            },
+            staggerPolicy: staggerPolicy,
+            maximumBackoffWindow: maximumBackoffWindow
         )
     }
 
@@ -1593,6 +1612,9 @@ nonisolated struct UsageRefreshBatchResult: Sendable {
         case failed
         case superseded
         case unavailable
+        /// A scheduled (non-manual) attempt was withheld because the
+        /// profile is still inside its consecutive-failure backoff window.
+        case backoffSkipped
     }
 
     let batchID: UUID
@@ -1610,6 +1632,45 @@ nonisolated struct UsageRefreshBatchResult: Sendable {
     }
 }
 
+/// Spaces out a multi-profile refresh fan-out so N simultaneous profile
+/// refreshes don't recreate N×3 simultaneous HTTP requests against the same
+/// provider on every tick. Deterministic (no randomness) so cadence
+/// behavior stays exactly assertable in tests.
+nonisolated protocol RefreshStaggerPolicy: Sendable {
+    func delay(
+        forProfileAt index: Int,
+        of total: Int,
+        trigger: UsageRefreshTrigger,
+        isFocusedProfile: Bool
+    ) -> TimeInterval
+}
+
+/// Index-ordered fixed steps (default 400ms). A user-initiated refresh
+/// never delays the profile currently being viewed — the Refresh button
+/// must feel instant — but other members of the same batch (e.g. a
+/// multi-profile "refresh all") still stagger, since a manual trigger can
+/// fan out across every selected profile just like a timer tick.
+nonisolated struct IndexedRefreshStaggerPolicy: RefreshStaggerPolicy {
+    let step: TimeInterval
+
+    init(step: TimeInterval = 0.4) {
+        self.step = step
+    }
+
+    func delay(
+        forProfileAt index: Int,
+        of total: Int,
+        trigger: UsageRefreshTrigger,
+        isFocusedProfile: Bool
+    ) -> TimeInterval {
+        guard total > 1, index > 0 else { return 0 }
+        if trigger.isUserInitiated, isFocusedProfile {
+            return 0
+        }
+        return TimeInterval(index) * step
+    }
+}
+
 actor UsageRefreshEngine {
     typealias StatusFetch = @Sendable () async throws -> ClaudeStatus
     typealias BatchObserver =
@@ -1624,6 +1685,7 @@ actor UsageRefreshEngine {
         let trigger: UsageRefreshTrigger
         let presentationContext: UsagePresentationContext
         let inputGeneration: UInt64
+        let staggerDelay: TimeInterval
         let job: CapturedProviderRefreshJob
     }
 
@@ -1662,6 +1724,10 @@ actor UsageRefreshEngine {
         var pending: Request?
         var lastSuccess: Date?
         var consecutiveFailures: Int = 0
+        /// Earliest time a non-user-initiated attempt may start again,
+        /// set on failure and cleared on success. Manual refreshes bypass
+        /// this entirely (see `start(_:generation:)`).
+        var nextAllowedRetryAt: Date?
     }
 
     private struct Batch {
@@ -1684,6 +1750,10 @@ actor UsageRefreshEngine {
     private let now: @Sendable () -> Date
     private let batchObserver: BatchObserver?
     private let memberEnqueueObserver: MemberEnqueueObserver?
+    private let staggerPolicy: any RefreshStaggerPolicy
+    /// Ceiling on the consecutive-failure backoff window, regardless of how
+    /// many failures have accumulated or the profile's refresh interval.
+    private let maximumBackoffWindow: TimeInterval
 
     private var slots: [UUID: Slot] = [:]
     private var batches: [UUID: Batch] = [:]
@@ -1701,7 +1771,9 @@ actor UsageRefreshEngine {
         statusFetch: @escaping StatusFetch,
         now: @escaping @Sendable () -> Date = Date.init,
         batchObserver: BatchObserver? = nil,
-        memberEnqueueObserver: MemberEnqueueObserver? = nil
+        memberEnqueueObserver: MemberEnqueueObserver? = nil,
+        staggerPolicy: any RefreshStaggerPolicy = IndexedRefreshStaggerPolicy(),
+        maximumBackoffWindow: TimeInterval = 30 * 60
     ) {
         self.committer = committer
         self.presentationStore = presentationStore
@@ -1709,6 +1781,8 @@ actor UsageRefreshEngine {
         self.now = now
         self.batchObserver = batchObserver
         self.memberEnqueueObserver = memberEnqueueObserver
+        self.staggerPolicy = staggerPolicy
+        self.maximumBackoffWindow = maximumBackoffWindow
     }
 
     @discardableResult
@@ -1795,7 +1869,7 @@ actor UsageRefreshEngine {
         }
         batches[batchID] = batch
 
-        let requests = jobs.map { job in
+        let requests = jobs.enumerated().map { index, job in
             Request(
                 requestID: UUID(),
                 batchID: batchID,
@@ -1804,6 +1878,14 @@ actor UsageRefreshEngine {
                 presentationContext: presentationContext,
                 inputGeneration:
                     inputGenerations[job.identity.profileID] ?? 0,
+                staggerDelay: staggerPolicy.delay(
+                    forProfileAt: index,
+                    of: jobs.count,
+                    trigger: trigger,
+                    isFocusedProfile:
+                        job.identity.profileID
+                            == presentationContext.focusedProfileID
+                ),
                 job: job
             )
         }
@@ -2046,7 +2128,30 @@ actor UsageRefreshEngine {
             )
             return
         }
+        // A scheduled (non-manual) attempt on a profile that is still
+        // inside its consecutive-failure backoff window is withheld
+        // entirely rather than launched and immediately re-failed. The
+        // Refresh button always bypasses this: `isUserInitiated` is
+        // decided by the trigger, never by which profile is on screen.
+        if !request.trigger.isUserInitiated,
+           let nextAllowedRetryAt = slots[profileID]?.nextAllowedRetryAt,
+           now() < nextAllowedRetryAt {
+            await finishBatchMember(
+                request,
+                outcome: .backoffSkipped
+            )
+            return
+        }
+        let staggerDelay = request.staggerDelay
         let task = Task { [weak self] in
+            if staggerDelay > 0 {
+                try? await Task.sleep(
+                    nanoseconds: UInt64(
+                        (staggerDelay * 1_000_000_000)
+                            .rounded()
+                    )
+                )
+            }
             await withTaskGroup(
                 of: ComponentCompletion.self
             ) { group in
@@ -2203,6 +2308,7 @@ actor UsageRefreshEngine {
                 running.phase = .fetching
                 slot.lastSuccess = receipt.committedAt
                 slot.consecutiveFailures = 0
+                slot.nextAllowedRetryAt = nil
                 slot.running = running
 
                 let snapshot = makeSnapshot(
@@ -2245,6 +2351,7 @@ actor UsageRefreshEngine {
                 currentRunning.phase = .fetching
                 currentSlot.lastSuccess = receipt.committedAt
                 currentSlot.consecutiveFailures = 0
+                currentSlot.nextAllowedRetryAt = nil
                 currentSlot.running = currentRunning
                 slots[request.job.identity.profileID] =
                     currentSlot
@@ -2297,6 +2404,10 @@ actor UsageRefreshEngine {
             for: error,
             count: slot.consecutiveFailures + 1
         )
+        let nextAllowedRetryAt = nextAllowedRetryAt(
+            after: terminalFailure,
+            refreshInterval: request.job.refreshInterval
+        )
         running.providerTerminal = true
         running.providerSucceeded = false
         running.providerError = error
@@ -2304,6 +2415,7 @@ actor UsageRefreshEngine {
         var presentationSlot = slot
         presentationSlot.running = running
         presentationSlot.consecutiveFailures += 1
+        presentationSlot.nextAllowedRetryAt = nextAllowedRetryAt
         let snapshot = makeSnapshot(
             request,
             usage: cached ?? nil,
@@ -2348,6 +2460,7 @@ actor UsageRefreshEngine {
         currentRunning.providerError = error
         currentRunning.phase = .fetching
         currentSlot.consecutiveFailures += 1
+        currentSlot.nextAllowedRetryAt = nextAllowedRetryAt
         currentSlot.running = currentRunning
         slots[request.job.identity.profileID] = currentSlot
     }
@@ -2748,6 +2861,34 @@ actor UsageRefreshEngine {
         )
     }
 
+    /// Exponential backoff window for consecutive scheduled-refresh
+    /// failures: `min(2^min(N,5) * refreshInterval, maximumBackoffWindow)`.
+    /// A server-provided `Retry-After` hint (e.g. from a 429) can push the
+    /// next allowed attempt out further than the computed window, but never
+    /// pulls it in earlier — the exponential floor still applies.
+    private func nextAllowedRetryAt(
+        after failure: ProviderRefreshFailure,
+        refreshInterval: TimeInterval
+    ) -> Date {
+        let baseInterval =
+            refreshInterval.isFinite && refreshInterval > 0
+                ? refreshInterval
+                : 30
+        let exponent = min(failure.consecutiveCount, 5)
+        let window = min(
+            pow(2.0, Double(exponent)) * baseInterval,
+            maximumBackoffWindow
+        )
+        let backoffDeadline = failure.occurredAt.addingTimeInterval(
+            window
+        )
+        if let retryNotBefore = failure.retryNotBefore,
+           retryNotBefore > backoffDeadline {
+            return retryNotBefore
+        }
+        return backoffDeadline
+    }
+
     private func publishActivity(
         for request: Request,
         activity: UsageRefreshActivity,
@@ -2836,6 +2977,7 @@ actor UsageRefreshEngine {
         let kind: ProviderRefreshFailureKind
         let recoverable: Bool
         let legacyErrorCode: ErrorCode?
+        var retryAfter: TimeInterval?
         if let error = error as? UsageProviderError {
             legacyErrorCode = nil
             switch error {
@@ -2904,6 +3046,11 @@ actor UsageRefreshEngine {
                 kind = .malformedResponse
             case .storageWriteFailed:
                 kind = .persistence
+            case .apiRateLimited:
+                kind = .rateLimited
+                retryAfter = appError.retryAfter
+            case .apiServerError, .apiServiceUnavailable:
+                kind = .serverError
             default:
                 kind = .transport
             }
@@ -2933,7 +3080,8 @@ actor UsageRefreshEngine {
             occurredAt: now(),
             isRecoverable: recoverable,
             consecutiveCount: count,
-            legacyErrorCode: legacyErrorCode
+            legacyErrorCode: legacyErrorCode,
+            retryAfter: retryAfter
         )
     }
 

@@ -1009,6 +1009,7 @@
 "popover.banner.updated_ago" = "Updated %dm ago";
 "popover.banner.last_success" = "Last successful refresh: %@";
 "popover.banner.never_succeeded" = "No successful refresh yet.";
+"popover.banner.retrying_at" = "Retrying at %@";
 
 // MARK: - Overage Balance
 "popover.overage_balance" = "Balance";
@@ -1135,8 +1136,10 @@
 "popover.normalized.health.unsupported" = "Unsupported account";
 "popover.normalized.notice.configuration" = "This profile needs attention before it can refresh.";
 "popover.normalized.notice.degraded" = "Some usage details are unavailable.";
+"popover.normalized.notice.rate_limited" = "Rate limited by Claude — will retry automatically.";
 "popover.normalized.notice.refresh_failed" = "Usage could not be refreshed.";
 "popover.normalized.notice.refreshing" = "Refreshing usage…";
+"popover.normalized.notice.server_error" = "Claude's service returned an error — will retry automatically.";
 "popover.normalized.notice.stale" = "Usage may be out of date.";
 "popover.normalized.notice.unauthenticated" = "Sign in again to refresh usage.";
 "popover.normalized.notice.unavailable" = "The provider is currently unavailable.";

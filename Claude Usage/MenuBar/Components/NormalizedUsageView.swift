@@ -244,6 +244,30 @@ enum NormalizedUsageFailureVocabulary {
         key: "popover.normalized.notice.refresh_failed",
         default: "The latest refresh failed; showing cached usage."
     )
+    static let rateLimited = (
+        key: "popover.normalized.notice.rate_limited",
+        default: "Rate limited by Claude — will retry automatically."
+    )
+    static let serverError = (
+        key: "popover.normalized.notice.server_error",
+        default: "Claude's service returned an error — will retry automatically."
+    )
+
+    /// Copy for a given failure kind, falling back to the generic
+    /// `refreshFailed` vocabulary for kinds that don't warrant distinct
+    /// wording (the caller substitutes its own no-cached-usage variant).
+    static func notice(
+        for kind: ProviderRefreshFailureKind?
+    ) -> (key: String, default: String) {
+        switch kind {
+        case .rateLimited:
+            return rateLimited
+        case .serverError:
+            return serverError
+        default:
+            return refreshFailed
+        }
+    }
 }
 
 enum NormalizedUsageEmptyState: String, Equatable {
@@ -402,16 +426,17 @@ enum NormalizedUsagePresentationBuilder {
         if let report {
             appendHealthNotice(report.health, to: &notices)
         }
-        if snapshot.currentFailure != nil {
+        if let currentFailure = snapshot.currentFailure {
+            let vocabulary = NormalizedUsageFailureVocabulary.notice(
+                for: currentFailure.kind
+            )
             notices.append(
                 notice(
                     .refreshFailed,
-                    key: NormalizedUsageFailureVocabulary
-                        .refreshFailed.key,
+                    key: vocabulary.key,
                     default: report == nil
                         ? "Usage could not be refreshed."
-                        : NormalizedUsageFailureVocabulary
-                            .refreshFailed.default
+                        : vocabulary.default
                 )
             )
         }
@@ -575,7 +600,8 @@ enum NormalizedUsagePresentationBuilder {
             case .invalidConfiguration:
                 return .invalidConfiguration
             case .transport, .protocolMismatch, .malformedResponse,
-                 .timedOut, .persistence, .unknown:
+                 .timedOut, .persistence, .rateLimited, .serverError,
+                 .unknown:
                 return .unavailable
             }
         }

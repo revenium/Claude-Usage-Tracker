@@ -898,6 +898,7 @@
 "popover.banner.updated_ago" = "Actualizado hace %dm";
 "popover.banner.last_success" = "Última actualización correcta: %@";
 "popover.banner.never_succeeded" = "Aún no se ha actualizado correctamente.";
+"popover.banner.retrying_at" = "Reintentando a las %@";
 
 // MARK: - Overage Balance
 "popover.overage_balance" = "Saldo";
@@ -1101,8 +1102,10 @@
 "popover.normalized.health.unsupported" = "Cuenta no compatible";
 "popover.normalized.notice.configuration" = "Este perfil necesita atención antes de poder actualizarse.";
 "popover.normalized.notice.degraded" = "Algunos detalles de uso no están disponibles.";
+"popover.normalized.notice.rate_limited" = "Limitado por velocidad de Claude; se reintentará automáticamente.";
 "popover.normalized.notice.refresh_failed" = "No se pudo actualizar el uso.";
 "popover.normalized.notice.refreshing" = "Actualizando uso…";
+"popover.normalized.notice.server_error" = "El servicio de Claude devolvió un error; se reintentará automáticamente.";
 "popover.normalized.notice.stale" = "El uso podría estar desactualizado.";
 "popover.normalized.notice.unauthenticated" = "Vuelve a iniciar sesión para actualizar el uso.";
 "popover.normalized.notice.unavailable" = "El proveedor no está disponible actualmente.";

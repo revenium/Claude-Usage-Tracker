@@ -351,6 +351,11 @@ class MenuBarManager: NSObject, ObservableObject {
     // explanation instead of a generic "failed" message.
     @Published private(set) var lastRefreshFailureKind:
         ProviderRefreshFailureKind? = nil
+    // The earliest time the engine will attempt another scheduled refresh
+    // for the failing profile, derived from its backoff window and any
+    // server `Retry-After` hint. `nil` when no failure is active or the
+    // failure carried no such hint.
+    @Published private(set) var lastRefreshFailureRetryAt: Date? = nil
     @Published private(set) var lastSuccessfulRefreshTime: Date? = nil
 
     // Multi-profile mode: track which profile's icon was clicked
@@ -624,6 +629,8 @@ class MenuBarManager: NSObject, ObservableObject {
             String(describing: $0.kind)
         }
         lastRefreshFailureKind = snapshot?.currentFailure?.kind
+        lastRefreshFailureRetryAt =
+            snapshot?.currentFailure?.retryNotBefore
     }
 
     private func activateRefreshPresentation() {
@@ -678,6 +685,7 @@ class MenuBarManager: NSObject, ObservableObject {
         hasCredentialError = false
         lastRefreshError = nil
         lastRefreshFailureKind = nil
+        lastRefreshFailureRetryAt = nil
     }
 
     private func canAttemptUsageRefresh(_ profile: Profile) -> Bool {
@@ -928,6 +936,7 @@ class MenuBarManager: NSObject, ObservableObject {
         consecutiveRefreshFailures = 0
         lastRefreshError = nil
         lastRefreshFailureKind = nil
+        lastRefreshFailureRetryAt = nil
         hasCredentialError = false
         lastSuccessfulRefreshTime = Date()
     }

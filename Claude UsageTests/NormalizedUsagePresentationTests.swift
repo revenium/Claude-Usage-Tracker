@@ -48,7 +48,8 @@ final class NormalizedUsagePresentationTests: HostedAppTestCase {
             .disabled, .unlinked, .dependencyMissing,
             .unauthenticated, .unsupportedAccount,
             .invalidConfiguration, .transport, .protocolMismatch,
-            .malformedResponse, .timedOut, .persistence, .unknown,
+            .malformedResponse, .timedOut, .persistence,
+            .rateLimited, .serverError, .unknown,
             nil
         ]
         for kind in allKinds {
@@ -72,6 +73,125 @@ final class NormalizedUsagePresentationTests: HostedAppTestCase {
         XCTAssertEqual(
             LegacyPopoverBannerDetail.explanation(for: nil),
             "popover.normalized.notice.refresh_failed".localized
+        )
+        XCTAssertEqual(
+            LegacyPopoverBannerDetail.explanation(for: .rateLimited),
+            "popover.normalized.notice.rate_limited".localized
+        )
+        XCTAssertEqual(
+            LegacyPopoverBannerDetail.explanation(for: .serverError),
+            "popover.normalized.notice.server_error".localized
+        )
+    }
+
+    /// 429 and 5xx failures get their own retry-oriented copy rather than
+    /// falling into the generic "refresh failed" bucket every other
+    /// recoverable-but-uninteresting kind (transport, timeout, ...) shares.
+    func testRateLimitedAndServerErrorNoticesUseDistinctVocabulary()
+        throws
+    {
+        let cachedReport = try makeReport()
+
+        let rateLimited = makePresentation(
+            report: cachedReport,
+            failure: ProviderRefreshFailure(
+                kind: .rateLimited,
+                occurredAt: now,
+                isRecoverable: true,
+                consecutiveCount: 1,
+                retryAfter: 30
+            )
+        )
+        let refreshFailedNotice = rateLimited.notices.first {
+            $0.kind == .refreshFailed
+        }
+        XCTAssertEqual(
+            refreshFailedNotice?.localizationKey,
+            NormalizedUsageFailureVocabulary.rateLimited.key
+        )
+        XCTAssertEqual(
+            refreshFailedNotice?.defaultMessage,
+            NormalizedUsageFailureVocabulary.rateLimited.default
+        )
+
+        let serverError = makePresentation(
+            report: cachedReport,
+            failure: ProviderRefreshFailure(
+                kind: .serverError,
+                occurredAt: now,
+                isRecoverable: true,
+                consecutiveCount: 1
+            )
+        )
+        let serverErrorNotice = serverError.notices.first {
+            $0.kind == .refreshFailed
+        }
+        XCTAssertEqual(
+            serverErrorNotice?.localizationKey,
+            NormalizedUsageFailureVocabulary.serverError.key
+        )
+        XCTAssertEqual(
+            serverErrorNotice?.defaultMessage,
+            NormalizedUsageFailureVocabulary.serverError.default
+        )
+
+        // A kind with no dedicated vocabulary (e.g. transport) still falls
+        // back to the generic copy, proving the switch is additive rather
+        // than having silently dropped the default case.
+        let transport = makePresentation(
+            report: cachedReport,
+            failure: ProviderRefreshFailure(
+                kind: .transport,
+                occurredAt: now,
+                isRecoverable: true,
+                consecutiveCount: 1
+            )
+        )
+        XCTAssertEqual(
+            transport.notices.first { $0.kind == .refreshFailed }?
+                .localizationKey,
+            NormalizedUsageFailureVocabulary.refreshFailed.key
+        )
+    }
+
+    func testRetryTextOmittedWithoutKnownRetryTimeAndFormattedWhenKnown() {
+        XCTAssertNil(
+            LegacyPopoverBannerDetail.retryText(nil, formatted: { _ in
+                "unused"
+            })
+        )
+        let retryAt = now.addingTimeInterval(60)
+        XCTAssertEqual(
+            LegacyPopoverBannerDetail.retryText(retryAt) { date in
+                XCTAssertEqual(date, retryAt)
+                return "3:04 PM"
+            },
+            "Retrying at 3:04 PM"
+        )
+    }
+
+    /// `ProviderRefreshFailure.retryNotBefore` is the wiring between a
+    /// server's `Retry-After` hint and the UI's "Retrying at" line: it must
+    /// be derived from `occurredAt + retryAfter`, and stay nil without one.
+    func testRetryNotBeforeDerivesFromOccurredAtAndRetryAfter() {
+        let noHint = ProviderRefreshFailure(
+            kind: .transport,
+            occurredAt: now,
+            isRecoverable: true,
+            consecutiveCount: 1
+        )
+        XCTAssertNil(noHint.retryNotBefore)
+
+        let withHint = ProviderRefreshFailure(
+            kind: .rateLimited,
+            occurredAt: now,
+            isRecoverable: true,
+            consecutiveCount: 1,
+            retryAfter: 90
+        )
+        XCTAssertEqual(
+            withHint.retryNotBefore,
+            now.addingTimeInterval(90)
         )
     }
 
