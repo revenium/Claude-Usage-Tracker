@@ -1108,6 +1108,92 @@ final class NormalizedUsagePresentationTests: HostedAppTestCase {
         )
     }
 
+    func testProviderProfileRowViewingIsIndependentOfActive() {
+        let activeClaudeID = UUID()
+        let viewedCodexID = UUID()
+        let claude = Profile(
+            id: activeClaudeID,
+            name: "Active Claude",
+            providerConfiguration: .claude
+        )
+        let codex = Profile(
+            id: viewedCodexID,
+            name: "Viewed Codex",
+            providerConfiguration: .codex(
+                CodexProfileConfiguration()
+            )
+        )
+
+        // Claude is the active profile (for its own provider), but Codex
+        // is the one currently being viewed — the switcher menu must be
+        // able to represent that split, since selecting a row changes
+        // only what's viewed, never what's active.
+        let rows = ProviderProfileRowPresentation.make(
+            profiles: [claude, codex],
+            isActive: { $0.id == activeClaudeID },
+            viewedProfileID: viewedCodexID
+        )
+
+        XCTAssertTrue(rows[0].isActive)
+        XCTAssertFalse(rows[0].isViewing)
+        XCTAssertFalse(rows[1].isActive)
+        XCTAssertTrue(rows[1].isViewing)
+    }
+
+    func testProviderProfileRowDefaultsToNoViewingWithoutViewedID() {
+        let profile = Profile(name: "Solo")
+        let rows = ProviderProfileRowPresentation.make(
+            profiles: [profile],
+            isActive: { _ in true }
+        )
+        XCTAssertFalse(rows[0].isViewing)
+    }
+
+    func testActiveAccountChipsCoverBothProvidersAndFlagTheViewedOne() {
+        let claudeID = UUID()
+        let codexID = UUID()
+        let claude = Profile(
+            id: claudeID,
+            name: "jc@example.com",
+            providerConfiguration: .claude
+        )
+        let codex = Profile(
+            id: codexID,
+            name: "codex",
+            providerConfiguration: .codex(
+                CodexProfileConfiguration()
+            )
+        )
+
+        let chips = ActiveAccountChipPresentation.make(
+            activeClaudeProfile: claude,
+            activeCodexProfile: codex,
+            viewedProfileID: codexID
+        )
+
+        XCTAssertEqual(chips.count, 2)
+        XCTAssertEqual(chips[0].id, claudeID)
+        XCTAssertEqual(chips[0].providerName, "Claude")
+        XCTAssertEqual(chips[0].profileName, "jc@example.com")
+        XCTAssertFalse(chips[0].isViewing)
+        XCTAssertEqual(chips[1].id, codexID)
+        XCTAssertEqual(chips[1].providerName, "Codex")
+        XCTAssertTrue(chips[1].isViewing)
+    }
+
+    func testActiveAccountChipsOmitProviderWithNoActiveProfile() {
+        let claude = Profile(name: "Solo Claude")
+        let chips = ActiveAccountChipPresentation.make(
+            activeClaudeProfile: claude,
+            activeCodexProfile: nil,
+            viewedProfileID: claude.id
+        )
+
+        XCTAssertEqual(chips.count, 1)
+        XCTAssertEqual(chips[0].providerName, "Claude")
+        XCTAssertTrue(chips[0].isViewing)
+    }
+
     func testUnknownRemovedProfileIsNotLabeledClaude() throws {
         let unknown = try ProviderID("unknown")
         let profileID = UUID()
