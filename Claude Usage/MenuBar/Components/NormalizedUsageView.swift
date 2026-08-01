@@ -757,6 +757,16 @@ struct ProviderPopoverHeader: View {
     let onManageProfiles: () -> Void
     let onPreferences: () -> Void
 
+    private var claudeStatusColor: Color {
+        switch claudeStatus.indicator.color {
+        case .green: return .adaptiveGreen
+        case .yellow: return .yellow
+        case .orange: return .orange
+        case .red: return .red
+        case .gray: return .gray
+        }
+    }
+
     private var providerStatusText: String {
         if presentation.providerID == .claude {
             return claudeStatus.description
@@ -801,6 +811,12 @@ struct ProviderPopoverHeader: View {
             Text(presentation.providerName)
                 .font(.system(size: 9, weight: .semibold))
             Text("·")
+            if presentation.providerID == .claude {
+                Circle()
+                    .fill(claudeStatusColor)
+                    .frame(width: 6, height: 6)
+                    .accessibilityHidden(true)
+            }
             Text(providerStatusText)
                 .lineLimit(1)
         }
