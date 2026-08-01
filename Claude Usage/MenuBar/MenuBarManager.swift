@@ -633,7 +633,7 @@ class MenuBarManager: NSObject, ObservableObject {
         }
         lastRefreshFailureKind = snapshot?.currentFailure?.kind
         lastRefreshFailureRetryAt =
-            snapshot?.currentFailure?.retryNotBefore
+            snapshot?.currentFailure?.presentedRetryAt
         lastRefreshFailureDetail = snapshot?.currentFailure?.detail
     }
 
@@ -645,11 +645,24 @@ class MenuBarManager: NSObject, ObservableObject {
                 \.isSelectedForDisplay
             )
         } else {
-            visibleProfiles = [profileManager.activeProfile]
+            var single = [profileManager.activeProfile]
                 .compactMap { $0 }
-            clickedProfileId = nil
-            clickedProfileUsage = nil
-            clickedProfileAPIUsage = nil
+            // A viewed (not active) profile in single-display mode must
+            // stay hydrated/scheduled too, or the popover shows a
+            // permanently missing presentation for it — see
+            // `setViewedProfile(_:)`.
+            if let clickedProfileId,
+               clickedProfileId != profileManager.activeProfile?.id,
+               let viewed = profileManager.profiles.first(
+                   where: { $0.id == clickedProfileId }
+               ) {
+                single.append(viewed)
+            } else {
+                clickedProfileId = nil
+                clickedProfileUsage = nil
+                clickedProfileAPIUsage = nil
+            }
+            visibleProfiles = single
         }
         let visibleProfileIDs = Set(visibleProfiles.map(\.id))
         if profileManager.displayMode == .multi,
@@ -685,12 +698,7 @@ class MenuBarManager: NSObject, ObservableObject {
         }
         isRefreshing = false
         lastSuccessfulRefreshTime = nil
-        consecutiveRefreshFailures = 0
-        hasCredentialError = false
-        lastRefreshError = nil
-        lastRefreshFailureKind = nil
-        lastRefreshFailureRetryAt = nil
-        lastRefreshFailureDetail = nil
+        clearFailureProjection()
     }
 
     private func canAttemptUsageRefresh(_ profile: Profile) -> Bool {
@@ -761,7 +769,9 @@ class MenuBarManager: NSObject, ObservableObject {
     /// explicit "Make Active" affordance / context menu, which continues
     /// to call `ProfileManager.activateProfile(_:)` directly.
     func setViewedProfile(_ id: UUID) {
-        guard profileManager.profiles.contains(where: { $0.id == id }) else {
+        guard let profile = profileManager.profiles.first(
+            where: { $0.id == id }
+        ) else {
             return
         }
         clickedProfileId = id
@@ -769,6 +779,22 @@ class MenuBarManager: NSObject, ObservableObject {
         clickedProfileUsage = snapshot?.claudeUsage
         clickedProfileAPIUsage = snapshot?.claudeAPIUsage
         applyBannerProjection(from: snapshot)
+
+        // In single-display mode the refresh runtime otherwise only
+        // hydrates/schedules the active profile. Bring the viewed profile
+        // into the visible set and, if it has never been fetched, kick off
+        // a one-off fetch — without this a valid, non-active profile shows
+        // a permanently missing presentation until separately activated.
+        if profileManager.displayMode == .single,
+           id != profileManager.activeProfile?.id {
+            activateRefreshPresentation()
+            if snapshot == nil, canAttemptUsageRefresh(profile) {
+                refreshRuntime.refresh(
+                    profiles: [profile],
+                    trigger: .manual
+                )
+            }
+        }
     }
 
     static func popoverUsage(
@@ -935,13 +961,21 @@ class MenuBarManager: NSObject, ObservableObject {
     }
 
     private func recordSuccessfulSingleBatch() {
+        clearFailureProjection()
+        lastSuccessfulRefreshTime = Date()
+    }
+
+    /// The failure-tracking fields shared by `applyBannerProjection`,
+    /// reset here so `resetVisibleRefreshProjection` and
+    /// `recordSuccessfulSingleBatch` can't drift from each other when a
+    /// new field is added to the group.
+    private func clearFailureProjection() {
         consecutiveRefreshFailures = 0
+        hasCredentialError = false
         lastRefreshError = nil
         lastRefreshFailureKind = nil
         lastRefreshFailureRetryAt = nil
         lastRefreshFailureDetail = nil
-        hasCredentialError = false
-        lastSuccessfulRefreshTime = Date()
     }
 
     private static func logRefreshFailure(

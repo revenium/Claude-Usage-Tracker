@@ -1426,6 +1426,9 @@ private struct UITestPopoverSurface: View {
                 isRefreshing: isRefreshing,
                 onSelectProfile: { id in
                     viewedProfileID = id
+                    presentation = nil
+                    refreshGeneration &+= 1
+                    refresh()
                 },
                 onRefresh: onRefreshOverride ?? refresh,
                 onManageProfiles: {

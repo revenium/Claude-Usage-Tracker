@@ -513,7 +513,15 @@ final class TransportTests: XCTestCase {
             try await fake.client.request(.accountUsageRead)
         }
         let root = try await fake.processIdentifier()
-        let child = try await processIdentifier(at: childFile)
+        // A saturated CI host can starve the fixture's busy-poll child
+        // before it observes the root's exit, so the handshake deadline
+        // stays generous; the proof itself remains unconditional — this
+        // still fails hard (rather than skip) if the PID file never
+        // appears.
+        let child = try await processIdentifier(
+            at: childFile,
+            timeout: 20
+        )
 
         task.cancel()
         await XCTAssertThrowsCodexError(try await task.value) { error in
@@ -522,7 +530,8 @@ final class TransportTests: XCTestCase {
             }
         }
         let lateDescendant = try await processIdentifier(
-            at: lateDescendantFile
+            at: lateDescendantFile,
+            timeout: 20
         )
 
         try await fake.assertProcessExited(root)

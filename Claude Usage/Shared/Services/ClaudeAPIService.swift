@@ -852,31 +852,31 @@ class ClaudeAPIService: APIServiceProtocol {
             let retryAfter = Self.parseRetryAfterSeconds(
                 from: httpResponse
             )
-            let appError = AppError(
-                code: .apiRateLimited,
-                message: "Rate limited by Claude API",
-                technicalDetails: "Endpoint: \(endpoint)\nStatus: 429"
-                    + (retryAfter.map { "\nRetry-After: \($0)s" } ?? ""),
-                isRecoverable: true,
-                recoverySuggestion: "Please wait a few minutes before trying again",
-                retryAfter: retryAfter,
-                statusCode: 429
+            try Self.throwLogged(
+                AppError(
+                    code: .apiRateLimited,
+                    message: "Rate limited by Claude API",
+                    technicalDetails: "Endpoint: \(endpoint)\nStatus: 429"
+                        + (retryAfter.map { "\nRetry-After: \($0)s" } ?? ""),
+                    isRecoverable: true,
+                    recoverySuggestion: "Please wait a few minutes before trying again",
+                    retryAfter: retryAfter,
+                    statusCode: 429
+                )
             )
-            ErrorLogger.shared.log(appError, severity: .warning)
-            throw appError
 
         case 500...599:
             let responsePreview = String(data: data, encoding: .utf8)?.prefix(200) ?? "Unable to read response"
-            let appError = AppError(
-                code: .apiServerError,
-                message: "Claude API server error",
-                technicalDetails: "Endpoint: \(endpoint)\nStatus: \(httpResponse.statusCode)\nResponse: \(responsePreview)",
-                isRecoverable: true,
-                recoverySuggestion: "Please try again later",
-                statusCode: httpResponse.statusCode
+            try Self.throwLogged(
+                AppError(
+                    code: .apiServerError,
+                    message: "Claude API server error",
+                    technicalDetails: "Endpoint: \(endpoint)\nStatus: \(httpResponse.statusCode)\nResponse: \(responsePreview)",
+                    isRecoverable: true,
+                    recoverySuggestion: "Please try again later",
+                    statusCode: httpResponse.statusCode
+                )
             )
-            ErrorLogger.shared.log(appError, severity: .warning)
-            throw appError
 
         default:
             let responsePreview = String(data: data, encoding: .utf8)?.prefix(200) ?? "Unable to read response"
@@ -888,6 +888,16 @@ class ClaudeAPIService: APIServiceProtocol {
                 statusCode: httpResponse.statusCode
             )
         }
+    }
+
+    /// Logs an `AppError` at warning severity, then throws it. Centralizes
+    /// the "log before throwing an HTTP failure" policy so the 429 and
+    /// 5xx branches above can't drift from each other (the `default`
+    /// branch intentionally doesn't log, since it isn't a recognized
+    /// failure policy).
+    private static func throwLogged(_ error: AppError) throws -> Never {
+        ErrorLogger.shared.log(error, severity: .warning)
+        throw error
     }
 
     // MARK: - Rate Limit Retry Parsing

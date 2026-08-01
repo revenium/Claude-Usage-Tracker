@@ -784,15 +784,16 @@ final class CodexParityUITests: XCTestCase {
             accessibilityText(action),
             "popover.detached.contract-ok|\(Self.codexProfileID)|codex|0|\(Self.codexMetricID)"
         )
+        // Selecting a row from the popover's profile switcher is a pure
+        // view change now (see `MenuBarManager.setViewedProfile(_:)`); it
+        // never activates. Activation only happens via the explicit
+        // "Make Active" affordance, exercised here through profile B's
+        // status-item context menu.
         element(
             app,
-            identifier: "popover.profile.switcher"
-        ).click()
-        let activateWhileDetached = element(
-            app,
-            identifier:
-                "popover.profile.switcher.\(Self.secondaryCodexProfileID)"
-        )
+            identifier: "ui-testing.status.multi.codex.inactive"
+        ).rightClick()
+        let activateWhileDetached = app.menuItems["Make Active"]
         XCTAssertTrue(
             activateWhileDetached.waitForExistence(timeout: 3)
         )

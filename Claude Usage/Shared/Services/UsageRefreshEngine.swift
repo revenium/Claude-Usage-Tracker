@@ -87,6 +87,14 @@ nonisolated struct ProviderRefreshFailure:
     /// `nil` when the failure kind carries no such detail (e.g. Codex-typed
     /// errors, or failures the engine synthesized without an underlying error).
     let detail: String?
+    /// The engine's actual scheduled next-attempt time — `max` of the
+    /// exponential backoff deadline and the server's `Retry-After` hint (see
+    /// `nextAllowedRetryAt(after:refreshInterval:)`). Set by the engine after
+    /// it computes the schedule for a terminal, scheduled-refresh failure;
+    /// `nil` for failures the engine never scheduled a retry for. Presenters
+    /// should prefer this over `retryNotBefore`, which only reflects the
+    /// server hint in isolation.
+    var scheduledRetryAt: Date?
 
     init(
         kind: ProviderRefreshFailureKind,
@@ -95,7 +103,8 @@ nonisolated struct ProviderRefreshFailure:
         consecutiveCount: Int,
         legacyErrorCode: ErrorCode? = nil,
         retryAfter: TimeInterval? = nil,
-        detail: String? = nil
+        detail: String? = nil,
+        scheduledRetryAt: Date? = nil
     ) {
         self.kind = kind
         self.occurredAt = occurredAt
@@ -104,6 +113,7 @@ nonisolated struct ProviderRefreshFailure:
         self.legacyErrorCode = legacyErrorCode
         self.retryAfter = retryAfter
         self.detail = detail
+        self.scheduledRetryAt = scheduledRetryAt
     }
 
     var isCredentialFailure: Bool {
@@ -116,6 +126,12 @@ nonisolated struct ProviderRefreshFailure:
     var retryNotBefore: Date? {
         guard let retryAfter else { return nil }
         return occurredAt.addingTimeInterval(retryAfter)
+    }
+
+    /// The time presenters should surface as "Retrying at" — the engine's
+    /// actual schedule when known, falling back to the raw server hint.
+    var presentedRetryAt: Date? {
+        scheduledRetryAt ?? retryNotBefore
     }
 }
 
@@ -2411,7 +2427,7 @@ actor UsageRefreshEngine {
         ), var running = slot.running else {
             return
         }
-        let terminalFailure = failure(
+        var terminalFailure = failure(
             for: error,
             count: slot.consecutiveFailures + 1
         )
@@ -2419,6 +2435,10 @@ actor UsageRefreshEngine {
             after: terminalFailure,
             refreshInterval: request.job.refreshInterval
         )
+        // Thread the engine's actual scheduling decision back into the
+        // failure so presenters ("Retrying at") never diverge from the
+        // real retry schedule computed above.
+        terminalFailure.scheduledRetryAt = nextAllowedRetryAt
         running.providerTerminal = true
         running.providerSucceeded = false
         running.providerError = error
@@ -3087,7 +3107,9 @@ actor UsageRefreshEngine {
                 legacyErrorCode = nil
             }
             recoverable = true
-            detail = "\(urlError.localizedDescription) (NSURLErrorDomain \(urlError.errorCode))"
+            detail = SensitiveDataRedactor.redact(
+                "\(urlError.localizedDescription) (NSURLErrorDomain \(urlError.errorCode))"
+            )
         } else {
             kind = .unknown
             recoverable = true
