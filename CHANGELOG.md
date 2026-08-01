@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.4] - 2026-08-01
+
+### Added
+
+- **Provider badge for the menu bar**: two independent Appearance toggles
+  (both off by default) that make Claude and Codex accounts distinguishable
+  at a glance without opening the popover — a monochrome spark glyph for
+  Claude and a `>_` terminal glyph for Codex, and/or a muted provider-colored
+  background tint (coral for Claude, teal for Codex) behind each item.
+  Applies to every menu-bar icon style and re-renders instantly when toggled.
+
 ### Distribution
 
 - Moved active source, support, feedback, release, Sparkle, and Homebrew
