@@ -2106,6 +2106,7 @@ actor UsageRefreshEngine {
         if slot.identity != request.job.identity {
             slot.lastSuccess = nil
             slot.consecutiveFailures = 0
+            slot.nextAllowedRetryAt = nil
         }
         slot.identity = request.job.identity
         slot.latestInvocationOrder = request.invocationOrder
