@@ -163,30 +163,34 @@ struct ProviderProfileRowPresentation: Equatable, Identifiable {
     }
 }
 
-/// One chip in the popover's "Active accounts" section: the currently
-/// active profile for a single provider. Surfaces the one-active-profile-
-/// per-provider state (a Claude profile and a Codex profile can be active
-/// simultaneously) that the header alone cannot show, since the header
-/// only ever describes the single profile being viewed.
+/// One chip in the popover's "Accounts" section: each provider's active
+/// profile, plus the profile currently being viewed when it is neither.
+/// Surfaces both the one-active-profile-per-provider state (a Claude
+/// profile and a Codex profile can be active simultaneously) and — so the
+/// section always contains what the popover is showing — the viewed
+/// profile itself. `isActive` distinguishes the two roles visually.
 struct ActiveAccountChipPresentation: Equatable, Identifiable {
     let id: UUID
     let providerName: String
     let profileName: String
     let isViewing: Bool
+    let isActive: Bool
 
     var accessibilityIdentifier: String {
         "popover.active_accounts.chip.\(id.uuidString)"
     }
 
-    /// Builds one chip per provider that currently has an active profile.
-    /// A provider with no active profile (e.g. never configured) is
-    /// omitted rather than shown as empty.
+    /// Builds one chip per provider that currently has an active profile,
+    /// then appends the viewed profile when it isn't one of them. A
+    /// provider with no active profile (e.g. never configured) is omitted
+    /// rather than shown as empty.
     static func make(
         activeClaudeProfile: Profile?,
         activeCodexProfile: Profile?,
+        viewedProfile: Profile? = nil,
         viewedProfileID: UUID?
     ) -> [ActiveAccountChipPresentation] {
-        [
+        var chips = [
             activeClaudeProfile.map { ($0, "Claude") },
             activeCodexProfile.map { ($0, "Codex") }
         ]
@@ -196,9 +200,31 @@ struct ActiveAccountChipPresentation: Equatable, Identifiable {
                 id: profile.id,
                 providerName: providerName,
                 profileName: profile.name,
-                isViewing: profile.id == viewedProfileID
+                isViewing: profile.id == viewedProfileID,
+                isActive: true
             )
         }
+        if let viewedProfile,
+           viewedProfile.id == viewedProfileID,
+           !chips.contains(where: { $0.id == viewedProfile.id }) {
+            let providerName: String
+            switch viewedProfile.providerConfiguration {
+            case .claude:
+                providerName = "Claude"
+            case .codex:
+                providerName = "Codex"
+            }
+            chips.append(
+                ActiveAccountChipPresentation(
+                    id: viewedProfile.id,
+                    providerName: providerName,
+                    profileName: viewedProfile.name,
+                    isViewing: true,
+                    isActive: false
+                )
+            )
+        }
+        return chips
     }
 }
 
@@ -1020,6 +1046,7 @@ struct ProviderPopoverHeader: View {
                     profileManager: profileManager,
                     viewedProfileName: presentation.profileName,
                     viewedProfileID: presentation.profileID,
+                    viewedProviderName: presentation.providerName,
                     onSelectProfile: onSelectProfile,
                     onManageProfiles: onManageProfiles
                 )

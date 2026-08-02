@@ -209,16 +209,6 @@ struct PopoverContentView: View {
         )
     }
 
-    private func profileInitials(for name: String) -> String {
-        let words = name.split(separator: " ")
-        if words.count >= 2 {
-            return String(words[0].prefix(1) + words[1].prefix(1)).uppercased()
-        } else if let first = words.first {
-            return String(first.prefix(2)).uppercased()
-        }
-        return "?"
-    }
-
     private var displayedProfile: Profile? {
         if let clickedProfileID = manager.clickedProfileId {
             return profileManager.profiles.first {
@@ -299,7 +289,20 @@ struct PopoverContentView: View {
         }
         .padding(.bottom, 10)
         .frame(width: PopoverDesign.width)
-        .background(VisualEffectBackground())
+        .background(
+            ZStack {
+                VisualEffectBackground()
+                // Readability scrim: behind-window vibrancy alone lets
+                // whatever sits under the popover (e.g. a bright window
+                // beneath a dark menu bar) bleed through and wash out
+                // text and status colors. A translucent layer of the
+                // system window background keeps a hint of vibrancy at
+                // the edges while guaranteeing contrast, per the HIG
+                // guidance on legibility over vibrant materials.
+                Color(nsColor: .windowBackgroundColor)
+                    .opacity(0.6)
+            }
+        )
         .opacity(appeared ? 1 : 0)
         .scaleEffect(appeared ? 1 : 0.96, anchor: .top)
         .onAppear {
@@ -440,14 +443,15 @@ struct PopoverContentView: View {
         let chips = ActiveAccountChipPresentation.make(
             activeClaudeProfile: profileManager.activeClaudeProfile,
             activeCodexProfile: profileManager.activeCodexProfile,
+            viewedProfile: displayedProfile,
             viewedProfileID: displayedProfile?.id
         )
         if !chips.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
                 PopoverSectionHeader(
                     title: NormalizedUsageStrings.localized(
-                        "popover.active_accounts.title",
-                        default: "Active accounts"
+                        "popover.accounts.title",
+                        default: "Accounts"
                     )
                 )
                 .padding(.leading, 2)
@@ -468,33 +472,60 @@ struct PopoverContentView: View {
         }
     }
 
-    // A viewed profile that is not its provider's active profile always
-    // shows its tag here (with a "Make Active" affordance), even outside
-    // multi-profile display mode, so switching the popover's view (via the
-    // header switcher or an "Active accounts" chip) never leaves the user
-    // without a way to see — or fix — the active/viewed mismatch.
+    /// The provider's currently active profile for the profile being
+    /// viewed, used to tell the user exactly what "not active" means.
+    private func activeCounterpart(for profile: Profile) -> Profile? {
+        switch profile.providerConfiguration {
+        case .claude:
+            return profileManager.activeClaudeProfile
+        case .codex:
+            return profileManager.activeCodexProfile
+        }
+    }
+
+    // Shown only when the viewed profile is not its provider's active
+    // profile: a single accent-tinted strip that states what you are
+    // looking at, what is actually active, and the one action that
+    // changes it. When viewing the active profile this disappears
+    // entirely — the header and the highlighted accounts chip already
+    // carry that state, and repeating it as a third identity row was
+    // the main source of "what am I looking at?" confusion.
     @ViewBuilder
     private func normalizedProfileTag(
         presentation: NormalizedUsagePresentation
     ) -> some View {
         if let viewingProfile = displayedProfile,
-           profileManager.displayMode == .multi
-               || !profileManager.isActive(viewingProfile) {
+           !profileManager.isActive(viewingProfile) {
             HStack(spacing: 8) {
-                profileAvatar(for: viewingProfile)
+                Image(systemName: "eye")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(.accentColor)
+                    .frame(width: 20, height: 20)
+                    .background(
+                        Circle()
+                            .fill(Color.accentColor.opacity(0.14))
+                    )
+                    .accessibilityHidden(true)
 
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(viewingProfile.name)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(.primary)
-                        .lineLimit(1)
-                    Text(presentation.providerName)
+                    Text(
+                        NormalizedUsageStrings.formatted(
+                            "popover.viewing_banner.title",
+                            default: "Viewing %@",
+                            arguments: [viewingProfile.name]
+                        )
+                    )
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.primary)
+                    .lineLimit(1)
+
+                    Text(viewingBannerSubtitle(for: viewingProfile))
                         .font(.system(size: 10))
                         .foregroundColor(.secondary)
+                        .lineLimit(1)
                 }
 
                 Spacer()
-                activeBadge(for: viewingProfile)
                 makeActiveButton(for: viewingProfile)
             }
             .padding(.horizontal, 12)
@@ -504,7 +535,7 @@ struct PopoverContentView: View {
                     cornerRadius: PopoverDesign.cardRadius,
                     style: .continuous
                 )
-                .fill(PopoverDesign.cardFill)
+                .fill(Color.accentColor.opacity(0.08))
             )
             .padding(.horizontal, PopoverDesign.outerInset)
             .padding(.top, 8)
@@ -516,42 +547,28 @@ struct PopoverContentView: View {
         }
     }
 
-    private func profileAvatar(for profile: Profile) -> some View {
-        ZStack {
-            Circle()
-                .fill(Color.accentColor.opacity(0.15))
-                .frame(width: 20, height: 20)
-
-            Text(profileInitials(for: profile.name))
-                .font(
-                    .system(
-                        size: 8,
-                        weight: .bold,
-                        design: .rounded
-                    )
-                )
-                .foregroundColor(.accentColor)
+    private func viewingBannerSubtitle(
+        for profile: Profile
+    ) -> String {
+        let providerName: String
+        switch profile.providerConfiguration {
+        case .claude:
+            providerName = "Claude"
+        case .codex:
+            providerName = "Codex"
         }
-    }
-
-    @ViewBuilder
-    private func activeBadge(for profile: Profile) -> some View {
-        if profileManager.isActive(profile) {
-            Text(
-                NormalizedUsageStrings.localized(
-                    "popover.normalized.profile.active",
-                    default: "Active"
-                )
-            )
-            .font(.system(size: 9, weight: .semibold))
-            .foregroundColor(.accentColor)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 3)
-            .background(
-                Capsule()
-                    .fill(Color.accentColor.opacity(0.14))
+        if let active = activeCounterpart(for: profile) {
+            return NormalizedUsageStrings.formatted(
+                "popover.viewing_banner.active_is",
+                default: "%@ is your active %@ account",
+                arguments: [active.name, providerName]
             )
         }
+        return NormalizedUsageStrings.formatted(
+            "popover.viewing_banner.not_active",
+            default: "Not your active %@ account",
+            arguments: [providerName]
+        )
     }
 
     // Deliberately separate from `activeBadge`: activation stays an
@@ -630,6 +647,12 @@ struct ProfileSwitcherCompact: View {
     @State private var isHovered = false
     let viewedProfileName: String
     let viewedProfileID: UUID?
+    /// Provider of the profile the popover is showing. The menu is scoped
+    /// to this provider's profiles: switching what you *view* across
+    /// providers is the accounts-chip row's job, and mixing both
+    /// providers here made the menu read like a cross-provider account
+    /// switcher (which activation never supports).
+    let viewedProviderName: String
     let onSelectProfile: (UUID) -> Void
     let onManageProfiles: () -> Void
 
@@ -637,6 +660,7 @@ struct ProfileSwitcherCompact: View {
         profileManager: ProfileManager,
         viewedProfileName: String,
         viewedProfileID: UUID?,
+        viewedProviderName: String,
         onSelectProfile: @escaping (UUID) -> Void,
         onManageProfiles: @escaping () -> Void
     ) {
@@ -645,16 +669,24 @@ struct ProfileSwitcherCompact: View {
         )
         self.viewedProfileName = viewedProfileName
         self.viewedProfileID = viewedProfileID
+        self.viewedProviderName = viewedProviderName
         self.onSelectProfile = onSelectProfile
         self.onManageProfiles = onManageProfiles
     }
 
     private var rows: [ProviderProfileRowPresentation] {
-        ProviderProfileRowPresentation.make(
+        let allRows = ProviderProfileRowPresentation.make(
             profiles: profileManager.profiles,
             isActive: profileManager.isActive,
             viewedProfileID: viewedProfileID
         )
+        let scoped = allRows.filter {
+            $0.providerName == viewedProviderName
+        }
+        // An unknown provider (e.g. a just-removed profile) would scope
+        // the menu down to nothing; fall back to the full list rather
+        // than presenting an empty switcher.
+        return scoped.isEmpty ? allRows : scoped
     }
 
     var body: some View {
@@ -878,7 +910,13 @@ private struct ActiveAccountChipView: View {
     let onTap: () -> Void
 
     private var accessibilityLabel: String {
-        let base = "\(chip.providerName) · \(chip.profileName)"
+        var base = "\(chip.providerName) · \(chip.profileName)"
+        if chip.isActive {
+            base += ", " + NormalizedUsageStrings.localized(
+                "popover.normalized.profile.active",
+                default: "Active"
+            )
+        }
         guard chip.isViewing else { return base }
         return base + ", " + NormalizedUsageStrings.localized(
             "popover.normalized.profile.viewing",
@@ -908,6 +946,13 @@ private struct ActiveAccountChipView: View {
                 Text(chip.profileName)
                     .font(PopoverDesign.chipFont)
                     .lineLimit(1)
+
+                if chip.isActive {
+                    Circle()
+                        .fill(Color.adaptiveGreen)
+                        .frame(width: 5, height: 5)
+                        .accessibilityHidden(true)
+                }
             }
             .foregroundColor(
                 chip.isViewing ? .accentColor : .primary

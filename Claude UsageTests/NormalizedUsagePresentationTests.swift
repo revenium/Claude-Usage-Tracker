@@ -1326,6 +1326,54 @@ final class NormalizedUsagePresentationTests: HostedAppTestCase {
         XCTAssertTrue(chips[0].isViewing)
     }
 
+    func testViewedNonActiveProfileIsAppendedAsInactiveChip() {
+        let active = Profile(
+            id: UUID(),
+            name: "jc@example.com",
+            providerConfiguration: .claude
+        )
+        let viewed = Profile(
+            id: UUID(),
+            name: "jason@example.com",
+            providerConfiguration: .claude
+        )
+
+        let chips = ActiveAccountChipPresentation.make(
+            activeClaudeProfile: active,
+            activeCodexProfile: nil,
+            viewedProfile: viewed,
+            viewedProfileID: viewed.id
+        )
+
+        XCTAssertEqual(chips.count, 2)
+        XCTAssertEqual(chips[0].id, active.id)
+        XCTAssertTrue(chips[0].isActive)
+        XCTAssertFalse(chips[0].isViewing)
+        XCTAssertEqual(chips[1].id, viewed.id)
+        XCTAssertEqual(chips[1].providerName, "Claude")
+        XCTAssertFalse(chips[1].isActive)
+        XCTAssertTrue(chips[1].isViewing)
+    }
+
+    func testViewedActiveProfileIsNotDuplicatedAsChip() {
+        let active = Profile(
+            id: UUID(),
+            name: "jc@example.com",
+            providerConfiguration: .claude
+        )
+
+        let chips = ActiveAccountChipPresentation.make(
+            activeClaudeProfile: active,
+            activeCodexProfile: nil,
+            viewedProfile: active,
+            viewedProfileID: active.id
+        )
+
+        XCTAssertEqual(chips.count, 1)
+        XCTAssertTrue(chips[0].isActive)
+        XCTAssertTrue(chips[0].isViewing)
+    }
+
     func testUnknownRemovedProfileIsNotLabeledClaude() throws {
         let unknown = try ProviderID("unknown")
         let profileID = UUID()

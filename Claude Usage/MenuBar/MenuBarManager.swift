@@ -641,9 +641,23 @@ class MenuBarManager: NSObject, ObservableObject {
         presentationEpoch &+= 1
         let visibleProfiles: [Profile]
         if profileManager.displayMode == .multi {
-            visibleProfiles = profileManager.profiles.filter(
+            var multi = profileManager.profiles.filter(
                 \.isSelectedForDisplay
             )
+            // Mirror the single-display rule below: a viewed (not
+            // displayed) profile must stay in the visible set too, or
+            // the epoch bump that follows any view switch immediately
+            // clears `clickedProfileId` and snaps the popover back to
+            // the active profile — the "selecting an account does
+            // nothing" bug for profiles without their own menu bar item.
+            if let clickedProfileId,
+               !multi.contains(where: { $0.id == clickedProfileId }),
+               let viewed = profileManager.profiles.first(
+                   where: { $0.id == clickedProfileId }
+               ) {
+                multi.append(viewed)
+            }
+            visibleProfiles = multi
         } else {
             var single = [profileManager.activeProfile]
                 .compactMap { $0 }
@@ -780,13 +794,20 @@ class MenuBarManager: NSObject, ObservableObject {
         clickedProfileAPIUsage = snapshot?.claudeAPIUsage
         applyBannerProjection(from: snapshot)
 
-        // In single-display mode the refresh runtime otherwise only
-        // hydrates/schedules the active profile. Bring the viewed profile
-        // into the visible set and, if it has never been fetched, kick off
-        // a one-off fetch — without this a valid, non-active profile shows
-        // a permanently missing presentation until separately activated.
-        if profileManager.displayMode == .single,
-           id != profileManager.activeProfile?.id {
+        // The refresh runtime otherwise only hydrates/schedules the
+        // active profile (single-display mode) or the profiles selected
+        // for menu bar display (multi mode). Bring any other viewed
+        // profile into the visible set and, if it has never been
+        // fetched, kick off a one-off fetch — without this a valid,
+        // non-active/non-displayed profile shows a permanently missing
+        // presentation until separately activated.
+        let needsHydration: Bool
+        if profileManager.displayMode == .single {
+            needsHydration = id != profileManager.activeProfile?.id
+        } else {
+            needsHydration = !profile.isSelectedForDisplay
+        }
+        if needsHydration {
             activateRefreshPresentation()
             if snapshot == nil, canAttemptUsageRefresh(profile) {
                 refreshRuntime.refresh(
@@ -1878,6 +1899,13 @@ class MenuBarManager: NSObject, ObservableObject {
                     // asynchronous close is in progress can trigger BAD_ACCESS.
                     popover.close()
                     stopMonitoringForOutsideClicks()
+                    // Rebuild the content for the newly clicked profile.
+                    // Re-showing the retained hosting controller displays
+                    // its stale render (the previously viewed profile) for
+                    // a frame before SwiftUI catches up with the published
+                    // clickedProfileId change — the "shows the old account
+                    // first, then flips" flash.
+                    popover.contentViewController = createContentViewController()
                     NSApp.activate(ignoringOtherApps: true)
                     popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
                     currentPopoverButton = button
