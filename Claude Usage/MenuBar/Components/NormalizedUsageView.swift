@@ -63,113 +63,13 @@ struct NormalizedUsageDisplayPreferences: Equatable {
     }
 }
 
-struct ProviderProfileRowPresentation: Equatable, Identifiable {
-    let id: UUID
-    let name: String
-    let providerName: String
-    let connectionDescription: String
-    let systemImage: String
-    let isActive: Bool
-    /// Whether this row is the profile the popover is currently showing.
-    /// Independent of `isActive`: a profile can be viewed without being
-    /// its provider's active profile, and vice versa.
-    let isViewing: Bool
-
-    var accessibilityIdentifier: String {
-        "popover.profile.switcher.\(id.uuidString)"
-    }
-
-    /// `isActive` is resolved per-row rather than against one shared id,
-    /// since this list mixes Claude and Codex profiles that each have their
-    /// own independent active slot — pass `ProfileManager.isActive(_:)`.
-    static func make(
-        profiles: [Profile],
-        isActive: (Profile) -> Bool,
-        viewedProfileID: UUID? = nil
-    ) -> [ProviderProfileRowPresentation] {
-        profiles.map { profile in
-            switch profile.providerConfiguration {
-            case .claude:
-                return ProviderProfileRowPresentation(
-                    id: profile.id,
-                    name: profile.name,
-                    providerName: "Claude",
-                    connectionDescription:
-                        claudeConnectionDescription(profile),
-                    systemImage: "sparkles",
-                    isActive: isActive(profile),
-                    isViewing: profile.id == viewedProfileID
-                )
-            case .codex(let configuration):
-                let connectionDescription: String
-                if let linkedHome = configuration.linkedHome {
-                    connectionDescription =
-                        linkedHome.filesystemIdentity == nil
-                            ? NormalizedUsageStrings.localized(
-                                "popover.normalized.profile.relink_required",
-                                default: "Relink required"
-                            )
-                            : NormalizedUsageStrings.localized(
-                                "popover.normalized.profile.linked",
-                                default: "Linked"
-                            )
-                } else {
-                    connectionDescription =
-                        NormalizedUsageStrings.localized(
-                            "popover.normalized.profile.not_linked",
-                            default: "Not linked"
-                        )
-                }
-                return ProviderProfileRowPresentation(
-                    id: profile.id,
-                    name: profile.name,
-                    providerName: "Codex",
-                    connectionDescription: connectionDescription,
-                    systemImage:
-                        "chevron.left.forwardslash.chevron.right",
-                    isActive: isActive(profile),
-                    isViewing: profile.id == viewedProfileID
-                )
-            }
-        }
-    }
-
-    private static func claudeConnectionDescription(
-        _ profile: Profile
-    ) -> String {
-        if profile.cliAccountName != nil || profile.hasCliAccount
-            || profile.cliCredentialsJSON != nil {
-            return NormalizedUsageStrings.localized(
-                "popover.normalized.profile.cli_linked",
-                default: "CLI linked"
-            )
-        }
-        if profile.claudeSessionKey != nil {
-            return NormalizedUsageStrings.localized(
-                "popover.normalized.profile.account_linked",
-                default: "Account linked"
-            )
-        }
-        if profile.apiSessionKey != nil {
-            return NormalizedUsageStrings.localized(
-                "popover.normalized.profile.api_linked",
-                default: "API linked"
-            )
-        }
-        return NormalizedUsageStrings.localized(
-            "popover.normalized.profile.not_connected",
-            default: "Not connected"
-        )
-    }
-}
-
 /// One chip in the popover's "Accounts" section. The section lists every
 /// configured profile — a partial list (e.g. only the active ones) reads
 /// as arbitrary to anyone with more profiles than chips. `isActive` marks
 /// each provider's currently active profile; `isViewing` marks the one
 /// the popover is showing. Tapping a chip views it; activation stays an
 /// explicit separate action.
-struct ActiveAccountChipPresentation: Equatable, Identifiable {
+struct AccountChipPresentation: Equatable, Identifiable {
     let id: UUID
     let providerName: String
     let profileName: String
@@ -177,7 +77,7 @@ struct ActiveAccountChipPresentation: Equatable, Identifiable {
     let isActive: Bool
 
     var accessibilityIdentifier: String {
-        "popover.active_accounts.chip.\(id.uuidString)"
+        "popover.accounts.chip.\(id.uuidString)"
     }
 }
 
@@ -186,7 +86,7 @@ struct ActiveAccountChipPresentation: Equatable, Identifiable {
 /// itself.
 struct AccountChipGroup: Equatable, Identifiable {
     let providerName: String
-    let chips: [ActiveAccountChipPresentation]
+    let chips: [AccountChipPresentation]
 
     var id: String { providerName }
 
@@ -199,8 +99,8 @@ struct AccountChipGroup: Equatable, Identifiable {
         isActive: (Profile) -> Bool,
         viewedProfileID: UUID?
     ) -> [AccountChipGroup] {
-        var claude: [ActiveAccountChipPresentation] = []
-        var codex: [ActiveAccountChipPresentation] = []
+        var claude: [AccountChipPresentation] = []
+        var codex: [AccountChipPresentation] = []
         for profile in profiles {
             let providerName: String
             switch profile.providerConfiguration {
@@ -209,7 +109,7 @@ struct AccountChipGroup: Equatable, Identifiable {
             case .codex:
                 providerName = "Codex"
             }
-            let chip = ActiveAccountChipPresentation(
+            let chip = AccountChipPresentation(
                 id: profile.id,
                 providerName: providerName,
                 profileName: profile.name,

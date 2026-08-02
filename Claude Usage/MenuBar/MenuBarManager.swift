@@ -15,7 +15,7 @@ enum ProviderPopoverDetachmentLifecycle {
             contentRect: NSRect(
                 x: 0,
                 y: 0,
-                width: 280,
+                width: PopoverDesign.width,
                 height: 600
             ),
             styleMask: [
@@ -32,7 +32,9 @@ enum ProviderPopoverDetachmentLifecycle {
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         window.isMovableByWindowBackground = true
-        window.setContentSize(NSSize(width: 280, height: 600))
+        window.setContentSize(
+            NSSize(width: PopoverDesign.width, height: 600)
+        )
         window.isReleasedWhenClosed = false
         window.level = .floating
         window.collectionBehavior.insert(.fullScreenAuxiliary)

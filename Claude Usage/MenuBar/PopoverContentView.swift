@@ -452,39 +452,69 @@ struct PopoverContentView: View {
         )
         if !groups.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
-                PopoverSectionHeader(
-                    title: NormalizedUsageStrings.localized(
-                        "popover.accounts.title",
-                        default: "Accounts"
+                HStack(alignment: .firstTextBaseline) {
+                    PopoverSectionHeader(
+                        title: NormalizedUsageStrings.localized(
+                            "popover.accounts.title",
+                            default: "Accounts"
+                        )
                     )
-                )
-                .padding(.leading, 2)
-                .accessibilityHidden(true)
+                    .padding(.leading, 2)
+                    .accessibilityHidden(true)
 
-                ForEach(groups) { group in
-                    VStack(alignment: .leading, spacing: 4) {
-                        // Caption only earns its row when there is a
-                        // second provider to distinguish from.
-                        if groups.count > 1 {
-                            Text(group.providerName)
-                                .font(
-                                    .system(
-                                        size: 10, weight: .medium
-                                    )
-                                )
-                                .foregroundColor(.secondary)
-                                .padding(.leading, 2)
-                        }
+                    Spacer()
 
-                        PopoverChipFlowLayout(spacing: 6) {
-                            ForEach(group.chips) { chip in
-                                ActiveAccountChipView(chip: chip) {
-                                    manager.setViewedProfile(chip.id)
+                    // Direct route to profile management; removing the
+                    // header switcher menu removed the popover's only
+                    // "Manage Profiles" entry point.
+                    Button(action: navigationActions.manageProfiles) {
+                        Text("popover.manage_profiles".localized)
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier(
+                        "popover.action.manage_profiles"
+                    )
+                }
+
+                // Bounded: with many accounts the chip rows scroll
+                // inside the footer instead of growing the popover
+                // past screen height.
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(groups) { group in
+                            VStack(alignment: .leading, spacing: 4) {
+                                // Caption only earns its row when there
+                                // is a second provider to distinguish
+                                // from.
+                                if groups.count > 1 {
+                                    Text(group.providerName)
+                                        .font(
+                                            .system(
+                                                size: 10,
+                                                weight: .medium
+                                            )
+                                        )
+                                        .foregroundColor(.secondary)
+                                        .padding(.leading, 2)
+                                }
+
+                                PopoverChipFlowLayout(spacing: 6) {
+                                    ForEach(group.chips) { chip in
+                                        AccountChipView(chip: chip) {
+                                            manager.setViewedProfile(
+                                                chip.id
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
                     }
                 }
+                .frame(maxHeight: 150)
+                .fixedSize(horizontal: false, vertical: true)
             }
             .padding(.horizontal, PopoverDesign.outerInset)
             .padding(.top, 8)
@@ -547,9 +577,9 @@ struct PopoverContentView: View {
     }
 
 
-    // Deliberately separate from `activeBadge`: activation stays an
-    // explicit, opt-in action, so this only ever appears — and only ever
-    // does one thing — when the viewed profile genuinely isn't active.
+    // Activation stays an explicit, opt-in action, so this only ever
+    // appears — and only ever does one thing — when the viewed profile
+    // genuinely isn't active.
     @ViewBuilder
     private func makeActiveButton(for profile: Profile) -> some View {
         if !profileManager.isActive(profile) {
@@ -623,175 +653,15 @@ struct PopoverDivider: View {
     }
 }
 
-// MARK: - Profile Switcher Bar
 
-struct ProfileSwitcherBar: View {
-    @StateObject private var profileManager = ProfileManager.shared
-    @State private var isHovered = false
-    let onManageProfiles: () -> Void
-
-    private var rows: [ProviderProfileRowPresentation] {
-        ProviderProfileRowPresentation.make(
-            profiles: profileManager.profiles,
-            isActive: profileManager.isActive
-        )
-    }
-
-    var body: some View {
-        Menu {
-            ForEach(rows) { row in
-                Button(action: {
-                    Task {
-                        await profileManager.activateProfile(row.id)
-                    }
-                }) {
-                    ProviderProfileMenuRow(row: row)
-                }
-            }
-
-            Divider()
-
-            Button(action: onManageProfiles) {
-                HStack {
-                    Image(systemName: "plus.circle.fill")
-                        .font(.system(size: 12))
-                    Text("popover.manage_profiles".localized)
-                        .font(.system(size: 12, weight: .medium))
-                }
-            }
-        } label: {
-            HStack(spacing: 8) {
-                // Profile avatar
-                ZStack {
-                    Circle()
-                        .fill(Color.accentColor)
-                        .frame(width: 28, height: 28)
-
-                    Text(profileInitials)
-                        .font(.system(size: 11, weight: .semibold, design: .rounded))
-                        .foregroundColor(.white)
-                }
-
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(profileManager.activeProfile?.name ?? "popover.no_profile".localized)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(.primary)
-                        .lineLimit(1)
-
-                    HStack(spacing: 4) {
-                        if profileManager.profiles.count > 1 {
-                            Text(String(format: "popover.profiles_count".localized, profileManager.profiles.count))
-                                .font(.system(size: 9, weight: .medium))
-                                .foregroundColor(.secondary)
-                        } else {
-                            Text("popover.profile_count_singular".localized)
-                                .font(.system(size: 9, weight: .medium))
-                                .foregroundColor(.secondary)
-                        }
-
-                        Text("•")
-                            .font(.system(size: 9))
-                            .foregroundColor(.secondary.opacity(0.5))
-
-                        Text("common.switch".localized)
-                            .font(.system(size: 9, weight: .medium))
-                            .foregroundColor(.secondary)
-                    }
-                }
-
-                Spacer()
-
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundColor(.secondary)
-            }
-            .padding(8)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(isHovered ? Color.primary.opacity(0.05) : Color.clear)
-            )
-        }
-        .menuStyle(.borderlessButton)
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.15)) {
-                isHovered = hovering
-            }
-        }
-    }
-
-    private var profileInitials: String {
-        guard let name = profileManager.activeProfile?.name else { return "?" }
-        let words = name.split(separator: " ")
-        if words.count >= 2 {
-            return String(words[0].prefix(1) + words[1].prefix(1)).uppercased()
-        } else if let first = words.first {
-            return String(first.prefix(2)).uppercased()
-        }
-        return "?"
-    }
-}
-
-private struct ProviderProfileMenuRow: View {
-    let row: ProviderProfileRowPresentation
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: row.systemImage)
-                .font(.system(size: 11))
-                .frame(width: 14)
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text(row.name)
-                    .font(.system(size: 12, weight: .medium))
-                    .lineLimit(1)
-                Text(
-                    "\(row.providerName) · "
-                        + row.connectionDescription
-                )
-                .font(.system(size: 9))
-                .foregroundColor(.secondary)
-                .lineLimit(1)
-            }
-
-            Spacer()
-
-            HStack(spacing: 4) {
-                if row.isViewing {
-                    Image(systemName: "eye.fill")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundColor(.secondary)
-                        .accessibilityLabel(
-                            NormalizedUsageStrings.localized(
-                                "popover.normalized.profile.viewing",
-                                default: "Viewing"
-                            )
-                        )
-                }
-                if row.isActive {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 10, weight: .semibold))
-                        .accessibilityLabel(
-                            NormalizedUsageStrings.localized(
-                                "popover.normalized.profile.active",
-                                default: "Active"
-                            )
-                        )
-                }
-            }
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier(row.accessibilityIdentifier)
-    }
-}
-
-// MARK: - Active Account Chip
+// MARK: - Account Chip
 
 /// One chip in the "Accounts" section, tappable to switch the popover to
-/// that account. Purely a view switch — see `ProfileSwitcherCompact` for
-/// why activation never happens here.
-struct ActiveAccountChipView: View {
-    let chip: ActiveAccountChipPresentation
+/// that account. Purely a view switch — see
+/// `MenuBarManager.setViewedProfile(_:)` for why activation never
+/// happens here.
+struct AccountChipView: View {
+    let chip: AccountChipPresentation
     let onTap: () -> Void
 
     private var accessibilityLabel: String {

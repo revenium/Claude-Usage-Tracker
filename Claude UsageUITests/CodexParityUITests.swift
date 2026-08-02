@@ -478,17 +478,15 @@ final class CodexParityUITests: XCTestCase {
             surface: "popover",
             scenario: "provider_current"
         )
-        let switcher = element(
-            app,
-            identifier: "popover.profile.switcher"
-        )
-        XCTAssertTrue(switcher.waitForExistence(timeout: 5))
-        switcher.click()
-        element(
+        // The header dropdown switcher was replaced by the always-visible
+        // accounts chips: clicking a chip is the view switch now.
+        let claudeChip = element(
             app,
             identifier:
-                "popover.profile.switcher.\(Self.claudeProfileID)"
-        ).click()
+                "popover.accounts.chip.\(Self.claudeProfileID)"
+        )
+        XCTAssertTrue(claudeChip.waitForExistence(timeout: 5))
+        claudeChip.click()
         XCTAssertTrue(
             waitForLabel(
                 element(
@@ -509,7 +507,8 @@ final class CodexParityUITests: XCTestCase {
         )
         app.typeKey("w", modifierFlags: .command)
 
-        switcher.click()
+        // "Manage" is now a direct button in the Accounts section header
+        // rather than a menu item inside the removed switcher dropdown.
         let manageProfiles = element(
             app,
             identifier: "popover.action.manage_profiles"
@@ -784,23 +783,19 @@ final class CodexParityUITests: XCTestCase {
             accessibilityText(action),
             "popover.detached.contract-ok|\(Self.codexProfileID)|codex|0|\(Self.codexMetricID)"
         )
-        // Selecting a row from the popover's profile switcher is a pure
-        // view change now (see `MenuBarManager.setViewedProfile(_:)`); it
-        // never activates. Do that first — still inside the detached
-        // window — then use the explicit "Make Active" affordance the
-        // view change reveals, which is the real activation path. (A
-        // right click on the background status-item stack was tried here
-        // and is unreliable: the detached surface is a floating panel
-        // that visually sits on top of the synthetic status-item window
-        // in this harness and can swallow the synthesized click.)
-        element(
-            app,
-            identifier: "popover.profile.switcher"
-        ).click()
+        // Selecting an account chip is a pure view change (see
+        // `MenuBarManager.setViewedProfile(_:)`); it never activates.
+        // Do that first — still inside the detached window — then use
+        // the explicit "Make Active" affordance the view change
+        // reveals, which is the real activation path. (A right click on
+        // the background status-item stack was tried here and is
+        // unreliable: the detached surface is a floating panel that
+        // visually sits on top of the synthetic status-item window in
+        // this harness and can swallow the synthesized click.)
         let selectWhileDetached = element(
             app,
             identifier:
-                "popover.profile.switcher.\(Self.secondaryCodexProfileID)"
+                "popover.accounts.chip.\(Self.secondaryCodexProfileID)"
         )
         XCTAssertTrue(
             selectWhileDetached.waitForExistence(timeout: 3)
