@@ -375,6 +375,26 @@ Never point the controlled test at a prior maintainer's production feed.
 
 Do not describe a local or ad-hoc artifact as notarized.
 
+## Provenance
+
+The binding between a published `Claude-Usage.dmg` and the commit it was built
+from is established **at release time**, not by any post-hoc check:
+
+- The release builds from a fresh clone of the exact approved commit, then signs
+  and notarizes the result. Nothing else touches the artifact.
+- The Sparkle EdDSA signature in the published appcast proves the disk image is
+  the one the release signer published, and Developer ID + notarization prove
+  who signed it and that Apple accepted it.
+
+What this does **not** prove is which commit produced the image. Nothing inside
+a published DMG identifies its source revision, so a verifier that re-derives a
+`commit` value from a checked-out tag is recording the revision it verified
+against, not confirming the artifact's origin — an image built from a different
+commit carrying the same version and build number would satisfy every check.
+Making that binding artifact-derived would require stamping the commit into the
+app's `Info.plist` at build time and verifying it from the mounted image;
+that is deliberately out of scope for distribution-only changes.
+
 ## Primary documentation
 
 - [Sparkle basic setup and signing](https://sparkle-project.org/documentation/)

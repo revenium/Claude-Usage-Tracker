@@ -91,6 +91,12 @@ jobs:
           # reconstruct its cohesion fields here from sources independent of the
           # downloaded DMG: the checked-out tag's project settings, git, and the
           # workflow's own knowledge of the release URL.
+          #
+          # The `commit` field below records the source revision this verification
+          # ran against. It is NOT an artifact-derived provenance claim:
+          # verify_release_artifacts.sh only checks that it is a 40-hex string, and
+          # nothing in a published DMG identifies the commit it was built from. See
+          # "Provenance" in RELEASING.md for what is and is not established here.
           version=${RELEASE_TAG#v}
           build_settings=$(xcodebuild \
             -project 'Claude Usage.xcodeproj' \
