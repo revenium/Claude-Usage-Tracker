@@ -80,12 +80,6 @@ enum PopoverDesign {
             ? claudeAccent
             : codexAccent
     }
-
-    static func providerGlyph(named providerName: String) -> String {
-        providerName.caseInsensitiveCompare("Claude") == .orderedSame
-            ? "sparkles"
-            : "chevron.left.forwardslash.chevron.right"
-    }
 }
 
 // MARK: - Section header

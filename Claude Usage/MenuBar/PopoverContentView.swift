@@ -575,7 +575,6 @@ struct PopoverContentView: View {
         }
     }
 
-
     // Activation stays an explicit, opt-in action, so this only ever
     // appears — and only ever does one thing — when the viewed profile
     // genuinely isn't active.
@@ -651,7 +650,6 @@ struct PopoverDivider: View {
             .padding(.horizontal, 16)
     }
 }
-
 
 // MARK: - Account Chip
 

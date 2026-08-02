@@ -102,25 +102,23 @@ struct AccountChipGroup: Equatable, Identifiable {
         var claude: [AccountChipPresentation] = []
         var codex: [AccountChipPresentation] = []
         for profile in profiles {
-            let providerName: String
-            switch profile.providerConfiguration {
-            case .claude:
-                providerName = "Claude"
-            case .codex:
-                providerName = "Codex"
+            // One switch, so a new provider case is a compile error in
+            // exactly one place instead of silently landing in the wrong
+            // group.
+            func chip(named providerName: String) -> AccountChipPresentation {
+                AccountChipPresentation(
+                    id: profile.id,
+                    providerName: providerName,
+                    profileName: profile.name,
+                    isViewing: profile.id == viewedProfileID,
+                    isActive: isActive(profile)
+                )
             }
-            let chip = AccountChipPresentation(
-                id: profile.id,
-                providerName: providerName,
-                profileName: profile.name,
-                isViewing: profile.id == viewedProfileID,
-                isActive: isActive(profile)
-            )
             switch profile.providerConfiguration {
             case .claude:
-                claude.append(chip)
+                claude.append(chip(named: "Claude"))
             case .codex:
-                codex.append(chip)
+                codex.append(chip(named: "Codex"))
             }
         }
         return [
