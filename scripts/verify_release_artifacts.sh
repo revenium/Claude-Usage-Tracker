@@ -235,4 +235,25 @@ if $require_notarization; then
     spctl --assess --type execute --verbose=4 "$app_path"
 fi
 
+# The disk image is the artifact users actually download, so it carries its own
+# signature and notarization ticket — verify the container, not just its payload.
+dmg_signature_details=$(codesign -dvvv "$dmg_path" 2>&1 || true)
+if $require_developer_id; then
+    grep -Eq -- '^Authority=Developer ID Application:' <<< "$dmg_signature_details" || {
+        echo 'error: disk image is not signed with a Developer ID Application certificate' >&2
+        exit 65
+    }
+    app_team=$(sed -nE 's/^TeamIdentifier=([A-Z0-9]+)$/\1/p' <<< "$signature_details")
+    dmg_team=$(sed -nE 's/^TeamIdentifier=([A-Z0-9]+)$/\1/p' <<< "$dmg_signature_details")
+    [[ -n $dmg_team && $dmg_team == "$app_team" ]] || {
+        echo "error: disk image team identifier does not match the app ($dmg_team != $app_team)" >&2
+        exit 65
+    }
+fi
+
+if $require_notarization; then
+    xcrun stapler validate "$dmg_path"
+    spctl --assess --type open --context context:primary-signature --verbose=4 "$dmg_path"
+fi
+
 echo "Release artifacts verified: v$version ($build), $architectures, $actual_sha"

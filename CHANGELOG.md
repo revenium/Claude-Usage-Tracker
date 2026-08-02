@@ -27,6 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Sparkle (which officially supports `.dmg` archives) and the Homebrew cask
   now consume the DMG directly; `RELEASE_ASSET` and the cask template both
   point at `Claude-Usage.dmg`.
+- `scripts/verify_release_artifacts.sh` now mounts the disk image and verifies
+  both the app inside it and the container itself (Developer ID authority,
+  matching team identifier, stapled ticket, Gatekeeper acceptance), so a
+  release whose DMG failed to sign cannot be published.
 - `release-metadata.json` is still generated locally during release for
   `scripts/verify_release_artifacts.sh`'s cohesion checks, but is no longer
   uploaded. GitHub publishes a SHA-256 digest for every release asset, which
