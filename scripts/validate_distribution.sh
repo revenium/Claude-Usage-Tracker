@@ -125,8 +125,8 @@ contains 'environment: release' "$homebrew_workflow" \
     || fail 'Homebrew tap token must only be passed to the isolated cask publisher'
 contains 'HOMEBREW_TAP_TOKEN: \$\{\{ secrets\.HOMEBREW_TAP_TOKEN \}\}' "$release_workflow" \
     || fail 'Homebrew tap token is not scoped to the isolated cask publisher call'
-contains 'metadata_commit == "\$source_commit"' "$homebrew_workflow" \
-    || fail 'Homebrew publication does not bind metadata to the checked-out tag commit'
+contains 'expected_digest' "$homebrew_workflow" \
+    || fail 'Homebrew publication does not verify the GitHub-reported artifact digest'
 contains 'merge-base --is-ancestor "\$source_commit" FETCH_HEAD' "$homebrew_workflow" \
     || fail 'Homebrew publication does not require source containment in main'
 contains 'current_sha' "$homebrew_workflow" \
@@ -134,16 +134,14 @@ contains 'current_sha' "$homebrew_workflow" \
 
 contains 'fetch-depth: 0' "$appcast_workflow" \
     || fail 'manual appcast verification must fetch complete source history'
-contains 'metadata_commit=\$\(plutil -extract commit raw -o -' "$appcast_workflow" \
-    || fail 'manual appcast verification does not read release source metadata'
 contains 'source_commit=\$\(git rev-parse HEAD\)' "$appcast_workflow" \
     || fail 'manual appcast verification does not resolve the checked-out tag commit'
-contains 'metadata_commit == "\$source_commit"' "$appcast_workflow" \
-    || fail 'manual appcast verification does not bind metadata to the checked-out tag'
 contains 'git fetch --no-tags origin main' "$appcast_workflow" \
     || fail 'manual appcast verification does not fetch the authoritative main branch'
 contains 'merge-base --is-ancestor "\$source_commit" FETCH_HEAD' "$appcast_workflow" \
     || fail 'manual appcast verification does not require source containment in main'
+contains 'hdiutil attach -nobrowse -readonly -mountpoint' "$appcast_workflow" \
+    || fail 'manual appcast verification does not mount the published disk image read-only'
 
 contains 'revenium-release-workflow:\$GITHUB_SHA' "$release_workflow" \
     || fail 'release drafts do not carry exact-commit ownership provenance'
@@ -202,7 +200,7 @@ trap 'rm -f "$rendered_cask"' EXIT
     '99.99.99' \
     '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' \
     "$rendered_cask" >/dev/null
-contains_fixed "$release_repository_url/releases/download/v#{version}/Claude-Usage.zip" "$rendered_cask" \
+contains_fixed "$release_repository_url/releases/download/v#{version}/Claude-Usage.dmg" "$rendered_cask" \
     || fail 'rendered cask URL is not the version-pinned Revenium release asset'
 contains 'depends_on macos: ">= :sonoma"' "$rendered_cask" \
     || fail 'rendered cask does not preserve the macOS 14 minimum'

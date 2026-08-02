@@ -12,7 +12,7 @@ source "$release_constants_path"
 
 usage() {
     cat >&2 <<'EOF'
-usage: verify_release_artifacts.sh [options] <zip> <appcast> <sha256-file> <metadata-json>
+usage: verify_release_artifacts.sh [options] <dmg> <appcast> <metadata-json>
 
 Options:
   --require-developer-id   Require a Developer ID Application signature.
@@ -48,47 +48,52 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [[ $# -ne 4 ]]; then
+if [[ $# -ne 3 ]]; then
     usage
     exit 64
 fi
 
-zip_path=$1
+dmg_path=$1
 appcast_path=$2
-checksum_path=$3
-metadata_path=$4
+metadata_path=$3
 
-for path in "$zip_path" "$appcast_path" "$checksum_path" "$metadata_path"; do
+for path in "$dmg_path" "$appcast_path" "$metadata_path"; do
     [[ -f $path ]] || {
         echo "error: required artifact not found: $path" >&2
         exit 66
     }
 done
 
-expected_sha=$(awk 'NR == 1 { print $1 }' "$checksum_path")
-actual_sha=$(shasum -a 256 "$zip_path" | awk '{ print $1 }')
-[[ $expected_sha =~ ^[0-9a-f]{64}$ ]] || {
-    echo 'error: checksum file does not begin with a valid SHA-256 value' >&2
-    exit 65
-}
-[[ $actual_sha == "$expected_sha" ]] || {
-    echo "error: ZIP checksum mismatch ($actual_sha != $expected_sha)" >&2
-    exit 65
-}
+actual_sha=$(shasum -a 256 "$dmg_path" | awk '{ print $1 }')
 
 work_dir=$(mktemp -d "${TMPDIR:-/tmp}/claude-usage-release-verify.XXXXXX")
-trap 'rm -rf "$work_dir"' EXIT
-ditto -x -k "$zip_path" "$work_dir/extracted"
+mount_point="$work_dir/mount"
+mkdir -p "$mount_point"
+attached=false
+cleanup() {
+    if $attached; then
+        hdiutil detach "$mount_point" -quiet -force || true
+    fi
+    rm -rf "$work_dir"
+}
+trap cleanup EXIT
 
-app_path="$work_dir/extracted/Claude Usage.app"
+hdiutil attach -nobrowse -readonly -mountpoint "$mount_point" "$dmg_path" >/dev/null
+attached=true
+
+app_path="$mount_point/Claude Usage.app"
 info_plist="$app_path/Contents/Info.plist"
 [[ -d $app_path && -f $info_plist ]] || {
-    echo 'error: ZIP does not contain Claude Usage.app at its root' >&2
+    echo 'error: DMG does not contain Claude Usage.app at its root' >&2
     exit 65
 }
 
-if find "$work_dir/extracted" -mindepth 1 -maxdepth 1 ! -name 'Claude Usage.app' | grep -q .; then
-    echo 'error: ZIP contains files outside Claude Usage.app' >&2
+if find "$mount_point" -mindepth 1 -maxdepth 1 \
+    ! -name 'Claude Usage.app' \
+    ! -name 'Applications' \
+    ! -name '.*' \
+    | grep -q .; then
+    echo 'error: DMG contains files outside Claude Usage.app and the Applications symlink' >&2
     exit 65
 fi
 
@@ -145,8 +150,8 @@ enclosure_url=$(xpath_string '//*[local-name()="enclosure"]/@url')
 enclosure_length=$(xpath_string '//*[local-name()="enclosure"]/@length')
 signature=$(xpath_string '//*[local-name()="enclosure"]/@*[local-name()="edSignature"]')
 
-expected_download_url="$release_repository_url/releases/download/v$version/Claude-Usage.zip"
-actual_length=$(stat -f%z "$zip_path")
+expected_download_url="$release_repository_url/releases/download/v$version/Claude-Usage.dmg"
+actual_length=$(stat -f%z "$dmg_path")
 
 [[ $appcast_version == "$version" ]] || {
     echo 'error: appcast marketing version does not match the app bundle' >&2
@@ -165,7 +170,7 @@ actual_length=$(stat -f%z "$zip_path")
     exit 65
 }
 [[ $enclosure_length == "$actual_length" ]] || {
-    echo 'error: appcast enclosure length does not match the ZIP' >&2
+    echo 'error: appcast enclosure length does not match the DMG' >&2
     exit 65
 }
 
@@ -196,7 +201,7 @@ metadata_url=$(metadata_value artifactURL)
    $metadata_sha == "$actual_sha" &&
    $metadata_url == "$expected_download_url" &&
    $metadata_commit =~ ^[0-9a-f]{40}$ ]] || {
-    echo 'error: release metadata is not cohesive with the app, ZIP, or appcast' >&2
+    echo 'error: release metadata is not cohesive with the app, DMG, or appcast' >&2
     exit 65
 }
 

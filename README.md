@@ -30,7 +30,7 @@
 
   <sub>🇬🇧 English • 🇪🇸 Español • 🇫🇷 Français • 🇩🇪 Deutsch • 🇮🇹 Italiano • 🇵🇹 Português • 🇯🇵 日本語 • 🇰🇷 한국어 • 🇨🇳 简体中文</sub>
 
-  ### [Download Latest Release](https://github.com/revenium/Claude-Usage-Tracker/releases/latest/download/Claude-Usage.zip)
+  ### [Download Latest Release](https://github.com/revenium/Claude-Usage-Tracker/releases/latest/download/Claude-Usage.dmg)
 
   <sub>macOS 14.0+ (Sonoma) | ~6 MB | Native Swift/SwiftUI | Officially Signed</sub>
 
@@ -156,12 +156,12 @@ brew uninstall --cask claude-usage
 
 #### Option 2: Direct Download
 
-**[Download Claude-Usage.zip](https://github.com/revenium/Claude-Usage-Tracker/releases/latest/download/Claude-Usage.zip)**
+**[Download Claude-Usage.dmg](https://github.com/revenium/Claude-Usage-Tracker/releases/latest/download/Claude-Usage.dmg)**
 
-1. Download the `.zip` file from the link above
-2. Extract the zip file (double-click or use Archive Utility)
-3. Drag `Claude Usage.app` to your Applications folder
-4. Double-click to launch - that's it!
+1. Download the `.dmg` file from the link above
+2. Open the disk image (double-click)
+3. Drag `Claude Usage.app` to the `Applications` shortcut in the window
+4. Eject the disk image, then launch the app from Applications - that's it!
 
 **v2.0.0+ Note**: The app is now officially signed with an Apple Developer certificate. You can install and run it like any other Mac application - no security warnings or workarounds needed.
 

@@ -4,14 +4,20 @@ Claude Usage is distributed by Revenium as one cohesive release unit:
 
 - A universal `Claude Usage.app` preserving bundle ID
   `HamedElfayome.Claude-Usage`
-- `Claude-Usage.zip`
-- `Claude-Usage.zip.sha256`
+- `Claude-Usage.dmg` — the only downloadable artifact; a Developer ID signed,
+  notarized, stapled disk image containing the app plus an `Applications`
+  symlink
 - `appcast.xml`
-- `release-metadata.json`
 - A generated `revenium/tap/claude-usage` Homebrew cask
 
-The tagged commit, app version/build, ZIP, SHA-256, Sparkle signature, appcast
-URL, metadata, and Homebrew checksum must all describe the same release.
+Published assets are exactly the two listed above. `release-metadata.json`
+(tag, commit, version/build, identity, URL, checksum) is still generated
+during the release for internal cohesion checks — `scripts/verify_release_artifacts.sh`
+consumes it — but it is not uploaded; GitHub's own per-asset SHA-256 digest is
+the download-integrity check consumers use instead of an unsigned sidecar file.
+
+The tagged commit, app version/build, DMG, Sparkle signature, appcast URL,
+internal metadata, and Homebrew checksum must all describe the same release.
 `.github/workflows/release.yml` creates and verifies that unit before publishing
 it. It refuses to replace an existing release.
 
@@ -248,8 +254,9 @@ The workflow performs, in order:
 2. Universal Release build with the protected feed and public key injected.
 3. Developer ID signing of Sparkle components and the app.
 4. Hardened Runtime and entitlement verification.
-5. Apple notarization, ticket stapling, and Gatekeeper assessment.
-6. ZIP and SHA-256 generation.
+5. Apple notarization, ticket stapling, and Gatekeeper assessment of the app.
+6. Disk image creation (DMG with an `Applications` symlink), Developer ID
+   signing, notarization, and stapling of the disk image itself.
 7. Appcast generation and Ed25519 signature verification.
 8. Metadata, version, URL, length, checksum, architecture, bundle identity,
    entitlements, and notarization cohesion verification.
@@ -260,7 +267,7 @@ The workflow performs, in order:
 
 ### 5. Independently verify the published unit
 
-Download all four verification inputs:
+Download the two published assets:
 
 ```bash
 TAG="vX.Y.Z"
@@ -268,18 +275,45 @@ mkdir -p /tmp/claude-usage-release
 gh release download "$TAG" \
   --repo revenium/Claude-Usage-Tracker \
   --dir /tmp/claude-usage-release
+```
+
+`release-metadata.json` is generated during release for cohesion checking but
+is not published (GitHub's own per-asset digest replaces the old checksum
+sidecar for download integrity). `verify_release_artifacts.sh` still needs a
+metadata file, so reconstruct it from the tagged source and the downloaded
+DMG — this is exactly what the manual **Verify Published Appcast** workflow
+does:
+
+```bash
+git checkout "$TAG"
+version=${TAG#v}
+build=$(xcodebuild -project 'Claude Usage.xcodeproj' -target 'Claude Usage' \
+  -configuration Release -showBuildSettings \
+  | awk '/ CURRENT_PROJECT_VERSION = / { print $3; exit }')
+sha256=$(shasum -a 256 /tmp/claude-usage-release/Claude-Usage.dmg | awk '{ print $1 }')
+
+jq -n \
+  --arg tag "$TAG" --arg version "$version" --arg build "$build" \
+  --arg commit "$(git rev-parse HEAD)" \
+  --arg bundleIdentifier 'HamedElfayome.Claude-Usage' \
+  --arg minimumSystemVersion '14.0' \
+  --arg artifactURL "https://github.com/revenium/Claude-Usage-Tracker/releases/download/$TAG/Claude-Usage.dmg" \
+  --arg sha256 "$sha256" \
+  '{tag: $tag, version: $version, build: $build, commit: $commit,
+    bundleIdentifier: $bundleIdentifier, minimumSystemVersion: $minimumSystemVersion,
+    artifactURL: $artifactURL, sha256: $sha256}' \
+  > /tmp/claude-usage-release/release-metadata.json
 
 ./scripts/verify_release_artifacts.sh \
   --require-developer-id \
   --require-notarization \
-  /tmp/claude-usage-release/Claude-Usage.zip \
+  /tmp/claude-usage-release/Claude-Usage.dmg \
   /tmp/claude-usage-release/appcast.xml \
-  /tmp/claude-usage-release/Claude-Usage.zip.sha256 \
   /tmp/claude-usage-release/release-metadata.json
 ```
 
 The manual **Verify Published Appcast** workflow repeats this check and also
-verifies the archive's Sparkle signature with the protected signing key.
+verifies the DMG's Sparkle signature with the protected signing key.
 
 ### 6. Verify Homebrew
 

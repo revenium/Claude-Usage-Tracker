@@ -15,7 +15,7 @@ permissions:
 env:
   PRODUCT_NAME: Claude Usage
   PRODUCT_BUNDLE_ID: HamedElfayome.Claude-Usage
-  RELEASE_ASSET: Claude-Usage.zip
+  RELEASE_ASSET: Claude-Usage.dmg
   SPARKLE_FEED_URL: https://github.com/revenium/Claude-Usage-Tracker/releases/latest/download/appcast.xml
 
 jobs:
@@ -262,17 +262,53 @@ jobs:
           spctl --assess --type execute --verbose=4 "$app_path"
           rm -f "$notarization_zip"
 
-      - name: Package release artifact and notes
+      - name: Create and sign disk image
+        env:
+          SIGNING_IDENTITY: ${{ vars.DEVELOPER_ID_APPLICATION }}
         run: |
           set -euo pipefail
-          mkdir -p release appcast-input
+          mkdir -p release
           app_path="build/Build/Products/Release/$PRODUCT_NAME.app"
+          version=${GITHUB_REF_NAME#v}
 
-          ditto -c -k --keepParent "$app_path" "release/$RELEASE_ASSET"
-          (
-            cd release
-            shasum -a 256 "$RELEASE_ASSET" > "$RELEASE_ASSET.sha256"
-          )
+          stage_dir=$(mktemp -d "$RUNNER_TEMP/claude-usage-dmg-stage.XXXXXX")
+          cp -R "$app_path" "$stage_dir/"
+          ln -s /Applications "$stage_dir/Applications"
+
+          hdiutil create \
+            -volname "$PRODUCT_NAME $version" \
+            -srcfolder "$stage_dir" \
+            -ov \
+            -fs APFS \
+            -format ULFO \
+            "release/$RELEASE_ASSET"
+
+          codesign --force --sign "$SIGNING_IDENTITY" --timestamp "release/$RELEASE_ASSET"
+          codesign --verify --verbose=2 "release/$RELEASE_ASSET"
+
+          rm -rf "$stage_dir"
+
+      - name: Notarize and staple disk image
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          xcrun notarytool submit "release/$RELEASE_ASSET" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_ID_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait \
+            --timeout 30m
+          xcrun stapler staple "release/$RELEASE_ASSET"
+          xcrun stapler validate "release/$RELEASE_ASSET"
+          spctl --assess --type open --context context:primary-signature --verbose=4 "release/$RELEASE_ASSET"
+
+      - name: Package release notes
+        run: |
+          set -euo pipefail
+          mkdir -p appcast-input
 
           version=${GITHUB_REF_NAME#v}
           awk -v version="$version" '
@@ -361,7 +397,6 @@ jobs:
             --require-notarization \
             "release/$RELEASE_ASSET" \
             release/appcast.xml \
-            "release/$RELEASE_ASSET.sha256" \
             release/release-metadata.json
 
           echo "sha256=$sha256" >> "$GITHUB_OUTPUT"
@@ -410,17 +445,15 @@ jobs:
         run: |
           set -euo pipefail
           gh release upload "$GITHUB_REF_NAME" \
-            "release/$RELEASE_ASSET#Universal notarized macOS application" \
-            "release/$RELEASE_ASSET.sha256#SHA-256 checksum" \
+            "release/$RELEASE_ASSET#Universal notarized disk image" \
             'release/appcast.xml#Sparkle update feed' \
-            'release/release-metadata.json#Release provenance metadata' \
             --repo "$GITHUB_REPOSITORY"
 
           asset_names=$(gh release view "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" \
             --json isDraft,assets \
             --jq 'select(.isDraft == true) | [.assets[].name] | sort | join("\n")')
-          expected_names=$'Claude-Usage.zip\nClaude-Usage.zip.sha256\nappcast.xml\nrelease-metadata.json'
+          expected_names=$'Claude-Usage.dmg\nappcast.xml'
           [[ $asset_names == "$expected_names" ]] || {
             echo 'Draft release does not contain the exact cohesive asset set.' >&2
             exit 1
@@ -433,9 +466,7 @@ jobs:
             --dir "$remote_dir"
           for asset_name in \
             "$RELEASE_ASSET" \
-            "$RELEASE_ASSET.sha256" \
-            appcast.xml \
-            release-metadata.json; do
+            appcast.xml; do
             cmp -s \
               "release/$asset_name" \
               "$remote_dir/$asset_name" || {
@@ -448,8 +479,7 @@ jobs:
             --require-notarization \
             "$remote_dir/$RELEASE_ASSET" \
             "$remote_dir/appcast.xml" \
-            "$remote_dir/$RELEASE_ASSET.sha256" \
-            "$remote_dir/release-metadata.json"
+            release/release-metadata.json
 
       - name: Publish the verified draft
         env:

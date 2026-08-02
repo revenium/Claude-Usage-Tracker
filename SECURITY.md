@@ -49,11 +49,11 @@ Official releases are:
 1. Built from a stable tag already contained in `main`
 2. Tested before packaging
 3. Signed with a configured Developer ID Application identity
-4. Submitted to Apple's notary service and stapled
+4. Submitted to Apple's notary service and stapled — both the app and the disk image that contains it
 5. Assessed by Gatekeeper
-6. Archived with a SHA-256 checksum
+6. Packaged as a single Developer ID signed, notarized `.dmg` (GitHub publishes a SHA-256 digest for every release asset; no separate checksum sidecar is needed or published)
 7. Signed with a Revenium-owned Sparkle Ed25519 key
-8. Published with metadata tying version, build, commit, URL, and checksum
+8. Verified for version, build, commit, URL, and checksum cohesion against internal release metadata before publishing
 9. Distributed through the Revenium GitHub repository and Homebrew tap
 
 The production Sparkle feed is:
@@ -69,18 +69,34 @@ See [RELEASING.md](RELEASING.md) for the executable verification checklist.
 
 ## Verify a downloaded release
 
-Download `Claude-Usage.zip`, `Claude-Usage.zip.sha256`, `appcast.xml`, and
-`release-metadata.json` from the same release, then run:
+Download `Claude-Usage.dmg` from the release, then:
 
-```bash
-./scripts/verify_release_artifacts.sh \
-  --require-developer-id \
-  --require-notarization \
-  Claude-Usage.zip \
-  appcast.xml \
-  Claude-Usage.zip.sha256 \
-  release-metadata.json
-```
+1. Compare its checksum to the digest GitHub reports for that asset (shown on
+   the release page, or via `gh release view <tag> --json assets`):
+
+   ```bash
+   shasum -a 256 Claude-Usage.dmg
+   gh release view vX.Y.Z --repo revenium/Claude-Usage-Tracker \
+     --json assets --jq '.assets[] | select(.name == "Claude-Usage.dmg") | .digest'
+   ```
+
+   The two SHA-256 values must match.
+
+2. Mount the disk image and verify the app inside without launching it:
+
+   ```bash
+   mount_point=$(hdiutil attach -nobrowse -readonly Claude-Usage.dmg \
+     | awk -F'\t' '/\/Volumes\// { print $NF; exit }')
+   app_path="$mount_point/Claude Usage.app"
+
+   codesign --verify --deep --strict --verbose=2 "$app_path"
+   xcrun stapler validate "$app_path"
+   spctl --assess --type execute --verbose=4 "$app_path"
+
+   hdiutil detach "$mount_point"
+   ```
+
+   All three checks must pass before you trust and launch the app.
 
 For non-security bugs, use
 [Revenium GitHub Issues](https://github.com/revenium/Claude-Usage-Tracker/issues).

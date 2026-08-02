@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.5] - 2026-08-02
+
+### Distribution
+
+- The notarized `.dmg` is now the single distributed artifact. `Claude-Usage.zip`,
+  its `.sha256` checksum sidecar, and `release-metadata.json` are no longer
+  published; the release page now ships exactly `Claude-Usage.dmg` and
+  `appcast.xml`.
+- Removes an entire class of user-facing corruption: macOS Archive Utility
+  materializes `Sparkle.framework` symlinks as regular files when it unzips
+  the app, which breaks the code seal and produces "Apple could not verify
+  this app is free of malware." Disk images preserve symlinks, so this
+  failure mode no longer exists.
+- The disk image itself is now Developer ID signed, notarized, and stapled
+  (in addition to the app inside it), and includes an `Applications` symlink
+  so dragging the app to Applications works exactly as in Finder's usual
+  install flow.
+- Sparkle (which officially supports `.dmg` archives) and the Homebrew cask
+  now consume the DMG directly; `RELEASE_ASSET` and the cask template both
+  point at `Claude-Usage.dmg`.
+- `release-metadata.json` is still generated locally during release for
+  `scripts/verify_release_artifacts.sh`'s cohesion checks, but is no longer
+  uploaded. GitHub publishes a SHA-256 digest for every release asset, which
+  replaces the old unsigned checksum sidecar as the download-integrity check.
+
 ## [3.0.4] - 2026-08-01
 
 ### Added

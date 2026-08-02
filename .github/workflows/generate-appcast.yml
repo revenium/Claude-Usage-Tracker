@@ -60,22 +60,13 @@ jobs:
           gh release download "$RELEASE_TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --dir release \
-            --pattern 'Claude-Usage.zip' \
-            --pattern 'Claude-Usage.zip.sha256' \
-            --pattern 'appcast.xml' \
-            --pattern 'release-metadata.json'
+            --pattern 'Claude-Usage.dmg' \
+            --pattern 'appcast.xml'
 
       - name: Verify release source provenance
         run: |
           set -euo pipefail
-          metadata_commit=$(plutil -extract commit raw -o - \
-            release/release-metadata.json)
           source_commit=$(git rev-parse HEAD)
-          [[ $metadata_commit == "$source_commit" ]] || {
-            echo 'Release metadata does not name the checked-out tag commit.' >&2
-            exit 1
-          }
-
           git fetch --no-tags origin main
           git merge-base --is-ancestor "$source_commit" FETCH_HEAD || {
             echo 'Release source is not contained in origin/main.' >&2
@@ -92,18 +83,57 @@ jobs:
             echo 'Release Sparkle key configuration is missing.' >&2
             exit 1
           }
+          # shellcheck source=scripts/release_constants.sh
+          source scripts/release_constants.sh
+
+          # release-metadata.json is no longer a published asset (see RELEASING.md);
+          # reconstruct its cohesion fields here from sources independent of the
+          # downloaded DMG: the checked-out tag's project settings, git, and the
+          # workflow's own knowledge of the release URL.
+          version=${RELEASE_TAG#v}
+          build_settings=$(xcodebuild \
+            -project 'Claude Usage.xcodeproj' \
+            -target 'Claude Usage' \
+            -configuration Release \
+            -showBuildSettings)
+          build=$(awk '/ CURRENT_PROJECT_VERSION = / { print $3; exit }' <<< "$build_settings")
+          sha256=$(shasum -a 256 release/Claude-Usage.dmg | awk '{ print $1 }')
+          artifact_url="$release_repository_url/releases/download/$RELEASE_TAG/Claude-Usage.dmg"
+
+          jq -n \
+            --arg tag "$RELEASE_TAG" \
+            --arg version "$version" \
+            --arg build "$build" \
+            --arg commit "$(git rev-parse HEAD)" \
+            --arg bundleIdentifier "$release_bundle_identifier" \
+            --arg minimumSystemVersion '14.0' \
+            --arg artifactURL "$artifact_url" \
+            --arg sha256 "$sha256" \
+            '{
+              tag: $tag,
+              version: $version,
+              build: $build,
+              commit: $commit,
+              bundleIdentifier: $bundleIdentifier,
+              minimumSystemVersion: $minimumSystemVersion,
+              artifactURL: $artifactURL,
+              sha256: $sha256
+            }' > release/release-metadata.json
 
           ./scripts/verify_release_artifacts.sh \
             --require-developer-id \
             --require-notarization \
-            release/Claude-Usage.zip \
+            release/Claude-Usage.dmg \
             release/appcast.xml \
-            release/Claude-Usage.zip.sha256 \
             release/release-metadata.json
 
-          embedded_key=$(ditto -x -k release/Claude-Usage.zip "$RUNNER_TEMP/release-app" \
-            >/dev/null && defaults read \
-            "$RUNNER_TEMP/release-app/Claude Usage.app/Contents/Info.plist" \
+          mount_point="$RUNNER_TEMP/release-app"
+          mkdir -p "$mount_point"
+          cleanup_mount() { hdiutil detach "$mount_point" -quiet -force 2>/dev/null || true; }
+          trap cleanup_mount EXIT
+          hdiutil attach -nobrowse -readonly -mountpoint "$mount_point" release/Claude-Usage.dmg >/dev/null
+          embedded_key=$(defaults read \
+            "$mount_point/Claude Usage.app/Contents/Info.plist" \
             SUPublicEDKey)
           [[ $embedded_key == "$SPARKLE_PUBLIC_ED_KEY" ]] || {
             echo 'Published app key does not match the protected Revenium variable.' >&2
@@ -117,7 +147,7 @@ jobs:
           printf '%s' "$SPARKLE_PRIVATE_KEY" | "$sign_update" \
             --verify \
             --ed-key-file - \
-            release/Claude-Usage.zip \
+            release/Claude-Usage.dmg \
             "$signature"
 
           echo 'Published appcast and release unit verified.'

@@ -54,29 +54,22 @@ jobs:
           gh release download "$RELEASE_TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --dir release \
-            --pattern 'Claude-Usage.zip' \
-            --pattern 'Claude-Usage.zip.sha256' \
-            --pattern 'release-metadata.json'
+            --pattern 'Claude-Usage.dmg'
 
-          expected_sha=$(awk 'NR == 1 { print $1 }' release/Claude-Usage.zip.sha256)
-          actual_sha=$(shasum -a 256 release/Claude-Usage.zip | awk '{ print $1 }')
-          metadata_sha=$(plutil -extract sha256 raw -o - release/release-metadata.json)
-          metadata_tag=$(plutil -extract tag raw -o - release/release-metadata.json)
-          metadata_commit=$(plutil -extract commit raw -o - release/release-metadata.json)
-          metadata_url=$(plutil -extract artifactURL raw -o - release/release-metadata.json)
-          expected_url="https://github.com/revenium/Claude-Usage-Tracker/releases/download/$RELEASE_TAG/Claude-Usage.zip"
+          # release-metadata.json is generated during release but not published
+          # (see RELEASING.md); GitHub's own per-asset digest is the integrity
+          # check for the downloaded DMG instead of an unsigned sidecar file.
+          expected_digest=$(gh release view "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json assets \
+            --jq '.assets[] | select(.name == "Claude-Usage.dmg") | .digest')
+          actual_sha=$(shasum -a 256 release/Claude-Usage.dmg | awk '{ print $1 }')
+          [[ $expected_digest == "sha256:$actual_sha" ]] || {
+            echo 'Release DMG checksum does not match the GitHub-reported digest.' >&2
+            exit 1
+          }
+
           source_commit=$(git -C source rev-parse HEAD)
-
-          [[ $actual_sha == "$expected_sha" && $actual_sha == "$metadata_sha" ]] || {
-            echo 'Release ZIP, checksum, and metadata SHA-256 values do not match.' >&2
-            exit 1
-          }
-          [[ $metadata_tag == "$RELEASE_TAG" &&
-             $metadata_url == "$expected_url" &&
-             $metadata_commit == "$source_commit" ]] || {
-            echo 'Release metadata tag, commit, or URL is not cohesive.' >&2
-            exit 1
-          }
           git -C source fetch --no-tags origin main
           git -C source merge-base --is-ancestor "$source_commit" FETCH_HEAD || {
             echo 'Release source is not contained in origin/main.' >&2

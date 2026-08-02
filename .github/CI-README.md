@@ -119,27 +119,33 @@ feed/key defaults.
 1. Validate release identity, configuration, localization, package tests, and app tests
 2. Build a universal Release app with injected Revenium feed/public key
 3. Sign the app and Sparkle components with the configured Developer ID identity
-4. Notarize, staple, and require Gatekeeper acceptance
-5. Create ZIP, checksum, appcast, and release metadata
-6. Verify app identity, architectures, entitlements, checksum, Sparkle signature, URLs, version/build, and notarization
-7. Create or recover only the workflow-owned, commit-provenance-marked draft
-8. Upload, re-download, and verify the draft's exact four-asset release unit
-9. Publish that verified draft without changing its assets
-10. Audit and update `revenium/homebrew-tap/Casks/claude-usage.rb` only after publication
+4. Notarize and staple the app, then require Gatekeeper acceptance
+5. Package the app into a disk image, sign it, notarize it, and staple it too
+6. Generate the appcast and release metadata (metadata stays local; see below)
+7. Verify app identity, architectures, entitlements, checksum, Sparkle signature, URLs, version/build, and notarization
+8. Create or recover only the workflow-owned, commit-provenance-marked draft
+9. Upload, re-download, and verify the draft's exact two-asset release unit
+10. Publish that verified draft without changing its assets
+11. Audit and update `revenium/homebrew-tap/Casks/claude-usage.rb` only after publication
 
 **Outputs:**
-- `Claude-Usage.zip` — App bundle for distribution
-- `Claude-Usage.zip.sha256` — SHA256 checksum for verification
-- `appcast.xml` — Sparkle feed with the archive's Ed25519 signature
-- `release-metadata.json` — tag, commit, version/build, identity, URL, and checksum
+- `Claude-Usage.dmg` — the only downloadable artifact: a Developer ID signed,
+  notarized, stapled disk image containing the app plus an `Applications`
+  symlink
+- `appcast.xml` — Sparkle feed with the disk image's Ed25519 signature
+
+`release-metadata.json` (tag, commit, version/build, identity, URL, checksum)
+is still generated for the workflow's own cohesion checks but is not uploaded;
+GitHub publishes a SHA-256 digest for every release asset, which is the
+integrity check consumers use instead of an unsigned checksum sidecar.
 
 The workflow does not use GitHub Pages, a personal release token, or a
 hard-coded Apple team/key. It publishes only after re-downloading and verifying
 its exact private draft asset set. An interrupted run may replace only its own
 commit-provenance-marked draft; published and unowned releases are immutable to
 the workflow. The reusable Homebrew job receives only the published tag from a
-successful protected release job and independently verifies the artifact,
-metadata, checksum, and merged commit before writing the tap.
+successful protected release job and independently verifies the artifact
+against GitHub's reported digest and the merged commit before writing the tap.
 
 ### `generate-appcast.yml` — Published Appcast Verification
 
@@ -156,9 +162,10 @@ published artifacts.
 failed reusable job from the original release run
 
 Creates/updates `Casks/claude-usage.rb` in `revenium/homebrew-tap` from the
-published artifact checksum. It verifies that release metadata names the exact
-merged tag commit, renders and audits before exposing the tap token, then uses
-one optimistic-SHA Contents API write. There is no manual tag-owned token path.
+published DMG's checksum, verified against the digest GitHub reports for that
+asset. It requires the checked-out tag commit to be an ancestor of `main`,
+renders and audits before exposing the tap token, then uses one
+optimistic-SHA Contents API write. There is no manual tag-owned token path.
 
 ---
 
