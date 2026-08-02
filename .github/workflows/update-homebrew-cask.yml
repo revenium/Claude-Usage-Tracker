@@ -59,11 +59,25 @@ jobs:
           # release-metadata.json is generated during release but not published
           # (see RELEASING.md); GitHub's own per-asset digest is the integrity
           # check for the downloaded DMG instead of an unsigned sidecar file.
-          expected_digest=$(gh release view "$RELEASE_TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --json assets \
-            --jq '.assets[] | select(.name == "Claude-Usage.dmg") | .digest')
           actual_sha=$(shasum -a 256 release/Claude-Usage.dmg | awk '{ print $1 }')
+
+          # GitHub computes the per-asset digest asynchronously after upload, so
+          # it can be empty immediately after the release is published. Poll
+          # for up to 60s before giving up.
+          expected_digest=''
+          for _ in $(seq 1 12); do
+            expected_digest=$(gh release view "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --json assets \
+              --jq '.assets[] | select(.name == "Claude-Usage.dmg") | .digest')
+            [[ -n $expected_digest ]] && break
+            echo 'Waiting for GitHub to publish the release asset digest...' >&2
+            sleep 5
+          done
+          [[ -n $expected_digest ]] || {
+            echo 'GitHub never published a digest for Claude-Usage.dmg after 60s.' >&2
+            exit 1
+          }
           [[ $expected_digest == "sha256:$actual_sha" ]] || {
             echo 'Release DMG checksum does not match the GitHub-reported digest.' >&2
             exit 1

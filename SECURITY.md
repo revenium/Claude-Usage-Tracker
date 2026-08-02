@@ -82,9 +82,16 @@ Download `Claude-Usage.dmg` from the release, then:
 
    The two SHA-256 values must match.
 
-2. Mount the disk image and verify the app inside without launching it:
+2. Verify the disk image itself, then mount it and verify the app inside
+   without launching it. The disk image is the artifact you actually
+   downloaded, so it carries its own signature and notarization ticket —
+   verify the container, not just its payload:
 
    ```bash
+   xcrun stapler validate Claude-Usage.dmg
+   spctl --assess --type open --context context:primary-signature \
+     --verbose=4 Claude-Usage.dmg
+
    mount_point=$(hdiutil attach -nobrowse -readonly Claude-Usage.dmg \
      | awk -F'\t' '/\/Volumes\// { print $NF; exit }')
    app_path="$mount_point/Claude Usage.app"
@@ -96,7 +103,7 @@ Download `Claude-Usage.dmg` from the release, then:
    hdiutil detach "$mount_point"
    ```
 
-   All three checks must pass before you trust and launch the app.
+   All five checks must pass before you trust and launch the app.
 
 For non-security bugs, use
 [Revenium GitHub Issues](https://github.com/revenium/Claude-Usage-Tracker/issues).

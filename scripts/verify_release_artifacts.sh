@@ -97,6 +97,16 @@ if find "$mount_point" -mindepth 1 -maxdepth 1 \
     exit 65
 fi
 
+[[ -L "$mount_point/Applications" ]] || {
+    echo 'error: DMG does not contain an Applications symlink at its root' >&2
+    exit 65
+}
+applications_link_target=$(readlink "$mount_point/Applications")
+[[ $applications_link_target == '/Applications' ]] || {
+    echo "error: Applications symlink does not point at /Applications: $applications_link_target" >&2
+    exit 65
+}
+
 plist_value() {
     /usr/libexec/PlistBuddy -c "Print :$1" "$info_plist"
 }

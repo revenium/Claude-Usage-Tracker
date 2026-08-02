@@ -77,6 +77,7 @@ jobs:
         env:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
           SPARKLE_PUBLIC_ED_KEY: ${{ vars.SPARKLE_PUBLIC_ED_KEY }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           [[ -n $SPARKLE_PRIVATE_KEY && -n $SPARKLE_PUBLIC_ED_KEY ]] || {
@@ -99,6 +100,29 @@ jobs:
           build=$(awk '/ CURRENT_PROJECT_VERSION = / { print $3; exit }' <<< "$build_settings")
           sha256=$(shasum -a 256 release/Claude-Usage.dmg | awk '{ print $1 }')
           artifact_url="$release_repository_url/releases/download/$RELEASE_TAG/Claude-Usage.dmg"
+
+          # GitHub computes the per-asset digest asynchronously after upload, so
+          # it can be empty immediately after the release is published. Poll
+          # for up to 60s before giving up, then cross-check it against the
+          # downloaded bytes as an independent verification of $sha256.
+          expected_digest=''
+          for _ in $(seq 1 12); do
+            expected_digest=$(gh release view "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --json assets \
+              --jq '.assets[] | select(.name == "Claude-Usage.dmg") | .digest')
+            [[ -n $expected_digest ]] && break
+            echo 'Waiting for GitHub to publish the release asset digest...' >&2
+            sleep 5
+          done
+          [[ -n $expected_digest ]] || {
+            echo 'GitHub never published a digest for Claude-Usage.dmg after 60s.' >&2
+            exit 1
+          }
+          [[ $expected_digest == "sha256:$sha256" ]] || {
+            echo 'Downloaded DMG checksum does not match the GitHub-reported digest.' >&2
+            exit 1
+          }
 
           jq -n \
             --arg tag "$RELEASE_TAG" \
