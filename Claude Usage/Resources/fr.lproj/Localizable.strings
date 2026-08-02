@@ -595,11 +595,11 @@
 /* ==================== */
 /* MARK: - Popover/Menu Bar */
 /* ==================== */
-"popover.active_accounts.title" = "Comptes actifs";
+"popover.accounts.title" = "Comptes";
+"popover.make_active.help" = "Faire de %@ le compte actif utilisé par son fournisseur. Consulter l'utilisation ne change jamais cela.";
 "popover.manage_profiles" = "Gérer les Profils";
 "popover.no_profile" = "Aucun Profil";
-"popover.profiles_count" = "%d profils";
-"popover.profile_count_singular" = "1 profil";
+"popover.viewing_strip.not_active" = "Non actif";
 
 /* ==================== */
 /* MARK: - Setup Wizard */

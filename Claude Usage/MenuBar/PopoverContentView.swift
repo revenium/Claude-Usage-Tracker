@@ -514,7 +514,6 @@ struct PopoverContentView: View {
                     }
                 }
                 .frame(maxHeight: 150)
-                .fixedSize(horizontal: false, vertical: true)
             }
             .padding(.horizontal, PopoverDesign.outerInset)
             .padding(.top, 8)

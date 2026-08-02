@@ -267,11 +267,11 @@
 /* ==================== */
 /* MARK: - Popover/Menu Bar */
 /* ==================== */
-"popover.active_accounts.title" = "활성 계정";
+"popover.accounts.title" = "계정";
+"popover.make_active.help" = "%@을(를) 해당 제공자가 사용하는 활성 계정으로 설정합니다. 사용량 보기로는 변경되지 않습니다.";
 "popover.manage_profiles" = "프로필 관리";
 "popover.no_profile" = "프로필 없음";
-"popover.profiles_count" = "%d개 프로필";
-"popover.profile_count_singular" = "1개 프로필";
+"popover.viewing_strip.not_active" = "비활성";
 
 /* ==================== */
 /* MARK: - Setup Wizard */

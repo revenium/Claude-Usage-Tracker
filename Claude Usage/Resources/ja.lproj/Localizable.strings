@@ -617,11 +617,11 @@
 /* ==================== */
 /* MARK: - Popover/Menu Bar */
 /* ==================== */
-"popover.active_accounts.title" = "アクティブなアカウント";
+"popover.accounts.title" = "アカウント";
+"popover.make_active.help" = "%@ をプロバイダーが使用するアクティブなアカウントにします。使用状況の表示でこれが変わることはありません。";
 "popover.manage_profiles" = "プロファイル管理";
 "popover.no_profile" = "プロファイルなし";
-"popover.profiles_count" = "%dプロファイル";
-"popover.profile_count_singular" = "1プロファイル";
+"popover.viewing_strip.not_active" = "非アクティブ";
 
 /* ==================== */
 /* MARK: - Setup Wizard */

@@ -615,11 +615,11 @@
 /* ==================== */
 /* MARK: - Popover/Menu Bar */
 /* ==================== */
-"popover.active_accounts.title" = "Contas ativas";
+"popover.accounts.title" = "Contas";
+"popover.make_active.help" = "Tornar %@ a conta ativa usada pelo seu provedor. Visualizar o uso nunca altera isso.";
 "popover.manage_profiles" = "Gerenciar Perfis";
 "popover.no_profile" = "Sem Perfil";
-"popover.profiles_count" = "%d perfis";
-"popover.profile_count_singular" = "1 perfil";
+"popover.viewing_strip.not_active" = "Não ativa";
 
 /* ==================== */
 /* MARK: - Setup Wizard */

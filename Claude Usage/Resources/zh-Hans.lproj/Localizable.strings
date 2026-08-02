@@ -605,11 +605,11 @@
 /* ==================== */
 /* MARK: - Popover/Menu Bar */
 /* ==================== */
-"popover.active_accounts.title" = "活跃账户";
+"popover.accounts.title" = "账户";
+"popover.make_active.help" = "将 %@ 设为其提供商使用的活跃账户。查看用量不会更改此设置。";
 "popover.manage_profiles" = "管理配置文件";
 "popover.no_profile" = "无配置文件";
-"popover.profiles_count" = "%d 个配置文件";
-"popover.profile_count_singular" = "1 个配置文件";
+"popover.viewing_strip.not_active" = "未激活";
 
 /* ==================== */
 /* MARK: - Setup Wizard */

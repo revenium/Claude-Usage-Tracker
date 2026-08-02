@@ -1416,28 +1416,59 @@ private struct UITestPopoverSurface: View {
         )
     }
 
-    var body: some View {
-        let current = presentation ?? missingPresentation
-        VStack(alignment: .leading, spacing: 0) {
-            ProviderPopoverHeader(
-                profileManager: profileManager,
-                presentation: current,
-                claudeStatus: .unknown,
-                isRefreshing: isRefreshing,
-                onSelectProfile: { id in
-                    viewedProfileID = id
-                    presentation = nil
-                    refreshGeneration &+= 1
-                    refresh()
-                },
-                onRefresh: onRefreshOverride ?? refresh,
-                onManageProfiles: {
+    private var accountsSection: some View {
+        let groups = AccountChipGroup.make(
+            profiles: profileManager.profiles,
+            isActive: profileManager.isActive,
+            viewedProfileID: viewedProfileID
+                ?? profileManager.activeProfile?.id
+        )
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                PopoverSectionHeader(title: "Accounts")
+                Spacer()
+                Button("Manage") {
                     if let onManageProfilesOverride {
                         onManageProfilesOverride()
                     } else {
                         showSettings(destination: .manageProfiles)
                     }
-                },
+                }
+                .accessibilityIdentifier(
+                    "popover.action.manage_profiles"
+                )
+            }
+            PopoverChipFlowLayout(spacing: 6) {
+                ForEach(groups.flatMap(\.chips)) { chip in
+                    AccountChipView(chip: chip) {
+                        viewedProfileID = chip.id
+                        presentation = nil
+                        refreshGeneration &+= 1
+                        refresh()
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, PopoverDesign.outerInset)
+        .padding(.vertical, 6)
+    }
+
+    var body: some View {
+        let current = presentation ?? missingPresentation
+        VStack(alignment: .leading, spacing: 0) {
+            ProviderPopoverHeader(
+                presentation: current,
+                claudeStatus: .unknown,
+                isRefreshing: isRefreshing,
+                isViewedProfileActive: {
+                    let shownID = viewedProfileID
+                        ?? profileManager.activeProfile?.id
+                    return profileManager.profiles.first {
+                        $0.id == shownID
+                    }
+                    .map(profileManager.isActive)
+                }(),
+                onRefresh: onRefreshOverride ?? refresh,
                 onPreferences: {
                     if let onPreferencesOverride {
                         onPreferencesOverride()
@@ -1464,6 +1495,11 @@ private struct UITestPopoverSurface: View {
                 }
             )
             PopoverDivider()
+            // Mirrors PopoverContentView's accounts section: chips are
+            // the view-switching surface (the header switcher menu was
+            // removed), and Manage Profiles is a direct button beside
+            // the section title.
+            accountsSection
             ScrollView {
                 NormalizedUsageView(
                     presentation: current,

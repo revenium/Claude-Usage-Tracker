@@ -617,11 +617,11 @@
 /* ==================== */
 /* MARK: - Popover/Menu Bar */
 /* ==================== */
-"popover.active_accounts.title" = "Aktive Konten";
+"popover.accounts.title" = "Konten";
+"popover.make_active.help" = "%@ zum aktiven Konto seines Anbieters machen. Das Anzeigen der Nutzung ändert dies nie.";
 "popover.manage_profiles" = "Profile Verwalten";
 "popover.no_profile" = "Kein Profil";
-"popover.profiles_count" = "%d Profile";
-"popover.profile_count_singular" = "1 Profil";
+"popover.viewing_strip.not_active" = "Nicht aktiv";
 
 /* ==================== */
 /* MARK: - Setup Wizard */

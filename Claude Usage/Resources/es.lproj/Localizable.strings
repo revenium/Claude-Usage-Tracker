@@ -598,11 +598,11 @@
 /* ==================== */
 /* MARK: - Popover/Menu Bar */
 /* ==================== */
-"popover.active_accounts.title" = "Cuentas activas";
+"popover.accounts.title" = "Cuentas";
+"popover.make_active.help" = "Convertir %@ en la cuenta activa que usa su proveedor. Ver el uso nunca cambia esto.";
 "popover.manage_profiles" = "Gestionar Perfiles";
 "popover.no_profile" = "Sin Perfil";
-"popover.profiles_count" = "%d perfiles";
-"popover.profile_count_singular" = "1 perfil";
+"popover.viewing_strip.not_active" = "No activa";
 
 /* ==================== */
 /* MARK: - Setup Wizard */
