@@ -156,6 +156,7 @@
 /* MARK: - About */
 /* ==================== */
 "about.version" = "Versione %@";
+"about.maintained_by" = "Mantenuto Da";
 "about.created_by" = "Creato Da";
 "about.contributors" = "Collaboratori (%d)";
 "about.contributors_loading" = "Collaboratori";
@@ -675,6 +676,12 @@
 "section.support_desc" = "Supporta lo sviluppo del progetto";
 "section.debug_title" = "Strumenti di Debug";
 "section.debug_desc" = "Registrazione di rete e diagnostica";
+
+/* ==================== */
+/* MARK: - Maintainer Info */
+/* ==================== */
+"maintainer.name" = "Revenium";
+"maintainer.username" = "@revenium";
 
 /* ==================== */
 /* MARK: - Creator Info */

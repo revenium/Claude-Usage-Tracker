@@ -159,6 +159,7 @@
 /* ==================== */
 "about.version" = "版本 %@";
 "about.check_updates" = "检查更新";
+"about.maintained_by" = "维护者";
 "about.created_by" = "创建者";
 "about.contributors" = "贡献者 (%d)";
 "about.contributors_loading" = "贡献者";
@@ -665,6 +666,12 @@
 "section.support_desc" = "支持项目开发";
 "section.debug_title" = "调试工具";
 "section.debug_desc" = "网络日志和诊断";
+
+/* ==================== */
+/* MARK: - Maintainer Info */
+/* ==================== */
+"maintainer.name" = "Revenium";
+"maintainer.username" = "@revenium";
 
 /* ==================== */
 /* MARK: - Creator Info */

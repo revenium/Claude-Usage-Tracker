@@ -159,6 +159,7 @@
 /* ==================== */
 "about.version" = "バージョン %@";
 "about.check_updates" = "アップデートを確認";
+"about.maintained_by" = "メンテナー";
 "about.created_by" = "作成者";
 "about.contributors" = "貢献者（%d人）";
 "about.contributors_loading" = "貢献者";
@@ -677,6 +678,12 @@
 "section.support_desc" = "プロジェクト開発を支援";
 "section.debug_title" = "デバッグツール";
 "section.debug_desc" = "ネットワークログと診断";
+
+/* ==================== */
+/* MARK: - Maintainer Info */
+/* ==================== */
+"maintainer.name" = "Revenium";
+"maintainer.username" = "@revenium";
 
 /* ==================== */
 /* MARK: - Creator Info */

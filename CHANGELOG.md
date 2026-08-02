@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The About screen now credits Revenium as maintainer first, with a
+  "Maintained By" entry linking to the fork's repository, while keeping the
+  original creator credit ("Created By" Hamed Elfayome) intact below it.
+
 ## [3.0.5] - 2026-08-02
 
 ### Distribution

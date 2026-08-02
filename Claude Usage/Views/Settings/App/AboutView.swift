@@ -64,6 +64,43 @@ struct AboutView: View {
 
                 Divider()
 
+                // Maintainer
+                VStack(alignment: .leading, spacing: DesignTokens.Spacing.medium) {
+                    Text("about.maintained_by".localized)
+                        .font(DesignTokens.Typography.sectionTitle)
+
+                    Button(action: {
+                        if let url = URL(string: Constants.GitHub.repoURL) {
+                            NSWorkspace.shared.open(url)
+                        }
+                    }) {
+                        HStack(spacing: DesignTokens.Spacing.medium) {
+                            Image(systemName: "building.2.crop.circle.fill")
+                                .font(.system(size: 20))
+                                .foregroundColor(.secondary)
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("maintainer.name".localized)
+                                    .font(DesignTokens.Typography.body)
+                                    .foregroundColor(.primary)
+
+                                Text("maintainer.username".localized)
+                                    .font(DesignTokens.Typography.caption)
+                                    .foregroundColor(.secondary)
+                            }
+
+                            Spacer()
+
+                            Image(systemName: "arrow.up.right")
+                                .font(.system(size: 10))
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                Divider()
+
                 // Creator
                 VStack(alignment: .leading, spacing: DesignTokens.Spacing.medium) {
                     Text("about.created_by".localized)

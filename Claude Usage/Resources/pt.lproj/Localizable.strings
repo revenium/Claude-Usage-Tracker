@@ -156,6 +156,7 @@
 /* MARK: - About */
 /* ==================== */
 "about.version" = "Versão %@";
+"about.maintained_by" = "Mantido Por";
 "about.created_by" = "Criado Por";
 "about.contributors" = "Colaboradores (%d)";
 "about.contributors_loading" = "Colaboradores";
@@ -675,6 +676,12 @@
 "section.support_desc" = "Apoiar o desenvolvimento do projeto";
 "section.debug_title" = "Ferramentas de Depuração";
 "section.debug_desc" = "Registro de rede e diagnósticos";
+
+/* ==================== */
+/* MARK: - Maintainer Info */
+/* ==================== */
+"maintainer.name" = "Revenium";
+"maintainer.username" = "@revenium";
 
 /* ==================== */
 /* MARK: - Creator Info */

@@ -331,6 +331,12 @@
 "section.debug_desc" = "네트워크 로깅 및 진단";
 
 /* ==================== */
+/* MARK: - Maintainer Info */
+/* ==================== */
+"maintainer.name" = "Revenium";
+"maintainer.username" = "@revenium";
+
+/* ==================== */
 /* MARK: - Creator Info */
 /* ==================== */
 "creator.name" = "Hamed Elfayome";
@@ -470,6 +476,7 @@
 /* MARK: - About */
 /* ==================== */
 "about.version" = "버전 %@";
+"about.maintained_by" = "유지관리자";
 "about.created_by" = "제작자";
 "about.contributors" = "기여자 (%d명)";
 "about.contributors_loading" = "기여자";

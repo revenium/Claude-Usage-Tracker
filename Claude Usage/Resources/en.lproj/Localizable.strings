@@ -165,6 +165,7 @@
 /* ==================== */
 "about.version" = "Version %@";
 "about.check_updates" = "Check for Updates";
+"about.maintained_by" = "Maintained By";
 "about.created_by" = "Created By";
 "about.contributors" = "Contributors (%d)";
 "about.contributors_loading" = "Contributors";
@@ -672,6 +673,12 @@
 "section.general_desc" = "General settings";
 "section.manage_profiles_title" = "Manage Profiles";
 "section.manage_profiles_desc" = "Manage profiles";
+
+/* ==================== */
+/* MARK: - Maintainer Info */
+/* ==================== */
+"maintainer.name" = "Revenium";
+"maintainer.username" = "@revenium";
 
 /* ==================== */
 /* MARK: - Creator Info */
