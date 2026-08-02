@@ -643,7 +643,8 @@ final class StatusBarUIManager {
         // NSRect.zero passed as `from:` is AppKit's sentinel meaning "draw entire image".
         image.draw(at: NSPoint(x: 0, y: 2), from: NSRect(origin: .zero, size: image.size), operation: .copy, fraction: 1.0)
         NSColor.systemGreen.setFill()
-        NSBezierPath(rect: NSRect(x: 1, y: 0, width: image.size.width - 2, height: 1)).fill()
+        let underlineRect = NSRect(x: 1, y: 0, width: image.size.width - 2, height: 1.5)
+        NSBezierPath(roundedRect: underlineRect, xRadius: 0.75, yRadius: 0.75).fill()
         return newImage
     }
 

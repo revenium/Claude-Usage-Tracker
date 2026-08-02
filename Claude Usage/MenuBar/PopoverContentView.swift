@@ -3,55 +3,21 @@ import Charts
 import UsageCore
 
 // MARK: - Always-active vibrancy background
+/// Clean popover material with no tint overlay. The previous
+/// `.hudWindow` + solid black/white tint stack muddied the background into
+/// a flat gray and defeated the system material's vibrancy in both
+/// appearances; `.popover` tracks the native menu/popover look across
+/// light and dark mode on its own.
 struct VisualEffectBackground: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView {
-        let container = NSView()
-
-        // Base vibrancy layer
+    func makeNSView(context: Context) -> NSVisualEffectView {
         let effectView = NSVisualEffectView()
-        effectView.material = .hudWindow
+        effectView.material = .popover
         effectView.blendingMode = .behindWindow
         effectView.state = .active
-        effectView.isEmphasized = true
-        effectView.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(effectView)
-
-        // Solid tint overlay for more density
-        let tintView = NSView()
-        tintView.wantsLayer = true
-        if NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua {
-            tintView.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.25).cgColor
-        } else {
-            tintView.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.4).cgColor
-        }
-        tintView.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(tintView)
-
-        NSLayoutConstraint.activate([
-            effectView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            effectView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            effectView.topAnchor.constraint(equalTo: container.topAnchor),
-            effectView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            tintView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            tintView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            tintView.topAnchor.constraint(equalTo: container.topAnchor),
-            tintView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-        ])
-
-        return container
+        return effectView
     }
 
-    func updateNSView(_ nsView: NSView, context: Context) {
-        // Update tint for appearance changes
-        if let tintView = nsView.subviews.last {
-            tintView.wantsLayer = true
-            if NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua {
-                tintView.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.25).cgColor
-            } else {
-                tintView.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.4).cgColor
-            }
-        }
-    }
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
 }
 
 /// Native macOS popover interface - minimal, flat, system-style
@@ -331,8 +297,8 @@ struct PopoverContentView: View {
                 now: now
             )
         }
-        .padding(.bottom, 8)
-        .frame(width: 280)
+        .padding(.bottom, 10)
+        .frame(width: PopoverDesign.width)
         .background(VisualEffectBackground())
         .opacity(appeared ? 1 : 0)
         .scaleEffect(appeared ? 1 : 0.96, anchor: .top)
@@ -477,18 +443,17 @@ struct PopoverContentView: View {
             viewedProfileID: displayedProfile?.id
         )
         if !chips.isEmpty {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(
-                    NormalizedUsageStrings.localized(
+            VStack(alignment: .leading, spacing: 6) {
+                PopoverSectionHeader(
+                    title: NormalizedUsageStrings.localized(
                         "popover.active_accounts.title",
                         default: "Active accounts"
                     )
                 )
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundColor(.secondary)
+                .padding(.leading, 2)
                 .accessibilityHidden(true)
 
-                HStack(spacing: 6) {
+                HStack(spacing: 8) {
                     ForEach(chips) { chip in
                         ActiveAccountChipView(chip: chip) {
                             manager.setViewedProfile(chip.id)
@@ -496,8 +461,8 @@ struct PopoverContentView: View {
                     }
                 }
             }
-            .padding(.horizontal, 14)
-            .padding(.top, 6)
+            .padding(.horizontal, PopoverDesign.outerInset)
+            .padding(.top, 8)
             .padding(.bottom, 2)
             .accessibilityElement(children: .contain)
         }
@@ -520,11 +485,11 @@ struct PopoverContentView: View {
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text(viewingProfile.name)
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(.primary)
                         .lineLimit(1)
                     Text(presentation.providerName)
-                        .font(.system(size: 9))
+                        .font(.system(size: 10))
                         .foregroundColor(.secondary)
                 }
 
@@ -532,14 +497,17 @@ struct PopoverContentView: View {
                 activeBadge(for: viewingProfile)
                 makeActiveButton(for: viewingProfile)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 6)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
             .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(Color.primary.opacity(0.03))
+                RoundedRectangle(
+                    cornerRadius: PopoverDesign.cardRadius,
+                    style: .continuous
+                )
+                .fill(PopoverDesign.cardFill)
             )
-            .padding(.horizontal, 10)
-            .padding(.top, 6)
+            .padding(.horizontal, PopoverDesign.outerInset)
+            .padding(.top, 8)
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier(
                 "popover.profile."
@@ -575,13 +543,13 @@ struct PopoverContentView: View {
                     default: "Active"
                 )
             )
-            .font(.system(size: 8, weight: .semibold))
+            .font(.system(size: 9, weight: .semibold))
             .foregroundColor(.accentColor)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 2)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
             .background(
                 Capsule()
-                    .fill(Color.accentColor.opacity(0.12))
+                    .fill(Color.accentColor.opacity(0.14))
             )
         }
     }
@@ -602,17 +570,18 @@ struct PopoverContentView: View {
                 }
             }) {
                 Text(title)
-                    .font(.system(size: 8, weight: .semibold))
+                    .font(.system(size: 9, weight: .semibold))
                     .foregroundColor(.accentColor)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 2)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
                     .background(
                         Capsule()
                             .strokeBorder(
-                                Color.accentColor.opacity(0.4),
+                                Color.accentColor.opacity(0.45),
                                 lineWidth: 1
                             )
                     )
+                    .contentShape(Capsule())
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("popover.profile.make_active")
@@ -714,16 +683,24 @@ struct ProfileSwitcherCompact: View {
             }
             .accessibilityIdentifier("popover.action.manage_profiles")
         } label: {
-            Text(
-                viewedProfileName.isEmpty
-                    ? "popover.no_profile".localized
-                    : viewedProfileName
-            )
-            .font(.system(size: 13, weight: .bold))
-            .foregroundColor(.primary)
-            .lineLimit(1)
+            HStack(spacing: 4) {
+                Text(
+                    viewedProfileName.isEmpty
+                        ? "popover.no_profile".localized
+                        : viewedProfileName
+                )
+                .font(PopoverDesign.identityFont)
+                .foregroundColor(.primary)
+                .lineLimit(1)
+
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundColor(.secondary)
+                    .accessibilityHidden(true)
+            }
         }
         .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
         .buttonStyle(.plain)
         .accessibilityIdentifier("popover.profile.switcher")
     }
@@ -909,42 +886,62 @@ private struct ActiveAccountChipView: View {
         )
     }
 
+    @State private var isHovered = false
+
     var body: some View {
         Button(action: onTap) {
-            HStack(spacing: 4) {
-                Text(chip.providerName)
-                    .font(.system(size: 9, weight: .semibold))
-                Text("·")
-                    .font(.system(size: 9))
-                    .foregroundColor(.secondary)
+            HStack(spacing: 5) {
+                Image(
+                    systemName: PopoverDesign.providerGlyph(
+                        named: chip.providerName
+                    )
+                )
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundColor(
+                    chip.isViewing
+                        ? .accentColor
+                        : PopoverDesign.providerAccent(
+                            named: chip.providerName
+                        )
+                )
+
                 Text(chip.profileName)
-                    .font(.system(size: 9, weight: .medium))
+                    .font(PopoverDesign.chipFont)
                     .lineLimit(1)
             }
             .foregroundColor(
                 chip.isViewing ? .accentColor : .primary
             )
-            .padding(.horizontal, 7)
-            .padding(.vertical, 3)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
             .background(
                 Capsule()
                     .fill(
                         chip.isViewing
-                            ? Color.accentColor.opacity(0.12)
-                            : Color.primary.opacity(0.05)
+                            ? Color.accentColor.opacity(0.14)
+                            : isHovered
+                                ? PopoverDesign.hoverFill
+                                : PopoverDesign.cardFill
                     )
             )
             .overlay(
                 Capsule()
                     .strokeBorder(
                         chip.isViewing
-                            ? Color.accentColor.opacity(0.4)
+                            ? Color.accentColor.opacity(0.45)
                             : Color.clear,
                         lineWidth: 1
                     )
             )
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.15)) {
+                isHovered = hovering
+            }
+        }
+        .help("\(chip.providerName) · \(chip.profileName)")
         .accessibilityIdentifier(chip.accessibilityIdentifier)
         .accessibilityLabel(accessibilityLabel)
     }
@@ -994,16 +991,16 @@ struct APICostCard: View {
     let apiUsage: APIUsage
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: 6) {
             // Header
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 1) {
                     Text("API Cost")
-                        .font(.system(size: 13, weight: .medium))
+                        .font(PopoverDesign.rowTitleFont)
                         .foregroundColor(.primary)
 
                     Text("This Month")
-                        .font(.system(size: 10))
+                        .font(PopoverDesign.metaFont)
                         .foregroundColor(.secondary)
                 }
 
@@ -1012,7 +1009,8 @@ struct APICostCard: View {
                 // Total cost
                 if let formatted = apiUsage.formattedAPICost {
                     Text(formatted)
-                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .font(PopoverDesign.valueFont)
+                        .monospacedDigit()
                         .foregroundColor(.primary)
                 }
             }
@@ -1050,12 +1048,7 @@ struct APICostCard: View {
                 }
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.5)
-        )
+        .popoverCard()
     }
 }
 
@@ -1239,66 +1232,53 @@ struct APIUsageCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: 6) {
             // Header
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 1) {
                     Text("menubar.api_credits".localized)
-                        .font(.system(size: 13, weight: .medium))
+                        .font(PopoverDesign.rowTitleFont)
                         .foregroundColor(.primary)
 
                     Text("menubar.anthropic_console".localized)
-                        .font(.system(size: 10))
+                        .font(PopoverDesign.metaFont)
                         .foregroundColor(.secondary)
                 }
 
                 Spacer()
 
                 Text("\(Int(displayPercentage))%")
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .font(PopoverDesign.valueFont)
+                    .monospacedDigit()
                     .foregroundColor(usageColor)
             }
 
-            // Progress bar
-            GeometryReader { geometry in
-                ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 2.5)
-                        .fill(Color.primary.opacity(0.08))
-
-                    RoundedRectangle(cornerRadius: 2.5)
-                        .fill(usageColor)
-                        .frame(width: geometry.size.width * min(displayPercentage / 100.0, 1.0))
-                        .animation(.easeInOut(duration: 0.6), value: displayPercentage)
-                }
-            }
-            .frame(height: 4)
+            PopoverProgressBar(
+                fraction: min(displayPercentage / 100.0, 1.0),
+                color: usageColor
+            )
 
             // Used / Remaining
             HStack {
                 Text(apiUsage.formattedUsed)
-                    .font(.system(size: 10))
+                    .font(PopoverDesign.metaFont)
                     .foregroundColor(.secondary)
 
                 Spacer()
 
                 Text(apiUsage.formattedRemaining)
-                    .font(.system(size: 10))
+                    .font(PopoverDesign.metaFont)
                     .foregroundColor(.secondary)
             }
 
             // Reset Time
             if apiUsage.resetsAt > Date() {
                 Text(resetTimeText(for: apiUsage.resetsAt))
-                    .font(.system(size: 9))
+                    .font(PopoverDesign.metaFont)
                     .foregroundColor(.secondary)
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.5)
-        )
+        .popoverCard()
     }
 
     private func resetTimeText(for reset: Date) -> String {
@@ -1323,25 +1303,30 @@ struct StatusBannerView: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: icon)
-                .font(.system(size: 11))
+                .font(.system(size: 12))
                 .foregroundColor(color)
             Text(message)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundColor(.primary)
-                .lineLimit(1)
+                .lineLimit(2)
             Spacer()
             if onTap != nil {
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 9))
+                    .font(.system(size: 9, weight: .semibold))
                     .foregroundColor(.secondary)
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 6)
-        .background(color.opacity(0.12))
-        .cornerRadius(6)
-        .padding(.horizontal, 10)
-        .padding(.top, 4)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(
+                cornerRadius: PopoverDesign.cardRadius,
+                style: .continuous
+            )
+            .fill(color.opacity(0.12))
+        )
+        .padding(.horizontal, PopoverDesign.outerInset)
+        .padding(.top, 6)
         // Without an explicit hit-testing shape, `onTapGesture` only
         // registers over the row's rendered content (icon/text), not the
         // `Spacer()` that fills most of the row — including the area right
@@ -1389,15 +1374,15 @@ struct ExpandableStatusBanner: View {
             }) {
                 HStack(spacing: 8) {
                     Image(systemName: icon)
-                        .font(.system(size: 11))
+                        .font(.system(size: 12))
                         .foregroundColor(color)
                     Text(message)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundColor(.primary)
-                        .lineLimit(1)
+                        .lineLimit(2)
                     Spacer()
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 9))
+                        .font(.system(size: 9, weight: .semibold))
                         .foregroundColor(.secondary)
                         .rotationEffect(.degrees(isExpanded ? 90 : 0))
                 }
@@ -1444,16 +1429,21 @@ struct ExpandableStatusBanner: View {
                     .padding(.top, 2)
                     .accessibilityIdentifier("popover.banner.retry")
                 }
-                .padding(.leading, 19)
+                .padding(.leading, 20)
                 .transition(.opacity)
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 6)
-        .background(color.opacity(0.12))
-        .cornerRadius(6)
-        .padding(.horizontal, 10)
-        .padding(.top, 4)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(
+                cornerRadius: PopoverDesign.cardRadius,
+                style: .continuous
+            )
+            .fill(color.opacity(0.12))
+        )
+        .padding(.horizontal, PopoverDesign.outerInset)
+        .padding(.top, 6)
         .accessibilityElement(children: .contain)
     }
 }

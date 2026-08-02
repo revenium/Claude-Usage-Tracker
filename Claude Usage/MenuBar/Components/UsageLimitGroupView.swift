@@ -122,9 +122,8 @@ struct UsageLimitGroupView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(group.title)
-                .font(.system(size: 12, weight: .semibold))
-                .accessibilityAddTraits(.isHeader)
+            PopoverSectionHeader(title: group.title)
+                .padding(.leading, 2)
 
             if group.windows.isEmpty {
                 Text(
@@ -133,20 +132,32 @@ struct UsageLimitGroupView: View {
                         default: "No limits were reported for this group."
                     )
                 )
-                .font(.system(size: 10))
+                .font(PopoverDesign.metaFont)
                 .foregroundColor(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .popoverCard()
                 .accessibilityIdentifier(
                     group.accessibilityIdentifier + ".empty"
                 )
             } else {
-                ForEach(group.windows) { window in
-                    NormalizedUsageWindowView(
-                        window: window,
-                        displayPreferences: displayPreferences,
-                        timeDisplay: timeDisplay,
-                        now: now
-                    )
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(
+                        Array(group.windows.enumerated()),
+                        id: \.element.id
+                    ) { index, window in
+                        if index > 0 {
+                            PopoverCardDivider()
+                                .padding(.vertical, 10)
+                        }
+                        NormalizedUsageWindowView(
+                            window: window,
+                            displayPreferences: displayPreferences,
+                            timeDisplay: timeDisplay,
+                            now: now
+                        )
+                    }
                 }
+                .popoverCard()
             }
         }
         .accessibilityElement(children: .contain)
@@ -204,11 +215,11 @@ private struct NormalizedUsageWindowView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(window.title)
-                        .font(.system(size: 12, weight: .medium))
+                        .font(PopoverDesign.rowTitleFont)
                     if let quantity = window.quantity {
                         Text(
                             NormalizedUsageFormatter.quantity(
@@ -216,7 +227,7 @@ private struct NormalizedUsageWindowView: View {
                                 showRemaining: showRemaining
                             )
                         )
-                        .font(.system(size: 10))
+                        .font(PopoverDesign.metaFont)
                         .foregroundColor(.secondary)
                     }
                 }
@@ -227,7 +238,7 @@ private struct NormalizedUsageWindowView: View {
                             for: paceStatus
                         )
                     )
-                    .font(.system(size: 10, weight: .black))
+                    .font(.system(size: 11, weight: .heavy))
                     .foregroundColor(paceColor)
                     .accessibilityLabel(
                         NormalizedUsageWindowIndicators.paceDescription(
@@ -239,13 +250,8 @@ private struct NormalizedUsageWindowView: View {
                     )
                 }
                 Text(percentageText)
-                    .font(
-                        .system(
-                            size: 12,
-                            weight: .semibold,
-                            design: .rounded
-                        )
-                    )
+                    .font(PopoverDesign.valueFont)
+                    .monospacedDigit()
                     .foregroundColor(
                         window.usedPercentage == nil
                             ? .secondary
@@ -257,39 +263,16 @@ private struct NormalizedUsageWindowView: View {
             }
 
             if window.usedPercentage != nil {
-                GeometryReader { geometry in
-                    ZStack(alignment: .leading) {
-                        RoundedRectangle(cornerRadius: 2.5)
-                            .fill(Color.primary.opacity(0.08))
-                        RoundedRectangle(cornerRadius: 2.5)
-                            .fill(statusColor)
-                            .frame(
-                                width: geometry.size.width
-                                    * NormalizedUsageFormatter
-                                        .progressFraction(
-                                            usedPercentage:
-                                                window.usedPercentage,
-                                            showRemaining:
-                                                showRemaining
-                                        )
-                            )
-                    }
-                    .overlay(alignment: .leading) {
-                        if let fraction = indicators.timeMarkerFraction {
-                            RoundedRectangle(cornerRadius: 1)
-                                .fill(paceColor)
-                                .frame(width: 2.5, height: 8)
-                                .offset(
-                                    x: round(
-                                        geometry.size.width
-                                            * fraction
-                                    ) - 0.75
-                                )
-                                .accessibilityHidden(true)
-                        }
-                    }
-                }
-                .frame(height: 4)
+                PopoverProgressBar(
+                    fraction: NormalizedUsageFormatter
+                        .progressFraction(
+                            usedPercentage: window.usedPercentage,
+                            showRemaining: showRemaining
+                        ),
+                    color: statusColor,
+                    markerFraction: indicators.timeMarkerFraction,
+                    markerColor: paceColor
+                )
                 .accessibilityLabel(percentageAccessibilityText)
                 .accessibilityValue(percentageAccessibilityText)
                 .accessibilityIdentifier(
@@ -305,22 +288,13 @@ private struct NormalizedUsageWindowView: View {
                         display: timeDisplay
                     )
                 )
-                .font(.system(size: 9))
+                .font(PopoverDesign.metaFont)
                 .foregroundColor(.secondary)
                 .accessibilityIdentifier(
                     window.accessibilityIdentifier + ".reset"
                 )
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(
-                    Color.primary.opacity(0.1),
-                    lineWidth: 0.5
-                )
-        )
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(window.accessibilityIdentifier)
     }

@@ -917,10 +917,11 @@ struct ProviderPopoverHeader: View {
 
     @ViewBuilder
     private var statusRow: some View {
-        let content = HStack(spacing: 4) {
+        let content = HStack(spacing: 5) {
             Text(presentation.providerName)
-                .font(.system(size: 9, weight: .semibold))
+                .font(.system(size: 11, weight: .semibold))
             Text("·")
+                .font(PopoverDesign.metaFont)
             if presentation.providerID == .claude {
                 Circle()
                     .fill(claudeStatusColor)
@@ -928,7 +929,9 @@ struct ProviderPopoverHeader: View {
                     .accessibilityHidden(true)
             }
             Text(providerStatusText)
+                .font(PopoverDesign.metaFont)
                 .lineLimit(1)
+                .truncationMode(.tail)
         }
         if presentation.providerID == .claude {
             Button(action: {
@@ -954,8 +957,64 @@ struct ProviderPopoverHeader: View {
         return identity
     }
 
+    private var profileInitials: String {
+        let words = presentation.profileName.split(separator: " ")
+        if words.count >= 2 {
+            return String(
+                words[0].prefix(1) + words[1].prefix(1)
+            ).uppercased()
+        } else if let first = words.first {
+            return String(first.prefix(2)).uppercased()
+        }
+        return "?"
+    }
+
+    private var providerAccent: Color {
+        PopoverDesign.providerAccent(
+            named: presentation.providerName
+        )
+    }
+
+    private var avatar: some View {
+        ZStack {
+            Circle()
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            providerAccent.opacity(0.95),
+                            providerAccent.opacity(0.7)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+                .frame(width: 30, height: 30)
+
+            Text(profileInitials)
+                .font(
+                    .system(
+                        size: 11,
+                        weight: .bold,
+                        design: .rounded
+                    )
+                )
+                .foregroundColor(.white)
+        }
+        .accessibilityHidden(true)
+    }
+
+    /// The account line repeats the profile name for most single-account
+    /// setups; only render it when it adds information the name doesn't.
+    private var showsAccountLine: Bool {
+        accountDescription.caseInsensitiveCompare(
+            presentation.profileName
+        ) != .orderedSame
+    }
+
     var body: some View {
-        HStack {
+        HStack(alignment: .center, spacing: 10) {
+            avatar
+
             VStack(alignment: .leading, spacing: 2) {
                 ProfileSwitcherCompact(
                     profileManager: profileManager,
@@ -973,23 +1032,25 @@ struct ProviderPopoverHeader: View {
                             .providerHeaderAccessibilityIdentifier
                     )
 
-                Text(accountDescription)
-                    .font(.system(size: 9))
-                    .foregroundColor(.secondary)
-                    .lineLimit(1)
-                    .accessibilityLabel(
-                        NormalizedUsageStrings.localized(
-                            "popover.normalized.accessibility.account",
-                            default: "Account"
+                if showsAccountLine {
+                    Text(accountDescription)
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                        .accessibilityLabel(
+                            NormalizedUsageStrings.localized(
+                                "popover.normalized.accessibility.account",
+                                default: "Account"
+                            )
+                            + ": \(accountDescription)"
                         )
-                        + ": \(accountDescription)"
-                    )
-                    .accessibilityIdentifier(
-                        presentation.accountAccessibilityIdentifier
-                    )
+                        .accessibilityIdentifier(
+                            presentation.accountAccessibilityIdentifier
+                        )
+                }
             }
 
-            Spacer()
+            Spacer(minLength: 8)
 
             HStack(alignment: .center, spacing: 2) {
                 HeaderIconButton(
@@ -1020,8 +1081,9 @@ struct ProviderPopoverHeader: View {
                 .accessibilityIdentifier("popover.action.settings")
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        .padding(.horizontal, PopoverDesign.outerInset)
+        .padding(.top, 14)
+        .padding(.bottom, 10)
     }
 }
 
@@ -1032,7 +1094,10 @@ struct NormalizedUsageView: View {
     let now: Date
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(
+            alignment: .leading,
+            spacing: PopoverDesign.sectionSpacing
+        ) {
             ForEach(presentation.notices) { notice in
                 NormalizedUsageNoticeView(notice: notice)
             }
@@ -1056,7 +1121,7 @@ struct NormalizedUsageView: View {
                 }
             }
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, PopoverDesign.outerInset)
         .padding(.vertical, 8)
     }
 
@@ -1115,25 +1180,37 @@ private struct NormalizedUsageNoticeView: View {
     }
 
     var body: some View {
-        HStack(spacing: 7) {
+        HStack(spacing: 8) {
             Image(systemName: icon)
-                .frame(width: 14)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(.secondary)
+                .frame(width: 20, height: 20)
+                .background(
+                    RoundedRectangle(
+                        cornerRadius: 5,
+                        style: .continuous
+                    )
+                    .fill(Color.primary.opacity(0.06))
+                )
             Text(
                 NormalizedUsageStrings.localized(
                     notice.localizationKey,
                     default: notice.defaultMessage
                 )
             )
+            .font(PopoverDesign.metaFont)
             .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         }
-        .font(.system(size: 10, weight: .medium))
         .foregroundColor(.secondary)
-        .padding(.horizontal, 9)
-        .padding(.vertical, 6)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
         .background(
-            RoundedRectangle(cornerRadius: 7)
-                .fill(Color.primary.opacity(0.05))
+            RoundedRectangle(
+                cornerRadius: PopoverDesign.cardRadius,
+                style: .continuous
+            )
+            .fill(PopoverDesign.cardFill)
         )
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier(notice.accessibilityIdentifier)
@@ -1230,12 +1307,12 @@ private struct NormalizedUsageEmptyStateView: View {
                         default: message.value
                     )
             )
-            .font(.system(size: 11))
+            .font(PopoverDesign.metaFont)
             .foregroundColor(.secondary)
             .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         }
-        .padding(10)
+        .popoverCard()
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier(state.accessibilityIdentifier)
     }
@@ -1263,7 +1340,7 @@ private struct NormalizedUsageSummaryView: View {
                         default: "Usage summary"
                     )
                 )
-                .font(.system(size: 12, weight: .semibold))
+                .font(PopoverDesign.rowTitleFont)
             }
             .accessibilityIdentifier("popover.summary.disclosure")
 
@@ -1275,18 +1352,11 @@ private struct NormalizedUsageSummaryView: View {
                         display: timeDisplay
                     )
                 )
-                .font(.system(size: 9))
+                .font(PopoverDesign.metaFont)
                 .foregroundColor(.secondary)
             }
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(
-                    Color.primary.opacity(0.1),
-                    lineWidth: 0.5
-                )
-        )
+        .popoverCard()
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("popover.summary")
     }
@@ -1391,7 +1461,7 @@ private struct NormalizedUsageCreditsView: View {
                         default: "Credits"
                     )
                 )
-                .font(.system(size: 12, weight: .semibold))
+                .font(PopoverDesign.rowTitleFont)
                 Spacer()
                 Text(
                     NormalizedUsageStrings.localized(
@@ -1432,14 +1502,7 @@ private struct NormalizedUsageCreditsView: View {
                 )
             }
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(
-                    Color.primary.opacity(0.1),
-                    lineWidth: 0.5
-                )
-        )
+        .popoverCard()
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("popover.credits")
     }
