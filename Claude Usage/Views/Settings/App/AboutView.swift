@@ -69,34 +69,12 @@ struct AboutView: View {
                     Text("about.maintained_by".localized)
                         .font(DesignTokens.Typography.sectionTitle)
 
-                    Button(action: {
-                        if let url = URL(string: Constants.GitHub.repoURL) {
-                            NSWorkspace.shared.open(url)
-                        }
-                    }) {
-                        HStack(spacing: DesignTokens.Spacing.medium) {
-                            Image(systemName: "building.2.crop.circle.fill")
-                                .font(.system(size: 20))
-                                .foregroundColor(.secondary)
-
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("maintainer.name".localized)
-                                    .font(DesignTokens.Typography.body)
-                                    .foregroundColor(.primary)
-
-                                Text("maintainer.username".localized)
-                                    .font(DesignTokens.Typography.caption)
-                                    .foregroundColor(.secondary)
-                            }
-
-                            Spacer()
-
-                            Image(systemName: "arrow.up.right")
-                                .font(.system(size: 10))
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                    .buttonStyle(.plain)
+                    AttributionRow(
+                        icon: "building.2.crop.circle.fill",
+                        name: "maintainer.name".localized,
+                        subtitle: "maintainer.username".localized,
+                        url: Constants.GitHub.repoURL
+                    )
                 }
 
                 Divider()
@@ -106,34 +84,12 @@ struct AboutView: View {
                     Text("about.created_by".localized)
                         .font(DesignTokens.Typography.sectionTitle)
 
-                    Button(action: {
-                        if let url = URL(string: "https://github.com/hamed-elfayome") {
-                            NSWorkspace.shared.open(url)
-                        }
-                    }) {
-                        HStack(spacing: DesignTokens.Spacing.medium) {
-                            Image(systemName: "person.circle.fill")
-                                .font(.system(size: 20))
-                                .foregroundColor(.secondary)
-
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("creator.name".localized)
-                                    .font(DesignTokens.Typography.body)
-                                    .foregroundColor(.primary)
-
-                                Text("creator.username".localized)
-                                    .font(DesignTokens.Typography.caption)
-                                    .foregroundColor(.secondary)
-                            }
-
-                            Spacer()
-
-                            Image(systemName: "arrow.up.right")
-                                .font(.system(size: 10))
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                    .buttonStyle(.plain)
+                    AttributionRow(
+                        icon: "person.circle.fill",
+                        name: "creator.name".localized,
+                        subtitle: "creator.username".localized,
+                        url: "https://github.com/hamed-elfayome"
+                    )
                 }
 
                 // Contributors
@@ -295,6 +251,47 @@ struct AboutView: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - Attribution Row
+
+/// Icon + name/subtitle row that opens a URL, shared by the Maintainer and Creator sections.
+struct AttributionRow: View {
+    let icon: String
+    let name: String
+    let subtitle: String
+    let url: String
+
+    var body: some View {
+        Button(action: {
+            if let url = URL(string: url) {
+                NSWorkspace.shared.open(url)
+            }
+        }) {
+            HStack(spacing: DesignTokens.Spacing.medium) {
+                Image(systemName: icon)
+                    .font(.system(size: 20))
+                    .foregroundColor(.secondary)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(name)
+                        .font(DesignTokens.Typography.body)
+                        .foregroundColor(.primary)
+
+                    Text(subtitle)
+                        .font(DesignTokens.Typography.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                Spacer()
+
+                Image(systemName: "arrow.up.right")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+            }
+        }
+        .buttonStyle(.plain)
     }
 }
 
