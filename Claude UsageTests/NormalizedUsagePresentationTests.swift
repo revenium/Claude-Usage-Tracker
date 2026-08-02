@@ -1281,97 +1281,77 @@ final class NormalizedUsagePresentationTests: HostedAppTestCase {
         XCTAssertFalse(rows[0].isViewing)
     }
 
-    func testActiveAccountChipsCoverBothProvidersAndFlagTheViewedOne() {
-        let claudeID = UUID()
-        let codexID = UUID()
-        let claude = Profile(
-            id: claudeID,
+    func testAccountChipGroupsListEveryProfileGroupedByProvider() {
+        let claudeActive = Profile(
+            id: UUID(),
             name: "jc@example.com",
             providerConfiguration: .claude
         )
+        let claudeOther = Profile(
+            id: UUID(),
+            name: "jason@example.com",
+            providerConfiguration: .claude
+        )
         let codex = Profile(
-            id: codexID,
+            id: UUID(),
             name: "codex",
             providerConfiguration: .codex(
                 CodexProfileConfiguration()
             )
         )
 
-        let chips = ActiveAccountChipPresentation.make(
-            activeClaudeProfile: claude,
-            activeCodexProfile: codex,
-            viewedProfileID: codexID
+        let groups = AccountChipGroup.make(
+            profiles: [claudeActive, codex, claudeOther],
+            isActive: { $0.id == claudeActive.id || $0.id == codex.id },
+            viewedProfileID: claudeOther.id
         )
 
-        XCTAssertEqual(chips.count, 2)
-        XCTAssertEqual(chips[0].id, claudeID)
-        XCTAssertEqual(chips[0].providerName, "Claude")
-        XCTAssertEqual(chips[0].profileName, "jc@example.com")
-        XCTAssertFalse(chips[0].isViewing)
-        XCTAssertEqual(chips[1].id, codexID)
-        XCTAssertEqual(chips[1].providerName, "Codex")
-        XCTAssertTrue(chips[1].isViewing)
+        XCTAssertEqual(groups.count, 2)
+        XCTAssertEqual(groups[0].providerName, "Claude")
+        XCTAssertEqual(
+            groups[0].chips.map(\.id),
+            [claudeActive.id, claudeOther.id]
+        )
+        XCTAssertEqual(groups[1].providerName, "Codex")
+        XCTAssertEqual(groups[1].chips.map(\.id), [codex.id])
+
+        let activeChip = groups[0].chips[0]
+        XCTAssertTrue(activeChip.isActive)
+        XCTAssertFalse(activeChip.isViewing)
+
+        let viewedChip = groups[0].chips[1]
+        XCTAssertFalse(viewedChip.isActive)
+        XCTAssertTrue(viewedChip.isViewing)
+
+        let codexChip = groups[1].chips[0]
+        XCTAssertTrue(codexChip.isActive)
+        XCTAssertFalse(codexChip.isViewing)
     }
 
-    func testActiveAccountChipsOmitProviderWithNoActiveProfile() {
+    func testAccountChipGroupsOmitProviderWithNoProfiles() {
         let claude = Profile(name: "Solo Claude")
-        let chips = ActiveAccountChipPresentation.make(
-            activeClaudeProfile: claude,
-            activeCodexProfile: nil,
+
+        let groups = AccountChipGroup.make(
+            profiles: [claude],
+            isActive: { _ in true },
             viewedProfileID: claude.id
         )
 
-        XCTAssertEqual(chips.count, 1)
-        XCTAssertEqual(chips[0].providerName, "Claude")
-        XCTAssertTrue(chips[0].isViewing)
+        XCTAssertEqual(groups.count, 1)
+        XCTAssertEqual(groups[0].providerName, "Claude")
+        XCTAssertEqual(groups[0].chips.count, 1)
+        XCTAssertTrue(groups[0].chips[0].isActive)
+        XCTAssertTrue(groups[0].chips[0].isViewing)
     }
 
-    func testViewedNonActiveProfileIsAppendedAsInactiveChip() {
-        let active = Profile(
-            id: UUID(),
-            name: "jc@example.com",
-            providerConfiguration: .claude
+    func testAccountChipGroupsAreEmptyForNoProfiles() {
+        XCTAssertTrue(
+            AccountChipGroup.make(
+                profiles: [],
+                isActive: { _ in false },
+                viewedProfileID: nil
+            ).isEmpty
         )
-        let viewed = Profile(
-            id: UUID(),
-            name: "jason@example.com",
-            providerConfiguration: .claude
-        )
-
-        let chips = ActiveAccountChipPresentation.make(
-            activeClaudeProfile: active,
-            activeCodexProfile: nil,
-            viewedProfile: viewed,
-            viewedProfileID: viewed.id
-        )
-
-        XCTAssertEqual(chips.count, 2)
-        XCTAssertEqual(chips[0].id, active.id)
-        XCTAssertTrue(chips[0].isActive)
-        XCTAssertFalse(chips[0].isViewing)
-        XCTAssertEqual(chips[1].id, viewed.id)
-        XCTAssertEqual(chips[1].providerName, "Claude")
-        XCTAssertFalse(chips[1].isActive)
-        XCTAssertTrue(chips[1].isViewing)
-    }
-
-    func testViewedActiveProfileIsNotDuplicatedAsChip() {
-        let active = Profile(
-            id: UUID(),
-            name: "jc@example.com",
-            providerConfiguration: .claude
-        )
-
-        let chips = ActiveAccountChipPresentation.make(
-            activeClaudeProfile: active,
-            activeCodexProfile: nil,
-            viewedProfile: active,
-            viewedProfileID: active.id
-        )
-
-        XCTAssertEqual(chips.count, 1)
-        XCTAssertTrue(chips[0].isActive)
-        XCTAssertTrue(chips[0].isViewing)
     }
 
     func testUnknownRemovedProfileIsNotLabeledClaude() throws {

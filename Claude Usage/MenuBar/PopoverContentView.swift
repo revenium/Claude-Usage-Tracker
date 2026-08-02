@@ -326,6 +326,9 @@ struct PopoverContentView: View {
                 || presentation.notices.contains {
                     $0.kind == .loading
                 },
+            isViewedProfileActive: displayedProfile.map {
+                profileManager.isActive($0)
+            },
             onSelectProfile: manager.setViewedProfile,
             onRefresh: triggerRefresh,
             onManageProfiles:
@@ -440,13 +443,12 @@ struct PopoverContentView: View {
 
     @ViewBuilder
     private func activeAccountsSection() -> some View {
-        let chips = ActiveAccountChipPresentation.make(
-            activeClaudeProfile: profileManager.activeClaudeProfile,
-            activeCodexProfile: profileManager.activeCodexProfile,
-            viewedProfile: displayedProfile,
+        let groups = AccountChipGroup.make(
+            profiles: profileManager.profiles,
+            isActive: profileManager.isActive,
             viewedProfileID: displayedProfile?.id
         )
-        if !chips.isEmpty {
+        if !groups.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
                 PopoverSectionHeader(
                     title: NormalizedUsageStrings.localized(
@@ -457,10 +459,27 @@ struct PopoverContentView: View {
                 .padding(.leading, 2)
                 .accessibilityHidden(true)
 
-                HStack(spacing: 8) {
-                    ForEach(chips) { chip in
-                        ActiveAccountChipView(chip: chip) {
-                            manager.setViewedProfile(chip.id)
+                ForEach(groups) { group in
+                    VStack(alignment: .leading, spacing: 4) {
+                        // Caption only earns its row when there is a
+                        // second provider to distinguish from.
+                        if groups.count > 1 {
+                            Text(group.providerName)
+                                .font(
+                                    .system(
+                                        size: 10, weight: .medium
+                                    )
+                                )
+                                .foregroundColor(.secondary)
+                                .padding(.leading, 2)
+                        }
+
+                        PopoverChipFlowLayout(spacing: 6) {
+                            ForEach(group.chips) { chip in
+                                ActiveAccountChipView(chip: chip) {
+                                    manager.setViewedProfile(chip.id)
+                                }
+                            }
                         }
                     }
                 }
@@ -472,24 +491,14 @@ struct PopoverContentView: View {
         }
     }
 
-    /// The provider's currently active profile for the profile being
-    /// viewed, used to tell the user exactly what "not active" means.
-    private func activeCounterpart(for profile: Profile) -> Profile? {
-        switch profile.providerConfiguration {
-        case .claude:
-            return profileManager.activeClaudeProfile
-        case .codex:
-            return profileManager.activeCodexProfile
-        }
-    }
-
     // Shown only when the viewed profile is not its provider's active
-    // profile: a single accent-tinted strip that states what you are
-    // looking at, what is actually active, and the one action that
-    // changes it. When viewing the active profile this disappears
-    // entirely — the header and the highlighted accounts chip already
-    // carry that state, and repeating it as a third identity row was
-    // the main source of "what am I looking at?" confusion.
+    // profile: one short fixed-label strip pairing the state with the
+    // single action that changes it. Deliberately contains no account
+    // names — names live in the header and the accounts chips, where
+    // truncation is graceful; a prose sentence with an embedded name can
+    // never be guaranteed to fit the popover's width. When viewing the
+    // active profile the strip disappears entirely (the header pill and
+    // the chips' green dot already carry that state).
     @ViewBuilder
     private func normalizedProfileTag(
         presentation: NormalizedUsagePresentation
@@ -500,32 +509,14 @@ struct PopoverContentView: View {
                 Image(systemName: "eye")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundColor(.accentColor)
-                    .frame(width: 20, height: 20)
-                    .background(
-                        Circle()
-                            .fill(Color.accentColor.opacity(0.14))
-                    )
                     .accessibilityHidden(true)
 
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(
-                        NormalizedUsageStrings.formatted(
-                            "popover.viewing_banner.title",
-                            default: "Viewing %@",
-                            arguments: [viewingProfile.name]
-                        )
-                    )
-                    .font(.system(size: 11, weight: .semibold))
+                Text(notActiveLabel(for: viewingProfile))
+                    .font(.system(size: 11, weight: .medium))
                     .foregroundColor(.primary)
                     .lineLimit(1)
 
-                    Text(viewingBannerSubtitle(for: viewingProfile))
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
-                }
-
-                Spacer()
+                Spacer(minLength: 8)
                 makeActiveButton(for: viewingProfile)
             }
             .padding(.horizontal, 12)
@@ -547,9 +538,7 @@ struct PopoverContentView: View {
         }
     }
 
-    private func viewingBannerSubtitle(
-        for profile: Profile
-    ) -> String {
+    private func notActiveLabel(for profile: Profile) -> String {
         let providerName: String
         switch profile.providerConfiguration {
         case .claude:
@@ -557,16 +546,9 @@ struct PopoverContentView: View {
         case .codex:
             providerName = "Codex"
         }
-        if let active = activeCounterpart(for: profile) {
-            return NormalizedUsageStrings.formatted(
-                "popover.viewing_banner.active_is",
-                default: "%@ is your active %@ account",
-                arguments: [active.name, providerName]
-            )
-        }
         return NormalizedUsageStrings.formatted(
-            "popover.viewing_banner.not_active",
-            default: "Not your active %@ account",
+            "popover.viewing_strip.not_active",
+            default: "Not the active %@ account",
             arguments: [providerName]
         )
     }
@@ -902,10 +884,10 @@ private struct ProviderProfileMenuRow: View {
 
 // MARK: - Active Account Chip
 
-/// One row in the "Active accounts" section: `<Provider> · <Profile>`,
-/// tappable to switch the popover to that account. Purely a view switch —
-/// see `ProfileSwitcherCompact` for why activation never happens here.
-private struct ActiveAccountChipView: View {
+/// One chip in the "Accounts" section, tappable to switch the popover to
+/// that account. Purely a view switch — see `ProfileSwitcherCompact` for
+/// why activation never happens here.
+struct ActiveAccountChipView: View {
     let chip: ActiveAccountChipPresentation
     let onTap: () -> Void
 
@@ -926,26 +908,34 @@ private struct ActiveAccountChipView: View {
 
     @State private var isHovered = false
 
+    private var helpText: String {
+        var parts = ["\(chip.providerName) · \(chip.profileName)"]
+        if chip.isActive {
+            parts.append(
+                NormalizedUsageStrings.localized(
+                    "popover.normalized.profile.active",
+                    default: "Active"
+                )
+            )
+        }
+        if chip.isViewing {
+            parts.append(
+                NormalizedUsageStrings.localized(
+                    "popover.normalized.profile.viewing",
+                    default: "Viewing"
+                )
+            )
+        }
+        return parts.joined(separator: " · ")
+    }
+
     var body: some View {
         Button(action: onTap) {
             HStack(spacing: 5) {
-                Image(
-                    systemName: PopoverDesign.providerGlyph(
-                        named: chip.providerName
-                    )
-                )
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundColor(
-                    chip.isViewing
-                        ? .accentColor
-                        : PopoverDesign.providerAccent(
-                            named: chip.providerName
-                        )
-                )
-
                 Text(chip.profileName)
                     .font(PopoverDesign.chipFont)
                     .lineLimit(1)
+                    .truncationMode(.middle)
 
                 if chip.isActive {
                     Circle()
@@ -986,7 +976,7 @@ private struct ActiveAccountChipView: View {
                 isHovered = hovering
             }
         }
-        .help("\(chip.providerName) · \(chip.profileName)")
+        .help(helpText)
         .accessibilityIdentifier(chip.accessibilityIdentifier)
         .accessibilityLabel(accessibilityLabel)
     }

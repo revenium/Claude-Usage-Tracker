@@ -140,6 +140,82 @@ struct PopoverCardDivider: View {
     }
 }
 
+// MARK: - Flow layout
+
+/// Left-aligned wrapping layout for the account chips: any number of
+/// chips flows onto as many rows as needed inside the popover's fixed
+/// width, so the accounts section never truncates or overflows.
+struct PopoverChipFlowLayout: Layout {
+    var spacing: CGFloat = 6
+
+    /// A chip's ideal size, clamped to the row width so a single long
+    /// profile name (e.g. an email address) truncates inside its chip
+    /// instead of overflowing the popover.
+    private func clampedSize(
+        of subview: LayoutSubview,
+        maxWidth: CGFloat
+    ) -> CGSize {
+        let ideal = subview.sizeThatFits(.unspecified)
+        return CGSize(
+            width: min(ideal.width, maxWidth),
+            height: ideal.height
+        )
+    }
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) -> CGSize {
+        let maxWidth = proposal.width ?? .infinity
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        var totalWidth: CGFloat = 0
+        for subview in subviews {
+            let size = clampedSize(of: subview, maxWidth: maxWidth)
+            if x > 0, x + size.width > maxWidth {
+                x = 0
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+            totalWidth = max(totalWidth, x - spacing)
+        }
+        return CGSize(width: totalWidth, height: y + rowHeight)
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) {
+        let maxWidth = bounds.width
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        for subview in subviews {
+            let size = clampedSize(of: subview, maxWidth: maxWidth)
+            if x > 0, x + size.width > maxWidth {
+                x = 0
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            subview.place(
+                at: CGPoint(
+                    x: bounds.minX + x,
+                    y: bounds.minY + y
+                ),
+                proposal: ProposedViewSize(size)
+            )
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
+    }
+}
+
 // MARK: - Progress bar
 
 /// Capsule progress bar shared by every usage row, with the optional

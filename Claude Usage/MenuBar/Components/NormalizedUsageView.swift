@@ -163,12 +163,12 @@ struct ProviderProfileRowPresentation: Equatable, Identifiable {
     }
 }
 
-/// One chip in the popover's "Accounts" section: each provider's active
-/// profile, plus the profile currently being viewed when it is neither.
-/// Surfaces both the one-active-profile-per-provider state (a Claude
-/// profile and a Codex profile can be active simultaneously) and — so the
-/// section always contains what the popover is showing — the viewed
-/// profile itself. `isActive` distinguishes the two roles visually.
+/// One chip in the popover's "Accounts" section. The section lists every
+/// configured profile — a partial list (e.g. only the active ones) reads
+/// as arbitrary to anyone with more profiles than chips. `isActive` marks
+/// each provider's currently active profile; `isViewing` marks the one
+/// the popover is showing. Tapping a chip views it; activation stays an
+/// explicit separate action.
 struct ActiveAccountChipPresentation: Equatable, Identifiable {
     let id: UUID
     let providerName: String
@@ -179,52 +179,55 @@ struct ActiveAccountChipPresentation: Equatable, Identifiable {
     var accessibilityIdentifier: String {
         "popover.active_accounts.chip.\(id.uuidString)"
     }
+}
 
-    /// Builds one chip per provider that currently has an active profile,
-    /// then appends the viewed profile when it isn't one of them. A
-    /// provider with no active profile (e.g. never configured) is omitted
-    /// rather than shown as empty.
+/// All chips for one provider, rendered under a small provider caption so
+/// the one-active-profile-per-provider rule is visible from the grouping
+/// itself.
+struct AccountChipGroup: Equatable, Identifiable {
+    let providerName: String
+    let chips: [ActiveAccountChipPresentation]
+
+    var id: String { providerName }
+
+    /// Groups every profile by provider, preserving profile order within
+    /// each group. Provider order is Claude first, then Codex, matching
+    /// the switcher and status item ordering elsewhere. Providers with no
+    /// profiles are omitted.
     static func make(
-        activeClaudeProfile: Profile?,
-        activeCodexProfile: Profile?,
-        viewedProfile: Profile? = nil,
+        profiles: [Profile],
+        isActive: (Profile) -> Bool,
         viewedProfileID: UUID?
-    ) -> [ActiveAccountChipPresentation] {
-        var chips = [
-            activeClaudeProfile.map { ($0, "Claude") },
-            activeCodexProfile.map { ($0, "Codex") }
-        ]
-        .compactMap { $0 }
-        .map { profile, providerName in
-            ActiveAccountChipPresentation(
-                id: profile.id,
-                providerName: providerName,
-                profileName: profile.name,
-                isViewing: profile.id == viewedProfileID,
-                isActive: true
-            )
-        }
-        if let viewedProfile,
-           viewedProfile.id == viewedProfileID,
-           !chips.contains(where: { $0.id == viewedProfile.id }) {
+    ) -> [AccountChipGroup] {
+        var claude: [ActiveAccountChipPresentation] = []
+        var codex: [ActiveAccountChipPresentation] = []
+        for profile in profiles {
             let providerName: String
-            switch viewedProfile.providerConfiguration {
+            switch profile.providerConfiguration {
             case .claude:
                 providerName = "Claude"
             case .codex:
                 providerName = "Codex"
             }
-            chips.append(
-                ActiveAccountChipPresentation(
-                    id: viewedProfile.id,
-                    providerName: providerName,
-                    profileName: viewedProfile.name,
-                    isViewing: true,
-                    isActive: false
-                )
+            let chip = ActiveAccountChipPresentation(
+                id: profile.id,
+                providerName: providerName,
+                profileName: profile.name,
+                isViewing: profile.id == viewedProfileID,
+                isActive: isActive(profile)
             )
+            switch profile.providerConfiguration {
+            case .claude:
+                claude.append(chip)
+            case .codex:
+                codex.append(chip)
+            }
         }
-        return chips
+        return [
+            AccountChipGroup(providerName: "Claude", chips: claude),
+            AccountChipGroup(providerName: "Codex", chips: codex)
+        ]
+        .filter { !$0.chips.isEmpty }
     }
 }
 
@@ -886,6 +889,11 @@ struct ProviderPopoverHeader: View {
     let presentation: NormalizedUsagePresentation
     let claudeStatus: ClaudeStatus
     let isRefreshing: Bool
+    /// Whether the viewed profile is its provider's active profile; `nil`
+    /// when unknown (e.g. the profile was just removed). Drives the
+    /// header's Active/Viewing state pill — the single at-a-glance answer
+    /// to "is the account I'm looking at the one my tools are using?".
+    let isViewedProfileActive: Bool?
     /// Selecting a profile from the switcher menu — a view change, not an
     /// activation. See `MenuBarManager.setViewedProfile(_:)`.
     let onSelectProfile: (UUID) -> Void
@@ -1037,19 +1045,71 @@ struct ProviderPopoverHeader: View {
         ) != .orderedSame
     }
 
+    /// Compact Active/Viewing pill beside the profile name. Uses short
+    /// fixed labels — state is stated structurally here so no other part
+    /// of the popover needs a prose sentence to explain it.
+    @ViewBuilder
+    private var statePill: some View {
+        if let isViewedProfileActive {
+            let label = isViewedProfileActive
+                ? NormalizedUsageStrings.localized(
+                    "popover.normalized.profile.active",
+                    default: "Active"
+                )
+                : NormalizedUsageStrings.localized(
+                    "popover.normalized.profile.viewing",
+                    default: "Viewing"
+                )
+            HStack(spacing: 3) {
+                if isViewedProfileActive {
+                    Circle()
+                        .fill(Color.adaptiveGreen)
+                        .frame(width: 5, height: 5)
+                } else {
+                    Image(systemName: "eye")
+                        .font(.system(size: 7, weight: .semibold))
+                }
+                Text(label)
+                    .font(.system(size: 9, weight: .semibold))
+            }
+            .foregroundColor(
+                isViewedProfileActive
+                    ? Color.adaptiveGreen
+                    : Color.accentColor
+            )
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(
+                Capsule()
+                    .fill(
+                        (isViewedProfileActive
+                            ? Color.adaptiveGreen
+                            : Color.accentColor)
+                            .opacity(0.13)
+                    )
+            )
+            .accessibilityIdentifier("popover.header.state")
+            .accessibilityLabel(label)
+        }
+    }
+
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
             avatar
 
             VStack(alignment: .leading, spacing: 2) {
-                ProfileSwitcherCompact(
-                    profileManager: profileManager,
-                    viewedProfileName: presentation.profileName,
-                    viewedProfileID: presentation.profileID,
-                    viewedProviderName: presentation.providerName,
-                    onSelectProfile: onSelectProfile,
-                    onManageProfiles: onManageProfiles
-                )
+                HStack(spacing: 6) {
+                    ProfileSwitcherCompact(
+                        profileManager: profileManager,
+                        viewedProfileName: presentation.profileName,
+                        viewedProfileID: presentation.profileID,
+                        viewedProviderName: presentation.providerName,
+                        onSelectProfile: onSelectProfile,
+                        onManageProfiles: onManageProfiles
+                    )
+
+                    statePill
+                }
 
                 statusRow
                     .foregroundColor(.secondary)
