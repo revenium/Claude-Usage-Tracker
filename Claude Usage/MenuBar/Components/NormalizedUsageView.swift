@@ -885,7 +885,6 @@ struct ProviderPopoverHeader: View {
         string: "https://status.claude.com"
     )!
 
-    @ObservedObject var profileManager: ProfileManager
     let presentation: NormalizedUsagePresentation
     let claudeStatus: ClaudeStatus
     let isRefreshing: Bool
@@ -894,11 +893,7 @@ struct ProviderPopoverHeader: View {
     /// header's Active/Viewing state pill — the single at-a-glance answer
     /// to "is the account I'm looking at the one my tools are using?".
     let isViewedProfileActive: Bool?
-    /// Selecting a profile from the switcher menu — a view change, not an
-    /// activation. See `MenuBarManager.setViewedProfile(_:)`.
-    let onSelectProfile: (UUID) -> Void
     let onRefresh: () -> Void
-    let onManageProfiles: () -> Void
     let onPreferences: () -> Void
 
     private var claudeStatusColor: Color {
@@ -1094,23 +1089,40 @@ struct ProviderPopoverHeader: View {
     }
 
     var body: some View {
-        HStack(alignment: .center, spacing: 10) {
-            avatar
+        // Two tiers: the top row holds identity and actions; the status
+        // and account lines sit below at (almost) full popover width so
+        // they never share horizontal space with the buttons — sharing
+        // is what truncated "All Systems Operational".
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(alignment: .center, spacing: 10) {
+                avatar
 
-            VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
-                    ProfileSwitcherCompact(
-                        profileManager: profileManager,
-                        viewedProfileName: presentation.profileName,
-                        viewedProfileID: presentation.profileID,
-                        viewedProviderName: presentation.providerName,
-                        onSelectProfile: onSelectProfile,
-                        onManageProfiles: onManageProfiles
+                    // Plain identity, not a control: switching accounts
+                    // is the accounts section's job, and a dropdown here
+                    // would duplicate it behind a hidden affordance.
+                    Text(
+                        presentation.profileName.isEmpty
+                            ? NormalizedUsageStrings.localized(
+                                "popover.no_profile",
+                                default: "No profile"
+                            )
+                            : presentation.profileName
                     )
+                    .font(PopoverDesign.identityFont)
+                    .foregroundColor(.primary)
+                    .lineLimit(1)
+                    .accessibilityIdentifier("popover.profile.switcher")
 
                     statePill
                 }
 
+                Spacer(minLength: 8)
+
+                headerButtons
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
                 statusRow
                     .foregroundColor(.secondary)
                     .accessibilityElement(children: .combine)
@@ -1136,10 +1148,15 @@ struct ProviderPopoverHeader: View {
                         )
                 }
             }
+            .padding(.leading, 40)
+        }
+        .padding(.horizontal, PopoverDesign.outerInset)
+        .padding(.top, 14)
+        .padding(.bottom, 10)
+    }
 
-            Spacer(minLength: 8)
-
-            HStack(alignment: .center, spacing: 2) {
+    private var headerButtons: some View {
+        HStack(alignment: .center, spacing: 2) {
                 HeaderIconButton(
                     icon: "arrow.clockwise",
                     isRefreshing: isRefreshing,
@@ -1166,11 +1183,7 @@ struct ProviderPopoverHeader: View {
                     )
                 )
                 .accessibilityIdentifier("popover.action.settings")
-            }
         }
-        .padding(.horizontal, PopoverDesign.outerInset)
-        .padding(.top, 14)
-        .padding(.bottom, 10)
     }
 }
 

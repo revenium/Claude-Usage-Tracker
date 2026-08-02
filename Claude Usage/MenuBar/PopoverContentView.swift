@@ -319,7 +319,6 @@ struct PopoverContentView: View {
         now: Date
     ) -> some View {
         ProviderPopoverHeader(
-            profileManager: profileManager,
             presentation: presentation,
             claudeStatus: manager.status,
             isRefreshing: isRefreshing
@@ -329,17 +328,12 @@ struct PopoverContentView: View {
             isViewedProfileActive: displayedProfile.map {
                 profileManager.isActive($0)
             },
-            onSelectProfile: manager.setViewedProfile,
             onRefresh: triggerRefresh,
-            onManageProfiles:
-                navigationActions.manageProfiles,
             onPreferences:
                 navigationActions.preferences
         )
 
         PopoverDivider()
-
-        activeAccountsSection()
 
         let resolvedBanner: LegacyPopoverBanner? =
             presentation.providerID == .claude
@@ -357,6 +351,9 @@ struct PopoverContentView: View {
             claudeBanner(resolvedBanner: resolvedBanner)
         }
 
+        // Usage for the viewed account is the popover's primary content
+        // and comes first; the accounts switcher is navigation and sits
+        // pinned below the scrolling usage area.
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 normalizedProfileTag(
@@ -373,7 +370,12 @@ struct PopoverContentView: View {
                 )
             }
         }
-        .frame(maxHeight: 520)
+        .frame(maxHeight: 460)
+
+        PopoverDivider()
+            .padding(.top, 2)
+
+        activeAccountsSection()
     }
 
     private func triggerRefresh() {
@@ -511,13 +513,19 @@ struct PopoverContentView: View {
                     .foregroundColor(.accentColor)
                     .accessibilityHidden(true)
 
-                Text(notActiveLabel(for: viewingProfile))
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(.primary)
-                    .lineLimit(1)
+                Text(
+                    NormalizedUsageStrings.localized(
+                        "popover.viewing_strip.not_active",
+                        default: "Not active"
+                    )
+                )
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(.primary)
+                .lineLimit(1)
 
                 Spacer(minLength: 8)
                 makeActiveButton(for: viewingProfile)
+                    .fixedSize()
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -538,20 +546,6 @@ struct PopoverContentView: View {
         }
     }
 
-    private func notActiveLabel(for profile: Profile) -> String {
-        let providerName: String
-        switch profile.providerConfiguration {
-        case .claude:
-            providerName = "Claude"
-        case .codex:
-            providerName = "Codex"
-        }
-        return NormalizedUsageStrings.formatted(
-            "popover.viewing_strip.not_active",
-            default: "Not the active %@ account",
-            arguments: [providerName]
-        )
-    }
 
     // Deliberately separate from `activeBadge`: activation stays an
     // explicit, opt-in action, so this only ever appears — and only ever
@@ -583,6 +577,13 @@ struct PopoverContentView: View {
                     .contentShape(Capsule())
             }
             .buttonStyle(.plain)
+            .help(
+                NormalizedUsageStrings.formatted(
+                    "popover.make_active.help",
+                    default: "Make %@ the active account its provider uses. Viewing usage never changes this.",
+                    arguments: [profile.name]
+                )
+            )
             .accessibilityIdentifier("popover.profile.make_active")
             .accessibilityLabel(
                 "\(title): \(profile.name)"
@@ -619,104 +620,6 @@ struct PopoverDivider: View {
     var body: some View {
         Divider()
             .padding(.horizontal, 16)
-    }
-}
-
-// MARK: - Profile Switcher Compact (for header)
-
-struct ProfileSwitcherCompact: View {
-    @ObservedObject private var profileManager: ProfileManager
-    @State private var isHovered = false
-    let viewedProfileName: String
-    let viewedProfileID: UUID?
-    /// Provider of the profile the popover is showing. The menu is scoped
-    /// to this provider's profiles: switching what you *view* across
-    /// providers is the accounts-chip row's job, and mixing both
-    /// providers here made the menu read like a cross-provider account
-    /// switcher (which activation never supports).
-    let viewedProviderName: String
-    let onSelectProfile: (UUID) -> Void
-    let onManageProfiles: () -> Void
-
-    init(
-        profileManager: ProfileManager,
-        viewedProfileName: String,
-        viewedProfileID: UUID?,
-        viewedProviderName: String,
-        onSelectProfile: @escaping (UUID) -> Void,
-        onManageProfiles: @escaping () -> Void
-    ) {
-        _profileManager = ObservedObject(
-            wrappedValue: profileManager
-        )
-        self.viewedProfileName = viewedProfileName
-        self.viewedProfileID = viewedProfileID
-        self.viewedProviderName = viewedProviderName
-        self.onSelectProfile = onSelectProfile
-        self.onManageProfiles = onManageProfiles
-    }
-
-    private var rows: [ProviderProfileRowPresentation] {
-        let allRows = ProviderProfileRowPresentation.make(
-            profiles: profileManager.profiles,
-            isActive: profileManager.isActive,
-            viewedProfileID: viewedProfileID
-        )
-        let scoped = allRows.filter {
-            $0.providerName == viewedProviderName
-        }
-        // An unknown provider (e.g. a just-removed profile) would scope
-        // the menu down to nothing; fall back to the full list rather
-        // than presenting an empty switcher.
-        return scoped.isEmpty ? allRows : scoped
-    }
-
-    var body: some View {
-        Menu {
-            ForEach(rows) { row in
-                // Selecting a row switches what the popover is showing —
-                // it never activates that profile. Activation only
-                // happens via the explicit "Make Active" affordance.
-                Button(action: {
-                    onSelectProfile(row.id)
-                }) {
-                    ProviderProfileMenuRow(row: row)
-                }
-                .accessibilityIdentifier(row.accessibilityIdentifier)
-            }
-
-            Divider()
-
-            Button(action: onManageProfiles) {
-                HStack {
-                    Image(systemName: "plus.circle.fill")
-                        .font(.system(size: 12))
-                    Text("popover.manage_profiles".localized)
-                        .font(.system(size: 12, weight: .medium))
-                }
-            }
-            .accessibilityIdentifier("popover.action.manage_profiles")
-        } label: {
-            HStack(spacing: 4) {
-                Text(
-                    viewedProfileName.isEmpty
-                        ? "popover.no_profile".localized
-                        : viewedProfileName
-                )
-                .font(PopoverDesign.identityFont)
-                .foregroundColor(.primary)
-                .lineLimit(1)
-
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 8, weight: .semibold))
-                    .foregroundColor(.secondary)
-                    .accessibilityHidden(true)
-            }
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("popover.profile.switcher")
     }
 }
 
