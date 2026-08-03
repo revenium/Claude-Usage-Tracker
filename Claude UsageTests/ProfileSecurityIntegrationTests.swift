@@ -106,7 +106,10 @@ final class ProfileSecurityIntegrationTests: HostedAppTestCase {
         XCTAssertFalse(persisted.contains("credentialMigrationRetry"))
     }
 
-    func testPartialMigrationKeepsOnlyFailedFieldAsRetryFallback() throws {
+    /// A field the Keychain refuses is held in memory for the session. It used
+    /// to be written back into preferences as plaintext, which is how live
+    /// session keys ended up in `~/Library/Preferences`.
+    func testRefusedMigrationHoldsFieldInMemoryAndNeverOnDisk() throws {
         let profileID = UUID()
         seedLegacyProfile(
             id: profileID,
@@ -120,15 +123,53 @@ final class ProfileSecurityIntegrationTests: HostedAppTestCase {
 
         let profiles = try store.loadProfilesWithVerifiedMigration()
 
-        XCTAssertEqual(profiles.first?.apiSessionKey, "PARTIAL_API_FIXTURE")
+        XCTAssertEqual(
+            profiles.first?.apiSessionKey,
+            "PARTIAL_API_FIXTURE",
+            "The session must keep working with the credential in memory"
+        )
         let persisted = try persistedProfileText()
         XCTAssertFalse(persisted.contains("PARTIAL_CLAUDE_FIXTURE"))
-        XCTAssertTrue(persisted.contains("PARTIAL_API_FIXTURE"))
+        XCTAssertFalse(
+            persisted.contains("PARTIAL_API_FIXTURE"),
+            "A refused credential must never be written to preferences"
+        )
         XCTAssertFalse(persisted.contains("PARTIAL_CLI_FIXTURE"))
+        XCTAssertFalse(persisted.contains("credentialMigrationRetry"))
+        XCTAssertTrue(
+            store.profilesWithSessionOnlyCredentials.contains(profileID),
+            "The UI has to be able to warn that this will not survive a quit"
+        )
+    }
+
+    /// A refusal is often transient — a locked Keychain that gets unlocked.
+    /// The held value is retried, so the user does not lose it at quit.
+    func testHeldCredentialIsWrittenOnceSecureStorageAcceptsItAgain() throws {
+        let profileID = UUID()
+        seedLegacyProfile(
+            id: profileID,
+            claude: "PARTIAL_CLAUDE_FIXTURE",
+            api: "PARTIAL_API_FIXTURE",
+            cli: "PARTIAL_CLI_FIXTURE"
+        )
+        let secrets = MockProfileSecretStore()
+        secrets.writeErrors[.apiSessionKey] = TestError.expected
+        let store = retain(ProfileStore(defaults: defaults, secretStore: secrets))
+        _ = try store.loadProfilesWithVerifiedMigration()
 
         secrets.writeErrors.removeValue(forKey: .apiSessionKey)
-        _ = try store.loadProfilesWithVerifiedMigration()
-        XCTAssertFalse(try persistedProfileText().contains("PARTIAL_API_FIXTURE"))
+        let profiles = try store.loadProfilesWithVerifiedMigration()
+
+        XCTAssertEqual(profiles.first?.apiSessionKey, "PARTIAL_API_FIXTURE")
+        XCTAssertEqual(
+            secrets.values[locator(profileID, .apiSessionKey)],
+            "PARTIAL_API_FIXTURE",
+            "The credential belongs in secure storage once it is reachable"
+        )
+        XCTAssertTrue(store.profilesWithSessionOnlyCredentials.isEmpty)
+        XCTAssertFalse(
+            try persistedProfileText().contains("PARTIAL_API_FIXTURE")
+        )
     }
 
     func testReadFailureIsUnresolvedAndMetadataSaveDoesNotDeleteSecret() throws {
@@ -317,7 +358,7 @@ final class ProfileSecurityIntegrationTests: HostedAppTestCase {
     }
 
     @MainActor
-    func testCLIProfileUpdateSupersedesOnlyStaleCLIRetry() throws {
+    func testCLIProfileUpdateNeverLeavesUnrelatedRetriesOnDisk() throws {
         let profileID = UUID()
         var retry = ProfileCredentialMigrationRetry()
         retry.setValue("OLD_CLI_RETRY", for: .cliCredentialsJSON)
@@ -371,13 +412,20 @@ final class ProfileSecurityIntegrationTests: HostedAppTestCase {
         XCTAssertFalse(
             persistedAfterUpdate.contains("NEW_CLI_EXPLICIT")
         )
-        XCTAssertTrue(
+        // These used to be left sitting in preferences as plaintext until
+        // something happened to touch them. They are migrated instead.
+        XCTAssertFalse(
             persistedAfterUpdate.contains(
                 "UNRELATED_CLAUDE_RETRY"
             )
         )
-        XCTAssertTrue(
+        XCTAssertFalse(
             persistedAfterUpdate.contains("UNRELATED_API_RETRY")
+        )
+        // Secure storage refuses both fields in this fixture, so they are
+        // held in memory for the session instead of being parked on disk.
+        XCTAssertTrue(
+            store.profilesWithSessionOnlyCredentials.contains(profileID)
         )
 
         let relaunched = retain(
@@ -394,16 +442,14 @@ final class ProfileSecurityIntegrationTests: HostedAppTestCase {
             reloaded.cliCredentialsJSON,
             "NEW_CLI_EXPLICIT"
         )
-        XCTAssertEqual(
-            reloaded.credentialMigrationRetry.claudeSessionKey,
-            "UNRELATED_CLAUDE_RETRY"
-        )
-        XCTAssertEqual(
-            reloaded.credentialMigrationRetry.apiSessionKey,
-            "UNRELATED_API_RETRY"
-        )
-        XCTAssertNil(
-            reloaded.credentialMigrationRetry.cliCredentialsJSON
+        // Fail closed: a credential secure storage would never accept does
+        // not come back after a relaunch, and the user is asked to sign in
+        // again. The alternative was leaving it in cleartext on disk.
+        XCTAssertNil(reloaded.claudeSessionKey)
+        XCTAssertNil(reloaded.apiSessionKey)
+        XCTAssertTrue(
+            reloaded.credentialMigrationRetry.isEmpty,
+            "Nothing may be carried across a relaunch in preferences"
         )
     }
 

@@ -203,6 +203,11 @@ class ProfileManager: ObservableObject {
     @Published var isSwitchingProfile: Bool = false
     @Published private(set) var legacyMigrationPendingProfileID: UUID?
 
+    /// Profiles whose credential is held in memory because secure storage
+    /// refused it. These are lost at quit, so the UI has to say so — see the
+    /// popover banner, the Settings status card, and the quit-time guard.
+    @Published private(set) var sessionOnlyCredentialProfileIDs: Set<UUID> = []
+
     private let profileStore: ProfileStore
     private let historyService: any ProfileHistoryDeleting
     private let activationClaudeEffects: ProfileActivationClaudeEffects
@@ -242,12 +247,36 @@ class ProfileManager: ObservableObject {
                     .migrateClaudeProfileIfNeeded(to: $0)
             }
         self.now = now
+
+        let store = self.profileStore
+        sessionOnlyCredentialProfileIDs =
+            store.profilesWithSessionOnlyCredentials
+        store.sessionOnlySecretsDidChange = { [weak self] held in
+            guard let self else { return }
+            Task { @MainActor in
+                self.sessionOnlyCredentialProfileIDs = held
+            }
+        }
+    }
+
+    /// Re-attempts secure storage for held credentials. Returns true when
+    /// nothing is left being held for the requested scope.
+    @discardableResult
+    func retrySessionOnlyCredentialSave(profileID: UUID? = nil) -> Bool {
+        let cleared = profileStore.retrySessionOnlyPersistence(
+            profileID: profileID
+        )
+        sessionOnlyCredentialProfileIDs =
+            profileStore.profilesWithSessionOnlyCredentials
+        return cleared
     }
 
     // MARK: - Initialization
 
     func loadProfiles() {
         profiles = profileStore.loadProfiles()
+        sessionOnlyCredentialProfileIDs =
+            profileStore.profilesWithSessionOnlyCredentials
 
         // A pre-upgrade install has only the single legacy slot. Both
         // providers get a chance to claim it against their own candidates —

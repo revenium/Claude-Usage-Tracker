@@ -808,8 +808,12 @@ final class ProfileCurrentUsageIntegrationTests: HostedAppTestCase {
             let profileID = UUID()
             let claudeUsage = makeClaudeUsage(tokens: 64)
             let apiUsage = makeAPIUsage(spend: 305)
+            // The transaction commit is the second profiles_v3 write: the
+            // load-1 rewrite is the first, and load 2 no longer rewrites now
+            // that a refused replay scrubs the retry instead of leaving it on
+            // disk for another pass.
             let backing = SequencedProfileWriteFaultDefaults(
-                corruptProfileWrite: 3
+                corruptProfileWrite: 2
             )
             let secrets = MockSecretStore()
             var runtimeCredentialRetry =
@@ -889,9 +893,11 @@ final class ProfileCurrentUsageIntegrationTests: HostedAppTestCase {
             // Force metadata persistence to fail after the secure deletion,
             // the secure rollback write to fail once, and immediate usage
             // reconciliation to fail. The non-secret marker must survive.
-            // Two migration replay attempts and the subsequent secure
-            // rollback all fail, leaving the marker authoritative.
-            secrets.writeErrorCounts[component.secretField] = 3
+            // One migration replay attempt and the subsequent secure
+            // rollback both fail, leaving the marker authoritative. The
+            // transaction's own mutation is a delete, which spends no write
+            // budget.
+            secrets.writeErrorCounts[component.secretField] = 2
             usageFiles.saveError = TestFailure.expected
             let notificationRecorder =
                 CredentialChangeNotificationRecorder()
@@ -1479,7 +1485,7 @@ final class ProfileCurrentUsageIntegrationTests: HostedAppTestCase {
     }
 
     @MainActor
-    func testUnlinkPreservesUnrelatedRetryUntilRelaunchRecovery() throws {
+    func testUnlinkHoldsUnrelatedRefusedCredentialInMemoryNeverOnDisk() throws {
         for component in UnlinkComponent.allCases {
             let profileID = UUID()
             let targetSecret = "TARGET_\(component.markerValue)"
@@ -1508,9 +1514,8 @@ final class ProfileCurrentUsageIntegrationTests: HostedAppTestCase {
                 field: component.secretField
             )
             secrets.values[targetLocator] = targetSecret
-            // Unlink loads the profile twice before its transaction. Keep the
-            // unrelated retry pending for both loads, then allow relaunch to
-            // recover it.
+            // The first load fails the migration replay, the second fails the
+            // in-session self-heal; the third is allowed to succeed.
             secrets.writeErrorCounts[.cliCredentialsJSON] = 2
             let usageFiles = MockCurrentUsageFileStore()
             usageFiles.values[profileID] = ProfileCurrentUsage(
@@ -1528,11 +1533,33 @@ final class ProfileCurrentUsageIntegrationTests: HostedAppTestCase {
             try component.unlink(using: store, profileID: profileID)
 
             XCTAssertNil(secrets.values[targetLocator])
+            let cliLocator = ProfileSecretLocator(
+                profileID: profileID,
+                field: .cliCredentialsJSON
+            )
             let pendingText = try XCTUnwrap(
                 backing.data(forKey: "profiles_v3")
                     .flatMap { String(data: $0, encoding: .utf8) }
             )
-            XCTAssertTrue(pendingText.contains(unrelatedRetry))
+            // The core of the new contract: a credential secure storage
+            // refused is never written to preferences.
+            XCTAssertFalse(pendingText.contains(unrelatedRetry))
+            XCTAssertNil(secrets.values[cliLocator])
+            XCTAssertTrue(
+                store.profilesWithSessionOnlyCredentials.contains(profileID),
+                "Held in memory, usable now, and the UI has to be able to say so"
+            )
+
+            // Same process, next load: the self-heal writes it to secure
+            // storage once the store stops refusing.
+            let healed = try XCTUnwrap(
+                store.loadProfilesWithVerifiedMigration().first
+            )
+            XCTAssertEqual(healed.cliCredentialsJSON, unrelatedRetry)
+            XCTAssertEqual(secrets.values[cliLocator], unrelatedRetry)
+            XCTAssertFalse(
+                store.profilesWithSessionOnlyCredentials.contains(profileID)
+            )
 
             let relaunchedStore = retain(
                 ProfileStore(
@@ -1545,20 +1572,14 @@ final class ProfileCurrentUsageIntegrationTests: HostedAppTestCase {
                 relaunchedStore.loadProfilesWithVerifiedMigration().first
             )
 
+            // After a real relaunch the value is back from secure storage,
+            // not from preferences.
             XCTAssertNil(secrets.values[targetLocator])
             XCTAssertEqual(
                 relaunched.cliCredentialsJSON,
                 unrelatedRetry
             )
-            XCTAssertEqual(
-                secrets.values[
-                    ProfileSecretLocator(
-                        profileID: profileID,
-                        field: .cliCredentialsJSON
-                    )
-                ],
-                unrelatedRetry
-            )
+            XCTAssertEqual(secrets.values[cliLocator], unrelatedRetry)
             let recoveredText = try XCTUnwrap(
                 backing.data(forKey: "profiles_v3")
                     .flatMap { String(data: $0, encoding: .utf8) }
