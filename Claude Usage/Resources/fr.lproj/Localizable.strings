@@ -942,6 +942,9 @@
 "popover.banner.credentials_not_saved.retry" = "Réessayer l’enregistrement";
 "personal.connected_not_saved" = "Connecté — non enregistré";
 "personal.retry_save" = "Réessayer l’enregistrement";
+"quit.credentials_unsaved.title" = "Impossible d’enregistrer les identifiants";
+"quit.credentials_unsaved.body" = "En quittant, il faudra les saisir à nouveau.";
+"quit.credentials_unsaved.quit" = "Quitter quand même";
 
 /* ==================== */
 /* MARK: - Provider Parity */

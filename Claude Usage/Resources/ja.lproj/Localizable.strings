@@ -964,6 +964,9 @@
 "popover.banner.credentials_not_saved.retry" = "保存を再試行";
 "personal.connected_not_saved" = "接続済み — 未保存";
 "personal.retry_save" = "保存を再試行";
+"quit.credentials_unsaved.title" = "認証情報を保存できませんでした";
+"quit.credentials_unsaved.body" = "終了すると再入力が必要になります。";
+"quit.credentials_unsaved.quit" = "終了する";
 
 /* ==================== */
 /* MARK: - Provider Parity */

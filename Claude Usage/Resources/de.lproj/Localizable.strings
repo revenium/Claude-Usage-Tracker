@@ -964,6 +964,9 @@
 "popover.banner.credentials_not_saved.retry" = "Erneut speichern";
 "personal.connected_not_saved" = "Verbunden — nicht gespeichert";
 "personal.retry_save" = "Erneut speichern";
+"quit.credentials_unsaved.title" = "Anmeldedaten konnten nicht gespeichert werden";
+"quit.credentials_unsaved.body" = "Beim Beenden müssen sie erneut eingegeben werden.";
+"quit.credentials_unsaved.quit" = "Trotzdem beenden";
 
 /* ==================== */
 /* MARK: - Provider Parity */

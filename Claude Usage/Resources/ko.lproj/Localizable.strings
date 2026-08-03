@@ -938,6 +938,9 @@
 "popover.banner.credentials_not_saved.retry" = "저장 다시 시도";
 "personal.connected_not_saved" = "연결됨 — 저장되지 않음";
 "personal.retry_save" = "저장 다시 시도";
+"quit.credentials_unsaved.title" = "자격 증명을 저장하지 못했습니다";
+"quit.credentials_unsaved.body" = "종료하면 다시 입력해야 합니다.";
+"quit.credentials_unsaved.quit" = "그래도 종료";
 
 /* ==================== */
 /* MARK: - Provider Parity */

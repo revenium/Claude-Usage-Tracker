@@ -962,6 +962,9 @@
 "popover.banner.credentials_not_saved.retry" = "Riprova a salvare";
 "personal.connected_not_saved" = "Connesso — non salvato";
 "personal.retry_save" = "Riprova a salvare";
+"quit.credentials_unsaved.title" = "Impossibile salvare le credenziali";
+"quit.credentials_unsaved.body" = "Uscendo dovrai inserirle di nuovo.";
+"quit.credentials_unsaved.quit" = "Esci comunque";
 
 /* ==================== */
 /* MARK: - Provider Parity */

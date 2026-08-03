@@ -962,6 +962,9 @@
 "popover.banner.credentials_not_saved.retry" = "重试保存";
 "personal.connected_not_saved" = "已连接 — 未保存";
 "personal.retry_save" = "重试保存";
+"quit.credentials_unsaved.title" = "无法保存凭据";
+"quit.credentials_unsaved.body" = "退出后需要重新输入。";
+"quit.credentials_unsaved.quit" = "仍然退出";
 
 /* ==================== */
 /* MARK: - Provider Parity */

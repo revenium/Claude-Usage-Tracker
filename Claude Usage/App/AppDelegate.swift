@@ -290,6 +290,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     func applicationShouldTerminate(
         _ sender: NSApplication
     ) -> NSApplication.TerminateReply {
+        // Last moment a credential held in memory can still be saved.
+        if case .confirm(let accountNames) = quitCredentialOutcome(),
+           !confirmQuitLosingCredentials(accountNames: accountNames) {
+            return .terminateCancel
+        }
+
         guard let menuBarManager else {
             return .terminateNow
         }
@@ -301,6 +307,41 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             sender.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater
+    }
+
+    /// Makes one final write attempt, then asks the pure policy what to do.
+    private func quitCredentialOutcome() -> QuitCredentialGuard.Outcome {
+        let profileManager = providerUICompositionRoot.profileManager
+        guard !profileManager.sessionOnlyCredentialProfileIDs.isEmpty else {
+            return .terminate
+        }
+        // Rescuing them here is the best outcome: the user is never bothered.
+        profileManager.retrySessionOnlyCredentialSave()
+        return QuitCredentialGuard.outcome(
+            remaining: profileManager.sessionOnlyCredentialProfileIDs,
+            orderedProfiles: profileManager.profiles.map {
+                (id: $0.id, name: $0.name)
+            }
+        )
+    }
+
+    /// - Returns: true when the user accepts losing the credentials.
+    private func confirmQuitLosingCredentials(
+        accountNames: [String]
+    ) -> Bool {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "quit.credentials_unsaved.title".localized
+        alert.informativeText = accountNames.isEmpty
+            ? "quit.credentials_unsaved.body".localized
+            : accountNames.joined(separator: "\n")
+                + "\n\n"
+                + "quit.credentials_unsaved.body".localized
+        // No Retry button: the final write already ran, so offering one
+        // would be a lie.
+        alert.addButton(withTitle: "common.cancel".localized)
+        alert.addButton(withTitle: "quit.credentials_unsaved.quit".localized)
+        return alert.runModal() == .alertSecondButtonReturn
     }
 
     func applicationWillTerminate(_ notification: Notification) {

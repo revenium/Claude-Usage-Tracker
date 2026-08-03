@@ -1056,6 +1056,9 @@
 "popover.banner.credentials_not_saved.retry" = "Retry Save";
 "personal.connected_not_saved" = "Connected — not saved";
 "personal.retry_save" = "Retry Save";
+"quit.credentials_unsaved.title" = "Credentials couldn’t be saved";
+"quit.credentials_unsaved.body" = "Quitting will require entering them again.";
+"quit.credentials_unsaved.quit" = "Quit Anyway";
 
 /* ==================== */
 /* MARK: - Provider Parity */
