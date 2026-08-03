@@ -1506,12 +1506,11 @@ final class ProfileSecurityIntegrationTests: HostedAppTestCase {
         XCTAssertNil(secrets.values[locator(profileID, .claudeSessionKey)])
     }
 
-    /// Unlink recovery must drop the hold even when storage has nothing to
-    /// delete. A session-only credential is never in storage, so it presents
-    /// as `.absent` — the one state that skips `replaceSecret`, which was
-    /// the only place dropping the hold.
+    /// The inline unlink path. A session-only credential is never in
+    /// storage, so removing it is not a "change" and the transaction never
+    /// calls `replaceSecret` — which was the only place dropping the hold.
     @MainActor
-    func testUnlinkRecoveryDiscardsAHoldStorageNeverReceived() throws {
+    func testInlineUnlinkDiscardsAHoldStorageNeverReceived() throws {
         let profileID = UUID()
         let secrets = MockProfileSecretStore()
         let store = retain(
@@ -1547,6 +1546,48 @@ final class ProfileSecurityIntegrationTests: HostedAppTestCase {
         XCTAssertNil(
             reloaded.claudeSessionKey,
             "A later load must not overlay the unlinked credential"
+        )
+    }
+
+    /// The recovery path, which the inline test cannot reach. Forcing the
+    /// transaction's metadata write to fail sends the unlink through
+    /// `recoverPendingCredentialUsageUnlink`, whose forward-completion
+    /// branch is the second place the hold has to be dropped.
+    @MainActor
+    func testUnlinkRecoveryDiscardsAHoldStorageNeverReceived() throws {
+        let profileID = UUID()
+        let secrets = MockProfileSecretStore()
+        let backing = FaultingProfileDefaults()
+        let store = retain(
+            ProfileStore(defaults: backing, secretStore: secrets)
+        )
+        var profile = Profile(id: profileID, name: "Held")
+        profile.organizationId = "org"
+        try seedProfilesForTesting([profile], in: store)
+
+        secrets.writeErrors[.claudeSessionKey] = TestError.expected
+        var credentials = ProfileCredentials()
+        credentials.claudeSessionKey = "HELD_THEN_RECOVERED"
+        credentials.organizationId = "org"
+        try store.saveProfileCredentialsAcceptingSessionOnly(
+            profileID,
+            credentials: credentials
+        )
+        XCTAssertTrue(
+            store.profilesWithSessionOnlyCredentials.contains(profileID)
+        )
+
+        // Fail the transaction's metadata write so the catch path runs.
+        backing.corruptNextProfileWrite = true
+        _ = try? store.unlinkClaudeAI(for: profileID)
+
+        XCTAssertTrue(
+            store.profilesWithSessionOnlyCredentials.isEmpty,
+            "Forward completion is the removal intent; the hold must go"
+        )
+        XCTAssertNil(
+            backing.data(forKey: "profileCredentialUsageUnlinks_v1"),
+            "The marker must not outlive a completed unlink"
         )
     }
 
