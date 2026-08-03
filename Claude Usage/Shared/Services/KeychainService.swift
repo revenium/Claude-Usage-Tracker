@@ -14,6 +14,22 @@ nonisolated protocol ProfileKeychainBackend {
     func upsert(_ data: Data, service: String, account: String) throws
     func read(service: String, account: String) throws -> Data?
     func remove(service: String, account: String) throws
+
+    /// Reads without the upgrade-path recovery.
+    ///
+    /// Deletion verification must use this: a plain `read` may pull a copy out
+    /// of the other Keychain and put it back, which would let a delete
+    /// resurrect the credential it was asked to destroy.
+    func readIgnoringRecovery(service: String, account: String) throws -> Data?
+}
+
+extension ProfileKeychainBackend {
+    func readIgnoringRecovery(
+        service: String,
+        account: String
+    ) throws -> Data? {
+        try read(service: service, account: account)
+    }
 }
 
 /// Which macOS Keychain implementation profile credentials live in.
@@ -282,6 +298,27 @@ nonisolated struct SecurityProfileKeychainBackend: ProfileKeychainBackend {
     func remove(service: String, account: String) throws {
         try withEntitlementFallback {
             try remove(service: service, account: account, domain: $0)
+        }
+
+        // Delete means gone from anywhere this app could have put it: a
+        // credential left in the file Keychain by an earlier ad-hoc signed
+        // install is exactly what the recovery path would find again.
+        //
+        // Only in this direction. Resolving to `.file` means the
+        // data-protection Keychain refused this binary outright, so it can
+        // hold nothing to sweep.
+        guard resolver.domain == .dataProtection else {
+            return
+        }
+        try remove(service: service, account: account, domain: .file)
+    }
+
+    func readIgnoringRecovery(
+        service: String,
+        account: String
+    ) throws -> Data? {
+        try withEntitlementFallback {
+            try read(service: service, account: account, domain: $0)
         }
     }
 
@@ -676,7 +713,13 @@ nonisolated final class KeychainService {
             account: account(for: locator)
         )
 
-        guard try read(locator) == .absent else {
+        // Deliberately not `read(_:)`: that one can recover a copy from the
+        // other Keychain, which would turn this verification into a
+        // resurrection of the credential just deleted.
+        guard try profileBackend.readIgnoringRecovery(
+            service: Self.profileSecretsService,
+            account: account(for: locator)
+        ) == nil else {
             throw ProfileSecretStoreError.deletionVerificationFailed(locator)
         }
     }

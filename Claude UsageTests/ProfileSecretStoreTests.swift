@@ -523,6 +523,83 @@ final class EntitlementFallbackTests: XCTestCase {
         )
     }
 
+    /// A delete must not be undoable by the recovery path. Reachable after an
+    /// interrupted profile deletion: profiles flagged `deletionInProgress`
+    /// skip the launch warm-up read, so the ledger is cold on the retry and
+    /// the verification read is the first thing to look for that credential.
+    func testDeletingACredentialCannotResurrectItFromTheOtherKeychain() throws {
+        let operations = SpyKeychainItemOperations()
+        operations.store(Data("stranded".utf8), domain: .file,
+                         service: service, account: account)
+        let (backend, _) = makeBackend(operations)
+
+        try backend.remove(service: service, account: account)
+
+        XCTAssertNil(
+            operations.value(domain: .file,
+                             service: service, account: account),
+            "The copy in the other Keychain must be removed too"
+        )
+        XCTAssertNil(
+            operations.value(domain: .dataProtection,
+                             service: service, account: account),
+            "It must certainly not have been migrated back in"
+        )
+        XCTAssertNil(
+            try backend.readIgnoringRecovery(
+                service: service,
+                account: account
+            )
+        )
+    }
+
+    func testDeleteVerificationDoesNotTriggerRecovery() throws {
+        let operations = SpyKeychainItemOperations()
+        operations.store(Data("stranded".utf8), domain: .file,
+                         service: service, account: account)
+        let (backend, _) = makeBackend(operations)
+
+        _ = try backend.readIgnoringRecovery(
+            service: service,
+            account: account
+        )
+
+        XCTAssertEqual(
+            operations.value(domain: .file,
+                             service: service, account: account),
+            Data("stranded".utf8),
+            "A recovery-free read must not move anything"
+        )
+        XCTAssertNil(
+            operations.value(domain: .dataProtection,
+                             service: service, account: account)
+        )
+    }
+
+    /// An unentitled build could never have written to the data-protection
+    /// Keychain, so being refused there must not fail the delete.
+    func testDeleteSucceedsWhenTheOtherKeychainIsUnreachable() throws {
+        let operations = SpyKeychainItemOperations()
+        operations.refuseDataProtection = true
+        let (backend, _) = makeBackend(
+            operations,
+            probe: { errSecMissingEntitlement }
+        )
+        try backend.upsert(
+            Data("secret".utf8),
+            service: service,
+            account: account
+        )
+
+        XCTAssertNoThrow(
+            try backend.remove(service: service, account: account)
+        )
+        XCTAssertNil(
+            operations.value(domain: .file,
+                             service: service, account: account)
+        )
+    }
+
     func testReadsFollowAWriteTriggeredDowngrade() throws {
         let operations = SpyKeychainItemOperations()
         operations.refuseDataProtection = true
