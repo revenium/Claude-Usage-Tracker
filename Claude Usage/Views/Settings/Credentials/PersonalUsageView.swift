@@ -647,25 +647,20 @@ struct ConfirmStep: View {
             // failure had nowhere to surface: the button simply stopped
             // spinning and the credential was never stored.
             if case .error(let message) = wizardState.validationState {
-                HStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundColor(.red)
-                        .font(.system(size: 14))
-                    Text(message)
-                        .font(.system(size: 12))
-                        .foregroundColor(.red)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .padding(10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.red.opacity(0.08))
-                .cornerRadius(6)
+                WizardStatusBox(message: message, type: .error)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             // Navigation buttons
             HStack(spacing: 10) {
                 Button(action: {
                     withAnimation {
+                        // A save failure belongs to the attempt that produced
+                        // it. Leaving the step retires it, so returning here
+                        // does not accuse a save that never ran.
+                        if case .error = wizardState.validationState {
+                            wizardState.validationState = .idle
+                        }
                         wizardState.currentStep = .selectOrg
                     }
                 }) {

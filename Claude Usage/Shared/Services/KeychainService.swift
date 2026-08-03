@@ -127,12 +127,57 @@ nonisolated final class ProfileKeychainDomainResolver: @unchecked Sendable {
     }
 }
 
+/// The four `SecItem*` entry points, behind a seam.
+///
+/// Without it the entitlement fallback below could only be exercised on a
+/// machine whose Keychain happens to refuse the operation, which is the one
+/// case no test can arrange.
+nonisolated protocol KeychainItemOperations {
+    func add(_ query: [String: Any]) -> OSStatus
+    func update(_ query: [String: Any], attributes: [String: Any]) -> OSStatus
+    func delete(_ query: [String: Any]) -> OSStatus
+    func copyMatching(
+        _ query: [String: Any],
+        into result: inout AnyObject?
+    ) -> OSStatus
+}
+
+nonisolated struct SecurityKeychainItemOperations: KeychainItemOperations {
+    func add(_ query: [String: Any]) -> OSStatus {
+        SecItemAdd(query as CFDictionary, nil)
+    }
+
+    func update(
+        _ query: [String: Any],
+        attributes: [String: Any]
+    ) -> OSStatus {
+        SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+    }
+
+    func delete(_ query: [String: Any]) -> OSStatus {
+        SecItemDelete(query as CFDictionary)
+    }
+
+    func copyMatching(
+        _ query: [String: Any],
+        into result: inout AnyObject?
+    ) -> OSStatus {
+        SecItemCopyMatching(query as CFDictionary, &result)
+    }
+}
+
 /// Production backend for app-owned per-profile credentials.
 nonisolated struct SecurityProfileKeychainBackend: ProfileKeychainBackend {
     private let resolver: ProfileKeychainDomainResolver
+    private let operations: any KeychainItemOperations
 
-    init(resolver: ProfileKeychainDomainResolver = .shared) {
+    init(
+        resolver: ProfileKeychainDomainResolver = .shared,
+        operations: any KeychainItemOperations =
+            SecurityKeychainItemOperations()
+    ) {
         self.resolver = resolver
+        self.operations = operations
     }
 
     func upsert(_ data: Data, service: String, account: String) throws {
@@ -176,13 +221,13 @@ nonisolated struct SecurityProfileKeychainBackend: ProfileKeychainBackend {
         account: String,
         domain: ProfileKeychainDomain
     ) throws {
-        let updateStatus = SecItemUpdate(
+        let updateStatus = operations.update(
             Self.itemQuery(
                 service: service,
                 account: account,
                 domain: domain
-            ) as CFDictionary,
-            [kSecValueData as String: data] as CFDictionary
+            ),
+            attributes: [kSecValueData as String: data]
         )
 
         if updateStatus == errSecSuccess {
@@ -192,14 +237,13 @@ nonisolated struct SecurityProfileKeychainBackend: ProfileKeychainBackend {
             throw KeychainError.saveFailed(status: updateStatus)
         }
 
-        let addStatus = SecItemAdd(
+        let addStatus = operations.add(
             Self.addQuery(
                 data: data,
                 service: service,
                 account: account,
                 domain: domain
-            ) as CFDictionary,
-            nil
+            )
         )
         if addStatus == errSecSuccess {
             return
@@ -207,13 +251,13 @@ nonisolated struct SecurityProfileKeychainBackend: ProfileKeychainBackend {
 
         // Another writer may have inserted the item between update and add.
         if addStatus == errSecDuplicateItem {
-            let retryStatus = SecItemUpdate(
+            let retryStatus = operations.update(
                 Self.itemQuery(
                     service: service,
                     account: account,
                     domain: domain
-                ) as CFDictionary,
-                [kSecValueData as String: data] as CFDictionary
+                ),
+                attributes: [kSecValueData as String: data]
             )
             guard retryStatus == errSecSuccess else {
                 throw KeychainError.saveFailed(status: retryStatus)
@@ -230,13 +274,13 @@ nonisolated struct SecurityProfileKeychainBackend: ProfileKeychainBackend {
         domain: ProfileKeychainDomain
     ) throws -> Data? {
         var result: AnyObject?
-        let status = SecItemCopyMatching(
+        let status = operations.copyMatching(
             Self.readQuery(
                 service: service,
                 account: account,
                 domain: domain
-            ) as CFDictionary,
-            &result
+            ),
+            into: &result
         )
 
         if status == errSecItemNotFound {
@@ -256,12 +300,12 @@ nonisolated struct SecurityProfileKeychainBackend: ProfileKeychainBackend {
         account: String,
         domain: ProfileKeychainDomain
     ) throws {
-        let status = SecItemDelete(
+        let status = operations.delete(
             Self.itemQuery(
                 service: service,
                 account: account,
                 domain: domain
-            ) as CFDictionary
+            )
         )
         guard status == errSecSuccess || status == errSecItemNotFound else {
             throw KeychainError.deleteFailed(status: status)

@@ -1330,6 +1330,12 @@ struct ConfirmStepSetup: View {
             HStack {
                 Button("common.back".localized) {
                     withAnimation {
+                        // A save failure belongs to the attempt that produced
+                        // it. Leaving the step retires it, so returning here
+                        // does not accuse a save that never ran.
+                        if case .error = wizardState.validationState {
+                            wizardState.validationState = .idle
+                        }
                         wizardState.currentStep = .selectOrg
                     }
                 }

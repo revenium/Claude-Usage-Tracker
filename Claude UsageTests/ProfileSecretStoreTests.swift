@@ -326,6 +326,147 @@ final class ProfileKeychainDomainResolverTests: XCTestCase {
     }
 }
 
+/// Covers the case the probe cannot predict: it said the data-protection
+/// Keychain was fine, and a real operation later disagreed.
+final class EntitlementFallbackTests: XCTestCase {
+    private let service = "service"
+    private let account = "account"
+
+    func testLiveRejectionRetriesAgainstTheFileKeychain() throws {
+        let operations = SpyKeychainItemOperations()
+        operations.refuseDataProtection = true
+        let resolver = ProfileKeychainDomainResolver { errSecSuccess }
+        let backend = SecurityProfileKeychainBackend(
+            resolver: resolver,
+            operations: operations
+        )
+
+        try backend.upsert(
+            Data("secret".utf8),
+            service: service,
+            account: account
+        )
+
+        XCTAssertEqual(
+            operations.attemptedDomains,
+            [.dataProtection, .file],
+            "The write must be retried against the file Keychain"
+        )
+        XCTAssertEqual(resolver.domain, .file)
+    }
+
+    func testDowngradeSticksForSubsequentOperations() throws {
+        let operations = SpyKeychainItemOperations()
+        operations.refuseDataProtection = true
+        let backend = SecurityProfileKeychainBackend(
+            resolver: ProfileKeychainDomainResolver { errSecSuccess },
+            operations: operations
+        )
+
+        try backend.upsert(
+            Data("secret".utf8),
+            service: service,
+            account: account
+        )
+        operations.attemptedDomains.removeAll()
+        _ = try backend.read(service: service, account: account)
+        try backend.remove(service: service, account: account)
+
+        XCTAssertEqual(
+            operations.attemptedDomains,
+            [.file, .file],
+            "Later operations must not re-try the rejected Keychain"
+        )
+    }
+
+    func testUnrelatedFailuresAreNotRetried() {
+        let operations = SpyKeychainItemOperations()
+        operations.forcedStatus = errSecAuthFailed
+        let backend = SecurityProfileKeychainBackend(
+            resolver: ProfileKeychainDomainResolver { errSecSuccess },
+            operations: operations
+        )
+
+        XCTAssertThrowsError(
+            try backend.upsert(
+                Data("secret".utf8),
+                service: service,
+                account: account
+            )
+        )
+        XCTAssertEqual(operations.attemptedDomains, [.dataProtection])
+    }
+
+    func testReadsFallBackToo() throws {
+        let operations = SpyKeychainItemOperations()
+        operations.refuseDataProtection = true
+        let backend = SecurityProfileKeychainBackend(
+            resolver: ProfileKeychainDomainResolver { errSecSuccess },
+            operations: operations
+        )
+
+        _ = try backend.read(service: service, account: account)
+
+        XCTAssertEqual(
+            operations.attemptedDomains,
+            [.dataProtection, .file]
+        )
+    }
+}
+
+/// Records which Keychain each call was aimed at, and can refuse the
+/// data-protection one the way an ad-hoc signed binary is refused.
+private final class SpyKeychainItemOperations: KeychainItemOperations {
+    var refuseDataProtection = false
+    /// Applied to every call regardless of domain.
+    var forcedStatus: OSStatus?
+    var attemptedDomains: [ProfileKeychainDomain] = []
+
+    private func domain(of query: [String: Any]) -> ProfileKeychainDomain {
+        query[kSecUseDataProtectionKeychain as String] as? Bool == true
+            ? .dataProtection
+            : .file
+    }
+
+    private func status(for query: [String: Any]) -> OSStatus? {
+        let domain = domain(of: query)
+        attemptedDomains.append(domain)
+        if let forcedStatus {
+            return forcedStatus
+        }
+        if refuseDataProtection && domain == .dataProtection {
+            return errSecMissingEntitlement
+        }
+        return nil
+    }
+
+    func add(_ query: [String: Any]) -> OSStatus {
+        status(for: query) ?? errSecSuccess
+    }
+
+    func update(
+        _ query: [String: Any],
+        attributes: [String: Any]
+    ) -> OSStatus {
+        status(for: query) ?? errSecSuccess
+    }
+
+    func delete(_ query: [String: Any]) -> OSStatus {
+        status(for: query) ?? errSecSuccess
+    }
+
+    func copyMatching(
+        _ query: [String: Any],
+        into result: inout AnyObject?
+    ) -> OSStatus {
+        if let status = status(for: query) {
+            return status
+        }
+        result = nil
+        return errSecItemNotFound
+    }
+}
+
 /// Exercises the real Security framework in whatever security context this
 /// build happens to run in.
 ///
