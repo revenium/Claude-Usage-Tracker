@@ -1243,6 +1243,128 @@ final class ProfileSecurityIntegrationTests: HostedAppTestCase {
         )
     }
 
+    // MARK: - Adoption debt lifecycle
+
+    /// (c) The whole cycle: adopt at decode, record the debt, let the
+    /// migration loop secure the value, rewrite the plist, clear the debt.
+    @MainActor
+    func testAdoptionSecuresTheValueAndScrubsTheStoredPlaintext() throws {
+        let profileID = UUID()
+        seedLegacyProfile(
+            id: profileID,
+            claude: "LIFECYCLE_CLAUDE",
+            api: "LIFECYCLE_API",
+            cli: "LIFECYCLE_CLI"
+        )
+        let secrets = MockProfileSecretStore()
+        let store = retain(
+            ProfileStore(defaults: defaults, secretStore: secrets)
+        )
+
+        let profiles = try store.loadProfilesWithVerifiedMigration()
+
+        XCTAssertEqual(profiles.first?.claudeSessionKey, "LIFECYCLE_CLAUDE")
+        XCTAssertEqual(
+            secrets.values[locator(profileID, .claudeSessionKey)],
+            "LIFECYCLE_CLAUDE"
+        )
+        let persisted = try persistedProfileText()
+        XCTAssertFalse(persisted.contains("LIFECYCLE_CLAUDE"))
+        XCTAssertFalse(persisted.contains("LIFECYCLE_API"))
+        XCTAssertFalse(persisted.contains("LIFECYCLE_CLI"))
+        XCTAssertTrue(
+            store.profilesWithSessionOnlyCredentials.isEmpty,
+            "Secured, so nothing should still be held"
+        )
+    }
+
+    /// (b) A value carried by the adoption debt must light the same Phase 0
+    /// machinery a refused write does — verified, not assumed, since the
+    /// banner and quit guard are the only things standing between the user
+    /// and silent loss.
+    @MainActor
+    func testDebtHeldValueDrivesTheSessionOnlyMachinery() throws {
+        let profileID = UUID()
+        seedLegacyProfile(
+            id: profileID,
+            claude: "MACHINERY_CLAUDE",
+            api: "MACHINERY_API",
+            cli: "MACHINERY_CLI"
+        )
+        let secrets = MockProfileSecretStore()
+        secrets.writeErrors[.claudeSessionKey] = TestError.expected
+        let store = retain(
+            ProfileStore(defaults: defaults, secretStore: secrets)
+        )
+
+        _ = try store.loadProfilesWithVerifiedMigration()
+
+        XCTAssertTrue(
+            store.profilesWithSessionOnlyCredentials.contains(profileID),
+            "The banner reads off exactly this set"
+        )
+        XCTAssertEqual(
+            QuitCredentialGuard.outcome(
+                remaining: store.profilesWithSessionOnlyCredentials,
+                orderedProfiles: [(id: profileID, name: "Legacy")]
+            ),
+            .confirm(accountNames: ["Legacy"]),
+            "Quitting must warn about a legacy value that never got secured"
+        )
+    }
+
+    /// (a) The crash window: adopted, but the launch died before the value
+    /// was secured or the plist rewritten. The plaintext is still on disk, so
+    /// the next launch must adopt it identically rather than lose it.
+    @MainActor
+    func testInterruptedAdoptionIsRepeatedIdenticallyOnTheNextLaunch() throws {
+        let profileID = UUID()
+        seedLegacyProfile(
+            id: profileID,
+            claude: "CRASH_CLAUDE",
+            api: "CRASH_API",
+            cli: "CRASH_CLI"
+        )
+        let secrets = MockProfileSecretStore()
+        secrets.writeErrors[.claudeSessionKey] = TestError.expected
+        secrets.writeErrors[.apiSessionKey] = TestError.expected
+        secrets.writeErrors[.cliCredentialsJSON] = TestError.expected
+        let backing = FaultingProfileDefaults()
+        backing.storage["profiles_v3"] = defaults.data(forKey: "profiles_v3")
+        backing.corruptNextProfileWrite = true
+        let interrupted = retain(
+            ProfileStore(defaults: backing, secretStore: secrets)
+        )
+
+        // The rewrite is corrupted, so the launch cannot complete.
+        _ = try? interrupted.loadProfilesWithVerifiedMigration()
+
+        // Nothing was secured and nothing was scrubbed, so the value must
+        // still be recoverable from disk.
+        let stillStored = try XCTUnwrap(
+            backing.data(forKey: "profiles_v3")
+                .flatMap { String(data: $0, encoding: .utf8) }
+        )
+        XCTAssertTrue(stillStored.contains("CRASH_CLAUDE"))
+
+        // Next launch, with secure storage working again.
+        secrets.writeErrors.removeAll()
+        let relaunched = retain(
+            ProfileStore(defaults: backing, secretStore: secrets)
+        )
+        let recovered = try XCTUnwrap(
+            relaunched.loadProfilesWithVerifiedMigration().first
+        )
+
+        XCTAssertEqual(recovered.claudeSessionKey, "CRASH_CLAUDE")
+        XCTAssertEqual(
+            secrets.values[locator(profileID, .claudeSessionKey)],
+            "CRASH_CLAUDE",
+            "Zero loss across the crash window"
+        )
+        XCTAssertTrue(relaunched.profilesWithSessionOnlyCredentials.isEmpty)
+    }
+
     // MARK: - Opt-in session-only save (setup wizard's explicit choice)
 
     /// The default save path fails closed and loud. This one exists only for
