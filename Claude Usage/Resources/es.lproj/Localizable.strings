@@ -936,6 +936,10 @@
 
 "error.storage_write_failed" = "No se pudieron guardar los datos de uso";
 "error.storage_write_failed.suggestion" = "Inténtalo de nuevo. Si el problema continúa, comprueba que la aplicación tenga permiso para escribir en su carpeta de datos.";
+"error.credential_storage_unavailable" = "Claude Usage Tracker no puede usar el llavero de macOS";
+"error.credential_storage_unavailable.suggestion" = "Esta copia de Claude Usage Tracker no está firmada con un grupo de acceso al llavero, por lo que macOS le impide guardar credenciales. Instala la versión firmada desde la página de Releases del proyecto y vuelve a intentarlo.";
+"error.credential_storage_failed" = "No se pudo guardar tu clave de sesión en el llavero de macOS";
+"error.credential_storage_failed.suggestion" = "Tus ajustes actuales no se modificaron. Comprueba que tu llavero de inicio de sesión esté desbloqueado en Acceso a Llaveros y vuelve a intentarlo.";
 
 /* ==================== */
 /* MARK: - Provider Parity */

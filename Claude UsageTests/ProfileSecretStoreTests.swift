@@ -199,12 +199,247 @@ final class ProfileSecretStoreTests: XCTestCase {
         )
     }
 
+    func testFileDomainQueriesOmitDataProtectionKeychain() {
+        let service = "service"
+        let account = "account"
+        let item = SecurityProfileKeychainBackend.itemQuery(
+            service: service,
+            account: account,
+            domain: .file
+        )
+        let add = SecurityProfileKeychainBackend.addQuery(
+            data: Data("value".utf8),
+            service: service,
+            account: account,
+            domain: .file
+        )
+        let read = SecurityProfileKeychainBackend.readQuery(
+            service: service,
+            account: account,
+            domain: .file
+        )
+
+        XCTAssertNil(item[kSecUseDataProtectionKeychain as String])
+        XCTAssertNil(add[kSecUseDataProtectionKeychain as String])
+        XCTAssertNil(read[kSecUseDataProtectionKeychain as String])
+        // Data-protection accessibility classes do not apply to the file
+        // Keychain and must not be sent to it.
+        XCTAssertNil(add[kSecAttrAccessible as String])
+        XCTAssertEqual(add[kSecAttrSynchronizable as String] as? Bool, false)
+        XCTAssertEqual(read[kSecReturnData as String] as? Bool, true)
+        XCTAssertEqual(item[kSecAttrService as String] as? String, service)
+        XCTAssertEqual(item[kSecAttrAccount as String] as? String, account)
+    }
+
     private func makeLocator(_ field: ProfileSecretField) -> ProfileSecretLocator {
         ProfileSecretLocator(profileID: profileID, field: field)
     }
 
     private func account(_ field: ProfileSecretField) -> String {
         "\(profileID.uuidString).\(field.rawValue)"
+    }
+}
+
+/// A build without a Keychain access group — an ad-hoc signed or re-signed
+/// copy — is refused by the data-protection Keychain on every write *and* on
+/// every delete, which is what made the failure unrecoverable rather than
+/// merely unsuccessful.
+final class ProfileKeychainDomainResolverTests: XCTestCase {
+    func testMissingEntitlementResolvesToTheFileKeychain() {
+        let resolver = ProfileKeychainDomainResolver {
+            errSecMissingEntitlement
+        }
+
+        XCTAssertEqual(resolver.domain, .file)
+    }
+
+    func testSuccessfulProbeKeepsTheDataProtectionKeychain() {
+        let resolver = ProfileKeychainDomainResolver { errSecSuccess }
+
+        XCTAssertEqual(resolver.domain, .dataProtection)
+    }
+
+    func testUnrelatedProbeFailureDoesNotMoveCredentials() {
+        // A locked Keychain is a transient condition. Moving the credentials
+        // to a different Keychain because of it would strand them.
+        let resolver = ProfileKeychainDomainResolver {
+            errSecInteractionNotAllowed
+        }
+
+        XCTAssertEqual(resolver.domain, .dataProtection)
+    }
+
+    func testDomainIsProbedOnlyOnce() {
+        var probeCount = 0
+        let resolver = ProfileKeychainDomainResolver {
+            probeCount += 1
+            return errSecSuccess
+        }
+
+        _ = resolver.domain
+        _ = resolver.domain
+        _ = resolver.domain
+
+        XCTAssertEqual(probeCount, 1)
+    }
+
+    func testLiveRejectionDowngradesPermanently() {
+        let resolver = ProfileKeychainDomainResolver { errSecSuccess }
+        XCTAssertEqual(resolver.domain, .dataProtection)
+
+        resolver.downgradeToFileKeychain()
+
+        XCTAssertEqual(resolver.domain, .file)
+    }
+
+    func testDowngradeBeforeFirstProbeSurvivesTheProbe() {
+        let resolver = ProfileKeychainDomainResolver { errSecSuccess }
+
+        resolver.downgradeToFileKeychain()
+
+        XCTAssertEqual(resolver.domain, .file)
+    }
+
+    func testMissingEntitlementIsDistinguishedFromOtherFailures() {
+        XCTAssertTrue(
+            KeychainError.saveFailed(status: errSecMissingEntitlement)
+                .isMissingEntitlement
+        )
+        XCTAssertTrue(
+            KeychainError.deleteFailed(status: errSecMissingEntitlement)
+                .isMissingEntitlement
+        )
+        XCTAssertFalse(
+            KeychainError.saveFailed(status: errSecItemNotFound)
+                .isMissingEntitlement
+        )
+        XCTAssertFalse(KeychainError.invalidData.isMissingEntitlement)
+    }
+
+    func testKeychainErrorsExplainTheStatus() {
+        let description = KeychainError.saveFailed(
+            status: errSecMissingEntitlement
+        ).localizedDescription
+
+        XCTAssertTrue(description.contains("\(errSecMissingEntitlement)"))
+        XCTAssertTrue(description.contains("errSecMissingEntitlement"))
+    }
+}
+
+/// Exercises the real Security framework in whatever security context this
+/// build happens to run in.
+///
+/// The test host is ad-hoc signed and carries no Keychain access group, which
+/// is exactly the situation a locally built or re-signed copy of the app is in
+/// — and the situation in which every data-protection write and delete used to
+/// fail with `errSecMissingEntitlement`.
+final class ProfileKeychainBackendIntegrationTests: XCTestCase {
+    private let service = "com.claudeusagetracker.tests.profile-credentials"
+    private let account = "round-trip"
+    private let backend = SecurityProfileKeychainBackend()
+
+    override func tearDown() {
+        try? backend.remove(service: service, account: account)
+        super.tearDown()
+    }
+
+    func testResolvedDomainMatchesWhatSecurityActuallyAllows() {
+        let probeStatus =
+            ProfileKeychainDomainResolver.probeDataProtectionKeychain()
+        let expected: ProfileKeychainDomain =
+            probeStatus == errSecMissingEntitlement ? .file : .dataProtection
+
+        XCTAssertEqual(ProfileKeychainDomainResolver().domain, expected)
+    }
+
+    func testCredentialRoundTripSucceedsInThisBuildsSecurityContext() throws {
+        let secret = Data("integration-secret".utf8)
+
+        do {
+            try backend.upsert(secret, service: service, account: account)
+        } catch let error as KeychainError where error.status
+            == errSecInteractionNotAllowed || error.status == errSecNotAvailable {
+            throw XCTSkip(
+                "No usable Keychain in this environment: "
+                    + error.localizedDescription
+            )
+        }
+
+        XCTAssertEqual(
+            try backend.read(service: service, account: account),
+            secret
+        )
+
+        let updated = Data("rotated-secret".utf8)
+        try backend.upsert(updated, service: service, account: account)
+        XCTAssertEqual(
+            try backend.read(service: service, account: account),
+            updated
+        )
+
+        // The rollback path the setup wizard depends on: a delete has to be
+        // able to undo a write, in the same Keychain the write landed in.
+        try backend.remove(service: service, account: account)
+        XCTAssertNil(try backend.read(service: service, account: account))
+    }
+}
+
+/// Credential storage failures used to reach the setup wizard as `E9999` with
+/// the internal transaction wording and no recovery advice.
+final class CredentialStorageErrorMappingTests: XCTestCase {
+    private let locator = ProfileSecretLocator(
+        profileID: UUID(),
+        field: .claudeSessionKey
+    )
+
+    func testMissingEntitlementMapsToAnActionableCode() {
+        let error = AppError.wrap(
+            KeychainError.saveFailed(status: errSecMissingEntitlement)
+        )
+
+        XCTAssertEqual(error.code, .credentialStorageUnavailable)
+        XCTAssertNotNil(error.recoverySuggestion)
+        XCTAssertFalse(error.isRecoverable)
+    }
+
+    func testOtherKeychainFailuresAreRecoverable() {
+        let error = AppError.wrap(
+            KeychainError.loadFailed(status: errSecInteractionNotAllowed)
+        )
+
+        XCTAssertEqual(error.code, .credentialStorageFailed)
+        XCTAssertTrue(error.isRecoverable)
+    }
+
+    func testRollbackFailureIsNoLongerUnknown() {
+        let error = AppError.wrap(
+            ProfileStoreError.credentialRollbackFailed(
+                UUID(),
+                [.claudeSessionKey],
+                metadata: false
+            )
+        )
+
+        XCTAssertEqual(error.code, .credentialStorageFailed)
+        XCTAssertNotEqual(error.code, .unknown)
+        XCTAssertNotNil(error.recoverySuggestion)
+    }
+
+    func testVerificationFailureIsCategorisedAsCredentialStorage() {
+        let error = AppError.wrap(
+            ProfileSecretStoreError.writeVerificationFailed(locator)
+        )
+
+        XCTAssertEqual(error.code, .credentialStorageFailed)
+        XCTAssertEqual(error.code.category, .dataStorage)
+    }
+
+    func testUnrelatedProfileStoreErrorsAreLeftAlone() {
+        let error = AppError.wrap(
+            ProfileStoreError.profileWriteVerificationFailed
+        )
+
+        XCTAssertEqual(error.code, .unknown)
     }
 }
 

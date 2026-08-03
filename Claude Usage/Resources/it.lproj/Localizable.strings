@@ -953,6 +953,10 @@
 
 "error.storage_write_failed" = "Impossibile salvare i dati di utilizzo";
 "error.storage_write_failed.suggestion" = "Riprova. Se il problema persiste, verifica che l'app disponga dell'autorizzazione per scrivere nella cartella dei dati.";
+"error.credential_storage_unavailable" = "Claude Usage Tracker non può usare il portachiavi di macOS";
+"error.credential_storage_unavailable.suggestion" = "Questa copia di Claude Usage Tracker non è firmata con un gruppo di accesso al portachiavi, quindi macOS le impedisce di salvare le credenziali. Installa la versione firmata dalla pagina Releases del progetto e riprova.";
+"error.credential_storage_failed" = "Impossibile salvare la chiave di sessione nel portachiavi di macOS";
+"error.credential_storage_failed.suggestion" = "Le impostazioni esistenti non sono state modificate. Verifica che il portachiavi di accesso sia sbloccato in Accesso Portachiavi e riprova.";
 
 /* ==================== */
 /* MARK: - Provider Parity */

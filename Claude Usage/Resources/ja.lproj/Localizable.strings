@@ -955,6 +955,10 @@
 
 "error.storage_write_failed" = "使用状況データを保存できません";
 "error.storage_write_failed.suggestion" = "もう一度お試しください。問題が解決しない場合は、アプリにデータフォルダへの書き込み権限があることを確認してください。";
+"error.credential_storage_unavailable" = "Claude Usage Tracker は macOS キーチェーンを使用できません";
+"error.credential_storage_unavailable.suggestion" = "この Claude Usage Tracker はキーチェーンアクセスグループで署名されていないため、macOS が認証情報の保存をブロックしています。プロジェクトの Releases ページから署名済み版をインストールして、もう一度お試しください。";
+"error.credential_storage_failed" = "セッションキーを macOS キーチェーンに保存できませんでした";
+"error.credential_storage_failed.suggestion" = "既存の設定は変更されていません。キーチェーンアクセスでログインキーチェーンのロックが解除されていることを確認して、もう一度お試しください。";
 
 /* ==================== */
 /* MARK: - Provider Parity */

@@ -227,6 +227,8 @@ enum ErrorCode: String, CaseIterable {
     case storageDecodingFailed = "E5003"
     case storagePermissionDenied = "E5004"
     case storageFileNotFound = "E5005"
+    case credentialStorageUnavailable = "E5006"
+    case credentialStorageFailed = "E5007"
 
     // MARK: - GitHub API Errors (6000-6099)
 
@@ -419,6 +421,49 @@ extension AppError {
         )
     }
 
+    // MARK: - Credential Storage Errors
+
+    /// macOS refused Keychain access outright, so no credential can be saved
+    /// until the install itself is fixed.
+    static func credentialStorageUnavailable(
+        technicalDetails: String,
+        file: String = #file,
+        line: Int = #line,
+        function: String = #function
+    ) -> AppError {
+        AppError(
+            code: .credentialStorageUnavailable,
+            message: "error.credential_storage_unavailable".localized,
+            technicalDetails: technicalDetails,
+            isRecoverable: false,
+            recoverySuggestion:
+                "error.credential_storage_unavailable.suggestion".localized,
+            file: file,
+            line: line,
+            function: function
+        )
+    }
+
+    /// A credential write failed for a reason that may clear on retry.
+    static func credentialStorageFailed(
+        technicalDetails: String,
+        file: String = #file,
+        line: Int = #line,
+        function: String = #function
+    ) -> AppError {
+        AppError(
+            code: .credentialStorageFailed,
+            message: "error.credential_storage_failed".localized,
+            technicalDetails: technicalDetails,
+            isRecoverable: true,
+            recoverySuggestion:
+                "error.credential_storage_failed.suggestion".localized,
+            file: file,
+            line: line,
+            function: function
+        )
+    }
+
     // MARK: - Wrapping Errors
 
     static func wrap(
@@ -431,6 +476,18 @@ extension AppError {
         // If already an AppError, return as-is
         if let appError = error as? AppError {
             return appError
+        }
+
+        // Credential storage failures used to surface as E9999 with the
+        // internal transaction wording, which told the user nothing about
+        // what had gone wrong or what to do next.
+        if let credentialError = fromCredentialStorageError(
+            error,
+            file: file,
+            line: line,
+            function: function
+        ) {
+            return credentialError
         }
 
         if let presentation = ProviderErrorMapper.presentation(
@@ -489,6 +546,68 @@ extension AppError {
     }
 
     // MARK: - Conversion from Other Errors
+
+    /// Maps every error that means "the credential could not be stored" onto a
+    /// coded, actionable `AppError`. Returns `nil` for unrelated errors.
+    private static func fromCredentialStorageError(
+        _ error: Error,
+        file: String,
+        line: Int,
+        function: String
+    ) -> AppError? {
+        if let keychainError = error as? KeychainError {
+            let details = keychainError.errorDescription
+                ?? "Keychain operation failed"
+            return keychainError.isMissingEntitlement
+                ? credentialStorageUnavailable(
+                    technicalDetails: details,
+                    file: file,
+                    line: line,
+                    function: function
+                )
+                : credentialStorageFailed(
+                    technicalDetails: details,
+                    file: file,
+                    line: line,
+                    function: function
+                )
+        }
+
+        if let secretStoreError = error as? ProfileSecretStoreError {
+            return credentialStorageFailed(
+                technicalDetails: secretStoreError.errorDescription
+                    ?? "Keychain verification failed",
+                file: file,
+                line: line,
+                function: function
+            )
+        }
+
+        guard let storeError = error as? ProfileStoreError else {
+            return nil
+        }
+        switch storeError {
+        case .credentialReadUnresolved,
+             .credentialTransactionFailed,
+             .credentialRollbackFailed,
+             .credentialUsageUnlinkFailed,
+             .credentialUsageUnlinkRollbackFailed,
+             .credentialUsageUnlinkMarkerVerificationFailed:
+            return credentialStorageFailed(
+                technicalDetails: storeError.errorDescription
+                    ?? "Credential transaction failed",
+                file: file,
+                line: line,
+                function: function
+            )
+        case .profileNotFound,
+             .profileDeletionInProgress,
+             .currentUsageCommitRollbackFailed,
+             .profileWriteVerificationFailed,
+             .profileRestoreVerificationFailed:
+            return nil
+        }
+    }
 
     private static func fromSessionKeyValidationError(_ error: SessionKeyValidationError, file: String, line: Int, function: String) -> AppError {
         switch error {

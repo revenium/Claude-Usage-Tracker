@@ -933,6 +933,10 @@
 
 "error.storage_write_failed" = "Impossible d’enregistrer les données d’utilisation";
 "error.storage_write_failed.suggestion" = "Veuillez réessayer. Si le problème persiste, vérifiez que l’application est autorisée à écrire dans son dossier de données.";
+"error.credential_storage_unavailable" = "Claude Usage Tracker n’est pas autorisé à utiliser le trousseau macOS";
+"error.credential_storage_unavailable.suggestion" = "Cette copie de Claude Usage Tracker n’est pas signée avec un groupe d’accès au trousseau : macOS l’empêche donc d’enregistrer des identifiants. Installez la version signée depuis la page Releases du projet, puis réessayez.";
+"error.credential_storage_failed" = "Impossible d’enregistrer votre clé de session dans le trousseau macOS";
+"error.credential_storage_failed.suggestion" = "Vos réglages existants n’ont pas été modifiés. Vérifiez que votre trousseau de session est déverrouillé dans Trousseaux d’accès, puis réessayez.";
 
 /* ==================== */
 /* MARK: - Provider Parity */

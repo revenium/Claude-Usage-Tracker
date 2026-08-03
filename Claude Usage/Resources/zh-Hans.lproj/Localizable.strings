@@ -953,6 +953,10 @@
 
 "error.storage_write_failed" = "无法保存使用情况数据";
 "error.storage_write_failed.suggestion" = "请重试。如果问题仍然存在，请检查应用是否有权限写入其数据文件夹。";
+"error.credential_storage_unavailable" = "Claude Usage Tracker 无法使用 macOS 钥匙串";
+"error.credential_storage_unavailable.suggestion" = "此 Claude Usage Tracker 副本未使用钥匙串访问组签名，因此 macOS 阻止其保存凭据。请从项目的 Releases 页面安装已签名的版本，然后重试。";
+"error.credential_storage_failed" = "无法将会话密钥保存到 macOS 钥匙串";
+"error.credential_storage_failed.suggestion" = "现有设置未被更改。请在“钥匙串访问”中确认登录钥匙串已解锁，然后重试。";
 
 /* ==================== */
 /* MARK: - Provider Parity */

@@ -953,6 +953,10 @@
 
 "error.storage_write_failed" = "Não foi possível salvar os dados de uso";
 "error.storage_write_failed.suggestion" = "Tente novamente. Se o problema persistir, verifique se o aplicativo tem permissão para gravar na pasta de dados.";
+"error.credential_storage_unavailable" = "O Claude Usage Tracker não tem permissão para usar as Chaves do macOS";
+"error.credential_storage_unavailable.suggestion" = "Esta cópia do Claude Usage Tracker não está assinada com um grupo de acesso às chaves, por isso o macOS a impede de guardar credenciais. Instale a versão assinada na página de Releases do projeto e tente novamente.";
+"error.credential_storage_failed" = "Não foi possível salvar sua chave de sessão nas Chaves do macOS";
+"error.credential_storage_failed.suggestion" = "Suas configurações atuais não foram alteradas. Verifique se o seu chaveiro de login está desbloqueado no Acesso às Chaves e tente novamente.";
 
 /* ==================== */
 /* MARK: - Provider Parity */

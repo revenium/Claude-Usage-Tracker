@@ -1098,7 +1098,7 @@ struct EnterKeyStepSetup: View {
                 ErrorLogger.shared.log(appError, severity: .error)
 
                 await MainActor.run {
-                    let errorMessage = "\(appError.message)\n\nError Code: \(appError.code.rawValue)"
+                    let errorMessage = SetupErrorMessage.text(for: appError)
                     wizardState.validationState = .error(errorMessage)
                 }
             }
@@ -1136,7 +1136,7 @@ struct EnterKeyStepSetup: View {
                 ErrorLogger.shared.log(appError, severity: .error)
 
                 await MainActor.run {
-                    let errorMessage = "\(appError.message)\n\nError Code: \(appError.code.rawValue)"
+                    let errorMessage = SetupErrorMessage.text(for: appError)
                     wizardState.validationState = .error(errorMessage)
                 }
             }
@@ -1313,6 +1313,13 @@ struct ConfirmStepSetup: View {
                         }
                         .toggleStyle(.switch)
                     }
+
+                    // Saving is the only thing that can fail on this step, so
+                    // the failure belongs here rather than back on step 1
+                    // where it reads as a rejected session key.
+                    if case .error(let message) = wizardState.validationState {
+                        WizardStatusBox(message: message, type: .error)
+                    }
                 }
                 .padding(32)
             }
@@ -1382,14 +1389,10 @@ struct ConfirmStepSetup: View {
                 ErrorLogger.shared.log(appError, severity: .error)
 
                 await MainActor.run {
-                    let errorMessage = "\(appError.message)\n\nError Code: \(appError.code.rawValue)"
-                    wizardState.validationState = .error(errorMessage)
+                    wizardState.validationState = .error(
+                        SetupErrorMessage.text(for: appError)
+                    )
                     isSaving = false
-
-                    // Go back to first step to show error
-                    withAnimation {
-                        wizardState.currentStep = .enterKey
-                    }
                 }
             }
         }
@@ -1483,6 +1486,22 @@ struct InstructionRow: View {
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+}
+
+/// Renders a setup failure so it says what to do next, not just what broke.
+///
+/// The error code stays for support conversations, but it is no longer the
+/// only actionable thing in the box.
+enum SetupErrorMessage {
+    static func text(for error: AppError) -> String {
+        var text = error.message
+        if let suggestion = error.recoverySuggestion,
+           !suggestion.isEmpty,
+           suggestion != error.message {
+            text += "\n\n\(suggestion)"
+        }
+        return text + "\n\nError Code: \(error.code.rawValue)"
     }
 }
 

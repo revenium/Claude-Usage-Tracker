@@ -16,11 +16,172 @@ nonisolated protocol ProfileKeychainBackend {
     func remove(service: String, account: String) throws
 }
 
+/// Which macOS Keychain implementation profile credentials live in.
+///
+/// The data-protection Keychain is preferred, but macOS only grants a process
+/// access to it when the running binary carries a Keychain access group. That
+/// group comes from the App Sandbox, a `keychain-access-groups` entitlement,
+/// or an `application-identifier` entitlement injected by a provisioning
+/// profile — none of which an ad-hoc signed build has. Such a build gets
+/// `errSecMissingEntitlement` (-34018) on every write *and* on every delete,
+/// while reads merely report "not found", so a failed credential write cannot
+/// even be rolled back. The file-based (login) Keychain has no such
+/// requirement and is the correct destination in that environment.
+nonisolated enum ProfileKeychainDomain: String {
+    case dataProtection
+    case file
+}
+
+/// Decides once per process which Keychain the profile credentials belong in.
+///
+/// Resolution is a real probe rather than an entitlement inspection: it writes
+/// and removes a valueless sentinel item, which is the only way to observe the
+/// access-group decision the Security framework actually makes for this
+/// binary.
+nonisolated final class ProfileKeychainDomainResolver: @unchecked Sendable {
+    static let shared = ProfileKeychainDomainResolver()
+
+    /// Namespace for the availability sentinel. Never holds credential data.
+    static let probeService = "com.claudeusagetracker.keychain-probe.v1"
+    static let probeAccount = "availability"
+
+    private let probe: () -> OSStatus
+    private let lock = NSLock()
+    private var cached: ProfileKeychainDomain?
+
+    init(
+        probe: @escaping () -> OSStatus =
+            ProfileKeychainDomainResolver.probeDataProtectionKeychain
+    ) {
+        self.probe = probe
+    }
+
+    /// The Keychain every profile secret operation must use.
+    var domain: ProfileKeychainDomain {
+        lock.lock()
+        if let cached {
+            lock.unlock()
+            return cached
+        }
+        lock.unlock()
+
+        let status = probe()
+        let resolved: ProfileKeychainDomain =
+            status == errSecMissingEntitlement ? .file : .dataProtection
+
+        lock.lock()
+        // A concurrent probe or a live downgrade wins: never widen access back
+        // to a Keychain that has already rejected a real operation.
+        let winner = cached ?? resolved
+        cached = winner
+        lock.unlock()
+
+        if winner == .file {
+            LoggingService.shared.log(
+                "Keychain: data-protection Keychain unavailable "
+                    + "(status \(status)); using the login Keychain for "
+                    + "profile credentials"
+            )
+        }
+        return winner
+    }
+
+    /// Records that a live data-protection operation was rejected for lack of
+    /// an entitlement. Subsequent operations use the file Keychain.
+    func downgradeToFileKeychain() {
+        lock.lock()
+        let alreadyDowngraded = cached == .file
+        cached = .file
+        lock.unlock()
+
+        if !alreadyDowngraded {
+            LoggingService.shared.log(
+                "Keychain: data-protection Keychain rejected a live "
+                    + "operation; falling back to the login Keychain"
+            )
+        }
+    }
+
+    /// Writes and removes a sentinel item. The status of the write is the only
+    /// reliable way to observe the access-group decision the Security
+    /// framework makes for this binary.
+    static func probeDataProtectionKeychain() -> OSStatus {
+        let query = SecurityProfileKeychainBackend.addQuery(
+            data: Data("probe".utf8),
+            service: probeService,
+            account: probeAccount,
+            domain: .dataProtection
+        )
+
+        let status = SecItemAdd(query as CFDictionary, nil)
+        if status == errSecSuccess || status == errSecDuplicateItem {
+            _ = SecItemDelete(
+                SecurityProfileKeychainBackend.itemQuery(
+                    service: probeService,
+                    account: probeAccount,
+                    domain: .dataProtection
+                ) as CFDictionary
+            )
+        }
+        return status
+    }
+}
+
 /// Production backend for app-owned per-profile credentials.
 nonisolated struct SecurityProfileKeychainBackend: ProfileKeychainBackend {
+    private let resolver: ProfileKeychainDomainResolver
+
+    init(resolver: ProfileKeychainDomainResolver = .shared) {
+        self.resolver = resolver
+    }
+
     func upsert(_ data: Data, service: String, account: String) throws {
+        try withEntitlementFallback {
+            try upsert(data, service: service, account: account, domain: $0)
+        }
+    }
+
+    func read(service: String, account: String) throws -> Data? {
+        try withEntitlementFallback {
+            try read(service: service, account: account, domain: $0)
+        }
+    }
+
+    func remove(service: String, account: String) throws {
+        try withEntitlementFallback {
+            try remove(service: service, account: account, domain: $0)
+        }
+    }
+
+    /// Runs an operation against the resolved Keychain and retries it once
+    /// against the file Keychain when the data-protection Keychain turns out
+    /// to be off limits after all. Without this, a probe that succeeded in a
+    /// different security context would leave writes permanently broken.
+    private func withEntitlementFallback<T>(
+        _ operation: (ProfileKeychainDomain) throws -> T
+    ) throws -> T {
+        let domain = resolver.domain
+        do {
+            return try operation(domain)
+        } catch let error as KeychainError
+            where domain == .dataProtection && error.isMissingEntitlement {
+            resolver.downgradeToFileKeychain()
+            return try operation(.file)
+        }
+    }
+
+    private func upsert(
+        _ data: Data,
+        service: String,
+        account: String,
+        domain: ProfileKeychainDomain
+    ) throws {
         let updateStatus = SecItemUpdate(
-            Self.itemQuery(service: service, account: account) as CFDictionary,
+            Self.itemQuery(
+                service: service,
+                account: account,
+                domain: domain
+            ) as CFDictionary,
             [kSecValueData as String: data] as CFDictionary
         )
 
@@ -32,7 +193,12 @@ nonisolated struct SecurityProfileKeychainBackend: ProfileKeychainBackend {
         }
 
         let addStatus = SecItemAdd(
-            Self.addQuery(data: data, service: service, account: account) as CFDictionary,
+            Self.addQuery(
+                data: data,
+                service: service,
+                account: account,
+                domain: domain
+            ) as CFDictionary,
             nil
         )
         if addStatus == errSecSuccess {
@@ -42,7 +208,11 @@ nonisolated struct SecurityProfileKeychainBackend: ProfileKeychainBackend {
         // Another writer may have inserted the item between update and add.
         if addStatus == errSecDuplicateItem {
             let retryStatus = SecItemUpdate(
-                Self.itemQuery(service: service, account: account) as CFDictionary,
+                Self.itemQuery(
+                    service: service,
+                    account: account,
+                    domain: domain
+                ) as CFDictionary,
                 [kSecValueData as String: data] as CFDictionary
             )
             guard retryStatus == errSecSuccess else {
@@ -54,10 +224,18 @@ nonisolated struct SecurityProfileKeychainBackend: ProfileKeychainBackend {
         throw KeychainError.saveFailed(status: addStatus)
     }
 
-    func read(service: String, account: String) throws -> Data? {
+    private func read(
+        service: String,
+        account: String,
+        domain: ProfileKeychainDomain
+    ) throws -> Data? {
         var result: AnyObject?
         let status = SecItemCopyMatching(
-            Self.readQuery(service: service, account: account) as CFDictionary,
+            Self.readQuery(
+                service: service,
+                account: account,
+                domain: domain
+            ) as CFDictionary,
             &result
         )
 
@@ -73,9 +251,17 @@ nonisolated struct SecurityProfileKeychainBackend: ProfileKeychainBackend {
         return data
     }
 
-    func remove(service: String, account: String) throws {
+    private func remove(
+        service: String,
+        account: String,
+        domain: ProfileKeychainDomain
+    ) throws {
         let status = SecItemDelete(
-            Self.itemQuery(service: service, account: account) as CFDictionary
+            Self.itemQuery(
+                service: service,
+                account: account,
+                domain: domain
+            ) as CFDictionary
         )
         guard status == errSecSuccess || status == errSecItemNotFound else {
             throw KeychainError.deleteFailed(status: status)
@@ -83,25 +269,53 @@ nonisolated struct SecurityProfileKeychainBackend: ProfileKeychainBackend {
     }
 
     /// Base query shared by update and delete operations.
-    static func itemQuery(service: String, account: String) -> [String: Any] {
-        [
+    static func itemQuery(
+        service: String,
+        account: String,
+        domain: ProfileKeychainDomain = .dataProtection
+    ) -> [String: Any] {
+        var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecUseDataProtectionKeychain as String: true
+            kSecAttrAccount as String: account
         ]
-    }
-
-    static func addQuery(data: Data, service: String, account: String) -> [String: Any] {
-        var query = itemQuery(service: service, account: account)
-        query[kSecValueData as String] = data
-        query[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-        query[kSecAttrSynchronizable as String] = false
+        if domain == .dataProtection {
+            query[kSecUseDataProtectionKeychain as String] = true
+        }
         return query
     }
 
-    static func readQuery(service: String, account: String) -> [String: Any] {
-        var query = itemQuery(service: service, account: account)
+    static func addQuery(
+        data: Data,
+        service: String,
+        account: String,
+        domain: ProfileKeychainDomain = .dataProtection
+    ) -> [String: Any] {
+        var query = itemQuery(
+            service: service,
+            account: account,
+            domain: domain
+        )
+        query[kSecValueData as String] = data
+        query[kSecAttrSynchronizable as String] = false
+        // Data-protection classes are meaningless to the file Keychain, which
+        // rejects unknown attributes on some macOS releases.
+        if domain == .dataProtection {
+            query[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+        }
+        return query
+    }
+
+    static func readQuery(
+        service: String,
+        account: String,
+        domain: ProfileKeychainDomain = .dataProtection
+    ) -> [String: Any] {
+        var query = itemQuery(
+            service: service,
+            account: account,
+            domain: domain
+        )
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         return query
@@ -358,16 +572,61 @@ nonisolated enum KeychainError: Error, LocalizedError {
     case loadFailed(status: OSStatus)
     case deleteFailed(status: OSStatus)
 
+    /// The `OSStatus` behind the failure, when there is one.
+    var status: OSStatus? {
+        switch self {
+        case .invalidData:
+            return nil
+        case .saveFailed(let status),
+             .loadFailed(let status),
+             .deleteFailed(let status):
+            return status
+        }
+    }
+
+    /// True when macOS refused the operation because this build carries no
+    /// Keychain access group. Callers use it to pick a usable Keychain rather
+    /// than surfacing an unrecoverable failure.
+    var isMissingEntitlement: Bool {
+        status == errSecMissingEntitlement
+    }
+
     var errorDescription: String? {
         switch self {
         case .invalidData:
             return "Invalid data format for Keychain storage"
         case .saveFailed(let status):
-            return "Failed to save to Keychain (status: \(status))"
+            return "Failed to save to Keychain (\(Self.describe(status)))"
         case .loadFailed(let status):
-            return "Failed to load from Keychain (status: \(status))"
+            return "Failed to load from Keychain (\(Self.describe(status)))"
         case .deleteFailed(let status):
-            return "Failed to delete from Keychain (status: \(status))"
+            return "Failed to delete from Keychain (\(Self.describe(status)))"
         }
+    }
+
+    /// Renders an `OSStatus` as something a support conversation can act on.
+    static func describe(_ status: OSStatus) -> String {
+        let name: String
+        switch status {
+        case errSecMissingEntitlement:
+            name = "errSecMissingEntitlement — this build has no Keychain "
+                + "access group"
+        case errSecInteractionNotAllowed:
+            name = "errSecInteractionNotAllowed — the Keychain is locked"
+        case errSecAuthFailed:
+            name = "errSecAuthFailed — Keychain access was denied"
+        case errSecUserCanceled:
+            name = "errSecUserCanceled — the Keychain prompt was dismissed"
+        case errSecNotAvailable:
+            name = "errSecNotAvailable — no Keychain is available"
+        case errSecDuplicateItem:
+            name = "errSecDuplicateItem"
+        case errSecItemNotFound:
+            name = "errSecItemNotFound"
+        default:
+            name = SecCopyErrorMessageString(status, nil) as String?
+                ?? "unrecognized Keychain status"
+        }
+        return "status \(status): \(name)"
     }
 }
