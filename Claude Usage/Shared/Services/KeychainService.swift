@@ -202,6 +202,15 @@ nonisolated struct SecurityProfileKeychainBackend: ProfileKeychainBackend {
     /// against the file Keychain when the data-protection Keychain turns out
     /// to be off limits after all. Without this, a probe that succeeded in a
     /// different security context would leave writes permanently broken.
+    ///
+    /// Only writes and deletes can trigger this. A refused *read* reports
+    /// `errSecItemNotFound` rather than `errSecMissingEntitlement`, so it is
+    /// indistinguishable from a genuinely absent item and cannot be retried on
+    /// that signal. Reads are protected instead by going to whichever domain
+    /// the probe or a prior live rejection already settled on — never by
+    /// searching both, which would prompt for Keychain access on every absent
+    /// secret. The retry stays wired up for reads only as a no-cost guard in
+    /// case a future macOS starts reporting the entitlement failure directly.
     private func withEntitlementFallback<T>(
         _ operation: (ProfileKeychainDomain) throws -> T
     ) throws -> T {

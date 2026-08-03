@@ -397,7 +397,11 @@ final class EntitlementFallbackTests: XCTestCase {
         XCTAssertEqual(operations.attemptedDomains, [.dataProtection])
     }
 
-    func testReadsFallBackToo() throws {
+    /// A refused read reports `errSecItemNotFound`, not
+    /// `errSecMissingEntitlement` — measured, not assumed — so it is
+    /// indistinguishable from a genuinely absent item. Reads therefore cannot
+    /// self-heal, and must not pretend to.
+    func testRefusedReadReportsAbsentRatherThanSearchingBothKeychains() throws {
         let operations = SpyKeychainItemOperations()
         operations.refuseDataProtection = true
         let backend = SecurityProfileKeychainBackend(
@@ -405,12 +409,34 @@ final class EntitlementFallbackTests: XCTestCase {
             operations: operations
         )
 
-        _ = try backend.read(service: service, account: account)
-
+        XCTAssertNil(try backend.read(service: service, account: account))
         XCTAssertEqual(
             operations.attemptedDomains,
-            [.dataProtection, .file]
+            [.dataProtection],
+            "Searching the second Keychain would prompt for access on every "
+                + "absent secret"
         )
+    }
+
+    /// What actually protects reads: a write is refused with a signal that can
+    /// be recognised, and every later read follows the downgrade.
+    func testReadsFollowAWriteTriggeredDowngrade() throws {
+        let operations = SpyKeychainItemOperations()
+        operations.refuseDataProtection = true
+        let backend = SecurityProfileKeychainBackend(
+            resolver: ProfileKeychainDomainResolver { errSecSuccess },
+            operations: operations
+        )
+
+        try backend.upsert(
+            Data("secret".utf8),
+            service: service,
+            account: account
+        )
+        operations.attemptedDomains.removeAll()
+        _ = try backend.read(service: service, account: account)
+
+        XCTAssertEqual(operations.attemptedDomains, [.file])
     }
 }
 
@@ -440,6 +466,23 @@ private final class SpyKeychainItemOperations: KeychainItemOperations {
         return nil
     }
 
+    /// Mirrors the measured behaviour of a build with no Keychain access
+    /// group: writes and deletes are refused outright, reads are told the
+    /// item simply is not there.
+    ///
+    ///     add=-34018  read=-25300  delete=-34018
+    private func readStatus(for query: [String: Any]) -> OSStatus? {
+        let domain = domain(of: query)
+        attemptedDomains.append(domain)
+        if let forcedStatus {
+            return forcedStatus
+        }
+        if refuseDataProtection && domain == .dataProtection {
+            return errSecItemNotFound
+        }
+        return nil
+    }
+
     func add(_ query: [String: Any]) -> OSStatus {
         status(for: query) ?? errSecSuccess
     }
@@ -459,7 +502,7 @@ private final class SpyKeychainItemOperations: KeychainItemOperations {
         _ query: [String: Any],
         into result: inout AnyObject?
     ) -> OSStatus {
-        if let status = status(for: query) {
+        if let status = readStatus(for: query) {
             return status
         }
         result = nil
