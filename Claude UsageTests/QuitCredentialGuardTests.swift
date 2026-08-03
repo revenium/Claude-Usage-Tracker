@@ -13,20 +13,10 @@ final class QuitCredentialGuardTests: XCTestCase {
         [(alice, "Alice"), (bob, "Bob"), (carol, "Carol")]
     }
 
+    /// Also the post-retry case: this function only ever sees the set that
+    /// survived the final write, so "nothing was held" and "everything was
+    /// rescued" are the same input here. The distinction lives in the caller.
     func testNothingHeldQuitsWithoutBotheringTheUser() {
-        XCTAssertEqual(
-            QuitCredentialGuard.outcome(
-                remaining: [],
-                orderedProfiles: ordered
-            ),
-            .terminate
-        )
-    }
-
-    /// The common case: the final write rescued everything, so quitting is
-    /// silent. Deciding on the pre-retry set would nag about credentials that
-    /// were just saved.
-    func testRescuedCredentialsQuitSilently() {
         XCTAssertEqual(
             QuitCredentialGuard.outcome(
                 remaining: [],

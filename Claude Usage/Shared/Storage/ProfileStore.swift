@@ -435,10 +435,14 @@ class ProfileStore {
                     let result = try secretStore.read(locator)
                     credentialBaselines[locator] = result
                     unresolvedLocators.remove(locator)
-                    if result == .absent, let held = sessionOnlySecrets[locator] {
-                        // Refused by secure storage earlier in this session.
-                        // Try again — a locked Keychain may since have been
-                        // unlocked — so a transient refusal does not cost the
+                    if let held = sessionOnlySecrets[locator] {
+                        // A held value is always newer than whatever storage
+                        // has. Gating this on `.absent` meant a *replacement*
+                        // whose write was refused got silently reverted to
+                        // the old value still sitting in the Keychain.
+                        //
+                        // Retry too: a locked Keychain may since have been
+                        // unlocked, so a transient refusal does not cost the
                         // user their credential at quit.
                         do {
                             try secretStore.write(held, to: locator)
@@ -716,6 +720,7 @@ class ProfileStore {
         profiles[index].credentialMigrationRetry = .init()
 
         var heldHere: [ProfileSecretLocator] = []
+        var written: [(ProfileSecretLocator, ProfileSecretReadResult)] = []
         for field in ProfileSecretField.allCases {
             guard let value = credentials.secretValue(for: field) else {
                 continue
@@ -724,11 +729,17 @@ class ProfileStore {
                 profileID: profileId,
                 field: field
             )
+            // Snapshot before mutating, so a later metadata failure can undo
+            // this write the same way performCredentialTransaction does.
+            let previous = try? secretStore.read(locator)
             do {
                 try secretStore.write(value, to: locator)
                 credentialBaselines[locator] = .value(value)
                 sessionOnlySecrets.removeValue(forKey: locator)
                 notifySessionOnlyChange()
+                if let previous {
+                    written.append((locator, previous))
+                }
             } catch {
                 // Retrying here also disambiguates why the transaction
                 // failed: if the writes succeed now, the original failure was
@@ -749,6 +760,12 @@ class ProfileStore {
             }
             if !heldHere.isEmpty {
                 notifySessionOnlyChange()
+            }
+            // Nor may a secret stay in the Keychain paired with metadata that
+            // never landed, while the caller is told the save failed.
+            for (locator, previous) in written {
+                try? restoreSecret(previous, at: locator)
+                credentialBaselines[locator] = previous
             }
             throw error
         }

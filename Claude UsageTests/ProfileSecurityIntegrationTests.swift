@@ -1338,6 +1338,83 @@ final class ProfileSecurityIntegrationTests: HostedAppTestCase {
         XCTAssertTrue(store.profilesWithSessionOnlyCredentials.isEmpty)
     }
 
+    /// A replacement whose write was refused must not be reverted to the old
+    /// value still sitting in the Keychain.
+    ///
+    /// Reached through the ordinary save path, which is what actually
+    /// produces this state: a changed field whose write fails is held, while
+    /// the Keychain keeps the previous value.
+    @MainActor
+    func testHeldReplacementWinsOverTheStaleStoredValue() throws {
+        let profileID = UUID()
+        let secrets = MockProfileSecretStore()
+        let store = retain(
+            ProfileStore(defaults: defaults, secretStore: secrets)
+        )
+        var profile = Profile(id: profileID, name: "Replace")
+        profile.claudeSessionKey = "OLD_VALUE"
+        profile.organizationId = "org"
+        try seedProfilesForTesting([profile], in: store)
+        secrets.values[locator(profileID, .claudeSessionKey)] = "OLD_VALUE"
+
+        // The replacement is refused, so the Keychain still returns OLD_VALUE.
+        secrets.writeErrors[.claudeSessionKey] = TestError.expected
+        var updated = profile
+        updated.claudeSessionKey = "NEW_VALUE"
+        try store.saveProfilesThrowing([updated])
+
+        XCTAssertTrue(
+            store.profilesWithSessionOnlyCredentials.contains(profileID)
+        )
+        let reloaded = try XCTUnwrap(
+            store.loadProfilesWithVerifiedMigration().first
+        )
+        XCTAssertEqual(
+            reloaded.claudeSessionKey,
+            "NEW_VALUE",
+            "The user's update must not be silently reverted mid-session"
+        )
+    }
+
+    /// Every other writer in this file rolls back its secrets when the
+    /// trailing metadata persist fails; this path must too, or the caller is
+    /// told nothing saved while part of the set is durably in the Keychain.
+    @MainActor
+    func testOptInSaveRollsBackWrittenSecretsWhenMetadataFails() throws {
+        let profileID = UUID()
+        let secrets = MockProfileSecretStore()
+        let backing = FaultingProfileDefaults()
+        let store = retain(
+            ProfileStore(defaults: backing, secretStore: secrets)
+        )
+        try seedProfilesForTesting(
+            [Profile(id: profileID, name: "Rollback")],
+            in: store
+        )
+        secrets.values[locator(profileID, .apiSessionKey)] = "OLD_API"
+        // claude is refused (so the opt-in path engages), api writes fine.
+        secrets.writeErrors[.claudeSessionKey] = TestError.expected
+        backing.corruptNextProfileWrite = true
+
+        var credentials = ProfileCredentials()
+        credentials.claudeSessionKey = "NEW_CLAUDE"
+        credentials.apiSessionKey = "NEW_API"
+        credentials.organizationId = "org"
+
+        XCTAssertThrowsError(
+            try store.saveProfileCredentialsAcceptingSessionOnly(
+                profileID,
+                credentials: credentials
+            )
+        )
+        XCTAssertEqual(
+            secrets.values[locator(profileID, .apiSessionKey)],
+            "OLD_API",
+            "A secret must not stay written against metadata that never landed"
+        )
+        XCTAssertTrue(store.profilesWithSessionOnlyCredentials.isEmpty)
+    }
+
     // MARK: - A removal must not be undone by a held credential
 
     /// The load path overlays held values when secure storage reports

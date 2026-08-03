@@ -1208,20 +1208,6 @@ class ProfileManager: ObservableObject {
         return try profileStore.loadProfileCredentials(profileId)
     }
 
-    /// Saves credentials, accepting session-only storage if the Keychain
-    /// refuses. Only for a user who has been shown the consequence and
-    /// chosen it — the ordinary `saveCredentials` still fails closed.
-    func saveCredentialsAcceptingSessionOnly(
-        for profileId: UUID,
-        credentials: ProfileCredentials
-    ) throws {
-        try saveCredentials(
-            for: profileId,
-            credentials: credentials,
-            acceptingSessionOnly: true
-        )
-    }
-
     func saveCredentials(
         for profileId: UUID,
         credentials: ProfileCredentials,
