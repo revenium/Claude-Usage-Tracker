@@ -937,6 +937,9 @@
 "error.credential_storage_unavailable.suggestion" = "Cette copie de Claude Usage Tracker n’est pas signée avec un groupe d’accès au trousseau : macOS l’empêche donc d’enregistrer des identifiants. Installez la version signée depuis la page Releases du projet, puis réessayez.";
 "error.credential_storage_failed" = "Impossible d’enregistrer votre clé de session dans le trousseau macOS";
 "error.credential_storage_failed.suggestion" = "Vos réglages existants n’ont pas été modifiés. Vérifiez que votre trousseau de session est déverrouillé dans Trousseaux d’accès, puis réessayez.";
+"popover.banner.credentials_not_saved" = "Identifiants non enregistrés (%d)";
+"popover.banner.credentials_not_saved.detail" = "Enregistrés pour cette session uniquement — perdus à la fermeture.";
+"popover.banner.credentials_not_saved.retry" = "Réessayer l’enregistrement";
 
 /* ==================== */
 /* MARK: - Provider Parity */

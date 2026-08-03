@@ -940,6 +940,9 @@
 "error.credential_storage_unavailable.suggestion" = "Esta copia de Claude Usage Tracker no está firmada con un grupo de acceso al llavero, por lo que macOS le impide guardar credenciales. Instala la versión firmada desde la página de Releases del proyecto y vuelve a intentarlo.";
 "error.credential_storage_failed" = "No se pudo guardar tu clave de sesión en el llavero de macOS";
 "error.credential_storage_failed.suggestion" = "Tus ajustes actuales no se modificaron. Comprueba que tu llavero de inicio de sesión esté desbloqueado en Acceso a Llaveros y vuelve a intentarlo.";
+"popover.banner.credentials_not_saved" = "Credenciales no guardadas (%d)";
+"popover.banner.credentials_not_saved.detail" = "Guardadas solo para esta sesión: se perderán al salir.";
+"popover.banner.credentials_not_saved.retry" = "Reintentar guardado";
 
 /* ==================== */
 /* MARK: - Provider Parity */

@@ -959,6 +959,9 @@
 "error.credential_storage_unavailable.suggestion" = "Diese Kopie von Claude Usage Tracker ist nicht mit einer Schlüsselbund-Zugriffsgruppe signiert, daher verweigert macOS das Speichern von Anmeldedaten. Installieren Sie die signierte Version von der Releases-Seite des Projekts und versuchen Sie es erneut.";
 "error.credential_storage_failed" = "Ihr Sitzungsschlüssel konnte nicht im macOS-Schlüsselbund gespeichert werden";
 "error.credential_storage_failed.suggestion" = "Ihre vorhandenen Einstellungen wurden nicht verändert. Stellen Sie sicher, dass Ihr Anmeldeschlüsselbund in der Schlüsselbundverwaltung entsperrt ist, und versuchen Sie es erneut.";
+"popover.banner.credentials_not_saved" = "Anmeldedaten nicht gespeichert (%d)";
+"popover.banner.credentials_not_saved.detail" = "Nur für diese Sitzung gespeichert — beim Beenden verloren.";
+"popover.banner.credentials_not_saved.retry" = "Erneut speichern";
 
 /* ==================== */
 /* MARK: - Provider Parity */

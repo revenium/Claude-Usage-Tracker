@@ -933,6 +933,9 @@
 "error.credential_storage_unavailable.suggestion" = "이 Claude Usage Tracker 사본은 키체인 접근 그룹으로 서명되지 않아 macOS가 자격 증명 저장을 차단합니다. 프로젝트의 Releases 페이지에서 서명된 버전을 설치한 후 다시 시도하세요.";
 "error.credential_storage_failed" = "세션 키를 macOS 키체인에 저장하지 못했습니다";
 "error.credential_storage_failed.suggestion" = "기존 설정은 변경되지 않았습니다. 키체인 접근에서 로그인 키체인이 잠금 해제되어 있는지 확인한 후 다시 시도하세요.";
+"popover.banner.credentials_not_saved" = "자격 증명이 저장되지 않음 (%d)";
+"popover.banner.credentials_not_saved.detail" = "이 세션에만 저장됩니다. 종료하면 사라집니다.";
+"popover.banner.credentials_not_saved.retry" = "저장 다시 시도";
 
 /* ==================== */
 /* MARK: - Provider Parity */

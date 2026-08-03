@@ -957,6 +957,9 @@
 "error.credential_storage_unavailable.suggestion" = "Questa copia di Claude Usage Tracker non è firmata con un gruppo di accesso al portachiavi, quindi macOS le impedisce di salvare le credenziali. Installa la versione firmata dalla pagina Releases del progetto e riprova.";
 "error.credential_storage_failed" = "Impossibile salvare la chiave di sessione nel portachiavi di macOS";
 "error.credential_storage_failed.suggestion" = "Le impostazioni esistenti non sono state modificate. Verifica che il portachiavi di accesso sia sbloccato in Accesso Portachiavi e riprova.";
+"popover.banner.credentials_not_saved" = "Credenziali non salvate (%d)";
+"popover.banner.credentials_not_saved.detail" = "Salvate solo per questa sessione: andranno perse alla chiusura.";
+"popover.banner.credentials_not_saved.retry" = "Riprova a salvare";
 
 /* ==================== */
 /* MARK: - Provider Parity */

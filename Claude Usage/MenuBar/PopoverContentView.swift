@@ -30,14 +30,22 @@ enum LegacyPopoverBanner: Equatable {
     enum Action: Equatable {
         case preferences
         case refresh
+        case retryCredentialSave
     }
 
+    /// A credential the Keychain refused, held in memory. Outranks every
+    /// other banner: the others describe something already broken, this one
+    /// describes something the user can still prevent — the credential is
+    /// lost at quit.
+    case credentialsNotSaved(count: Int)
     case credentialError
     case refreshFailed(count: Int)
     case stale(minutesAgo: Int)
 
     var action: Action {
         switch self {
+        case .credentialsNotSaved:
+            return .retryCredentialSave
         case .credentialError:
             return .preferences
         case .refreshFailed, .stale:
@@ -47,6 +55,11 @@ enum LegacyPopoverBanner: Equatable {
 
     var message: String {
         switch self {
+        case .credentialsNotSaved(let count):
+            return String(
+                format: "popover.banner.credentials_not_saved".localized,
+                count
+            )
         case .credentialError:
             return "popover.banner.credentials_expired".localized
         case .refreshFailed(let count):
@@ -63,11 +76,17 @@ enum LegacyPopoverBanner: Equatable {
     }
 
     static func resolve(
+        sessionOnlyCredentialCount: Int = 0,
         hasCredentialError: Bool,
         consecutiveRefreshFailures: Int,
         lastSuccessfulRefreshTime: Date?,
         now: Date
     ) -> LegacyPopoverBanner? {
+        if sessionOnlyCredentialCount > 0 {
+            return .credentialsNotSaved(
+                count: sessionOnlyCredentialCount
+            )
+        }
         if hasCredentialError {
             return .credentialError
         }
@@ -338,6 +357,8 @@ struct PopoverContentView: View {
         let resolvedBanner: LegacyPopoverBanner? =
             presentation.providerID == .claude
             ? LegacyPopoverBanner.resolve(
+                sessionOnlyCredentialCount:
+                    profileManager.sessionOnlyCredentialProfileIDs.count,
                 hasCredentialError: manager.hasCredentialError,
                 consecutiveRefreshFailures:
                     manager.consecutiveRefreshFailures,
@@ -378,6 +399,15 @@ struct PopoverContentView: View {
         activeAccountsSection()
     }
 
+    /// Complete list, in the popover's own profile order.
+    private var sessionOnlyCredentialNames: [String] {
+        profileManager.profiles
+            .filter {
+                profileManager.sessionOnlyCredentialProfileIDs.contains($0.id)
+            }
+            .map(\.name)
+    }
+
     private func triggerRefresh() {
         withAnimation(.easeInOut(duration: 0.3)) {
             isRefreshing = true
@@ -396,6 +426,22 @@ struct PopoverContentView: View {
     ) -> some View {
         if let banner = resolvedBanner {
             switch banner {
+            case .credentialsNotSaved:
+                ExpandableStatusBanner(
+                    icon: "exclamationmark.triangle.fill",
+                    message: banner.message,
+                    detail:
+                        "popover.banner.credentials_not_saved.detail"
+                        .localized,
+                    accountNames: sessionOnlyCredentialNames,
+                    color: .orange,
+                    retryActionTitle:
+                        "popover.banner.credentials_not_saved.retry"
+                        .localized,
+                    onRetry: {
+                        profileManager.retrySessionOnlyCredentialSave()
+                    }
+                )
             case .credentialError:
                 StatusBannerView(
                     icon: "exclamationmark.triangle.fill",
@@ -1164,8 +1210,15 @@ struct ExpandableStatusBanner: View {
     /// next scheduled attempt will start (backoff / `Retry-After`). `nil`
     /// omits the line entirely.
     var retryText: String? = nil
-    let lastSuccessText: String
+    /// Complete list of affected account names, rendered as structured rows
+    /// rather than folded into a sentence.
+    var accountNames: [String] = []
+    /// Omitted entirely when there is no meaningful last success to cite.
+    var lastSuccessText: String? = nil
     let color: Color
+    /// Label for the single affordance. Defaults to refresh, which is what
+    /// the failure banners want.
+    var retryActionTitle: String = "common.refresh".localized
     let onRetry: () -> Void
 
     @State private var isExpanded = false
@@ -1221,12 +1274,24 @@ struct ExpandableStatusBanner: View {
                                 "popover.banner.retry_text"
                             )
                     }
-                    Text(lastSuccessText)
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
+                    ForEach(accountNames, id: \.self) { name in
+                        Text(name)
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(.primary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .accessibilityIdentifier(
+                                "popover.banner.account_row"
+                            )
+                    }
+                    if let lastSuccessText {
+                        Text(lastSuccessText)
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                    }
 
                     Button(action: onRetry) {
-                        Text("common.refresh".localized)
+                        Text(retryActionTitle)
                             .font(.system(size: 10, weight: .semibold))
                             .foregroundColor(.accentColor)
                     }
@@ -1267,6 +1332,11 @@ extension NormalizedUsagePresentation {
         guard let resolvedBanner else { return self }
         let kindToStrip: NormalizedUsageNotice.Kind
         switch resolvedBanner {
+        case .credentialsNotSaved:
+            // No notice kind corresponds to this banner, so there is no
+            // duplicate to strip. A genuine credential problem alongside it
+            // is a different problem and must still be shown.
+            return self
         case .credentialError:
             kindToStrip = .unauthenticated
         case .refreshFailed:

@@ -959,6 +959,9 @@
 "error.credential_storage_unavailable.suggestion" = "この Claude Usage Tracker はキーチェーンアクセスグループで署名されていないため、macOS が認証情報の保存をブロックしています。プロジェクトの Releases ページから署名済み版をインストールして、もう一度お試しください。";
 "error.credential_storage_failed" = "セッションキーを macOS キーチェーンに保存できませんでした";
 "error.credential_storage_failed.suggestion" = "既存の設定は変更されていません。キーチェーンアクセスでログインキーチェーンのロックが解除されていることを確認して、もう一度お試しください。";
+"popover.banner.credentials_not_saved" = "認証情報が保存されていません (%d)";
+"popover.banner.credentials_not_saved.detail" = "このセッションのみ保存されています。終了すると失われます。";
+"popover.banner.credentials_not_saved.retry" = "保存を再試行";
 
 /* ==================== */
 /* MARK: - Provider Parity */

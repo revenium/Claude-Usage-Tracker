@@ -271,6 +271,50 @@ final class NormalizedUsagePresentationTests: HostedAppTestCase {
         )
     }
 
+    /// Outranks everything else: the other banners describe something
+    /// already broken, this one describes something the user can still
+    /// prevent — the credential is lost at quit.
+    func testCredentialsNotSavedOutranksEveryOtherBanner() {
+        let stale = now.addingTimeInterval(-301)
+
+        XCTAssertEqual(
+            LegacyPopoverBanner.resolve(
+                sessionOnlyCredentialCount: 2,
+                hasCredentialError: true,
+                consecutiveRefreshFailures: 8,
+                lastSuccessfulRefreshTime: stale,
+                now: now
+            ),
+            .credentialsNotSaved(count: 2)
+        )
+        XCTAssertEqual(
+            LegacyPopoverBanner.credentialsNotSaved(count: 2).action,
+            .retryCredentialSave
+        )
+    }
+
+    func testNoHeldCredentialsLeavesTheOtherBannersUntouched() {
+        XCTAssertEqual(
+            LegacyPopoverBanner.resolve(
+                sessionOnlyCredentialCount: 0,
+                hasCredentialError: true,
+                consecutiveRefreshFailures: 0,
+                lastSuccessfulRefreshTime: nil,
+                now: now
+            ),
+            .credentialError
+        )
+        XCTAssertNil(
+            LegacyPopoverBanner.resolve(
+                sessionOnlyCredentialCount: 0,
+                hasCredentialError: false,
+                consecutiveRefreshFailures: 0,
+                lastSuccessfulRefreshTime: nil,
+                now: now
+            )
+        )
+    }
+
     func testLegacyBannerPrecedenceThresholdsAndActions() {
         let stale = now.addingTimeInterval(-301)
 
