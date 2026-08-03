@@ -1506,6 +1506,50 @@ final class ProfileSecurityIntegrationTests: HostedAppTestCase {
         XCTAssertNil(secrets.values[locator(profileID, .claudeSessionKey)])
     }
 
+    /// Unlink recovery must drop the hold even when storage has nothing to
+    /// delete. A session-only credential is never in storage, so it presents
+    /// as `.absent` — the one state that skips `replaceSecret`, which was
+    /// the only place dropping the hold.
+    @MainActor
+    func testUnlinkRecoveryDiscardsAHoldStorageNeverReceived() throws {
+        let profileID = UUID()
+        let secrets = MockProfileSecretStore()
+        let store = retain(
+            ProfileStore(defaults: defaults, secretStore: secrets)
+        )
+        var profile = Profile(id: profileID, name: "Held")
+        profile.organizationId = "org"
+        try seedProfilesForTesting([profile], in: store)
+
+        // Refused, so it is held and storage stays empty for this field.
+        secrets.writeErrors[.claudeSessionKey] = TestError.expected
+        var credentials = ProfileCredentials()
+        credentials.claudeSessionKey = "HELD_NEVER_STORED"
+        credentials.organizationId = "org"
+        try store.saveProfileCredentialsAcceptingSessionOnly(
+            profileID,
+            credentials: credentials
+        )
+        XCTAssertTrue(
+            store.profilesWithSessionOnlyCredentials.contains(profileID)
+        )
+        XCTAssertNil(secrets.values[locator(profileID, .claudeSessionKey)])
+
+        try store.unlinkClaudeAI(for: profileID)
+
+        XCTAssertTrue(
+            store.profilesWithSessionOnlyCredentials.isEmpty,
+            "An explicit unlink must not leave the credential held"
+        )
+        let reloaded = try XCTUnwrap(
+            store.loadProfilesWithVerifiedMigration().first
+        )
+        XCTAssertNil(
+            reloaded.claudeSessionKey,
+            "A later load must not overlay the unlinked credential"
+        )
+    }
+
     /// Deleting the profile must leave no banner or quit warning behind.
     @MainActor
     func testDeletingSecretsDiscardsHeldCredentials() throws {

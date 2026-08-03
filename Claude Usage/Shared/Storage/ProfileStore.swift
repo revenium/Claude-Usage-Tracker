@@ -1968,6 +1968,17 @@ class ProfileStore {
                     ],
                 candidateProfiles: profiles
             )
+            // The transaction only calls replaceSecret for a *changed*
+            // field. A session-only credential was never written, so removing
+            // it is not a change and replaceSecret — the only other place
+            // that drops the hold — never runs. Unlink succeeded, so the
+            // credential is gone either way.
+            discardHeldSecret(
+                at: ProfileSecretLocator(
+                    profileID: profileID,
+                    field: targetField
+                )
+            )
             try removePendingCredentialUsageUnlink(for: profileID)
         } catch {
             do {
@@ -2151,6 +2162,14 @@ class ProfileStore {
                     profileID: marker.profileID
                 )
             }
+            // Unconditionally, not just when storage had a value to delete.
+            // A session-only credential is never in storage, so `.absent` is
+            // exactly the state it presents — and replaceSecret, the only
+            // other place that drops the hold, is skipped for it. Forward
+            // completion is the removal intent regardless of what storage
+            // happens to hold, the same reason the retry plaintext below is
+            // cleared here.
+            discardHeldSecret(at: locator)
             profiles[index].setSecretValue(nil, for: field)
             if marker.component == .claude {
                 profiles[index].organizationId = nil
