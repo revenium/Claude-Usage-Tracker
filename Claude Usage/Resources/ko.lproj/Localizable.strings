@@ -936,6 +936,8 @@
 "popover.banner.credentials_not_saved" = "자격 증명이 저장되지 않음 (%d)";
 "popover.banner.credentials_not_saved.detail" = "이 세션에만 저장됩니다. 종료하면 사라집니다.";
 "popover.banner.credentials_not_saved.retry" = "저장 다시 시도";
+"personal.connected_not_saved" = "연결됨 — 저장되지 않음";
+"personal.retry_save" = "저장 다시 시도";
 
 /* ==================== */
 /* MARK: - Provider Parity */

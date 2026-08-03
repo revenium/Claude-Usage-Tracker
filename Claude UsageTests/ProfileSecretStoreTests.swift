@@ -824,6 +824,9 @@ final class CredentialStorageErrorMappingTests: XCTestCase {
         XCTAssertEqual(error.code, .credentialStorageUnavailable)
         XCTAssertNotNil(error.recoverySuggestion)
         XCTAssertFalse(error.isRecoverable)
+        // dataStorage gets no auto-injected action from ErrorPresenter, so
+        // an alert would otherwise offer nothing to act on.
+        XCTAssertEqual(error.recoveryActions, [.openSettings])
     }
 
     func testOtherKeychainFailuresAreRecoverable() {
@@ -833,6 +836,7 @@ final class CredentialStorageErrorMappingTests: XCTestCase {
 
         XCTAssertEqual(error.code, .credentialStorageFailed)
         XCTAssertTrue(error.isRecoverable)
+        XCTAssertEqual(error.recoveryActions, [.openSettings])
     }
 
     func testRollbackFailureIsNoLongerUnknown() {

@@ -962,6 +962,8 @@
 "popover.banner.credentials_not_saved" = "認証情報が保存されていません (%d)";
 "popover.banner.credentials_not_saved.detail" = "このセッションのみ保存されています。終了すると失われます。";
 "popover.banner.credentials_not_saved.retry" = "保存を再試行";
+"personal.connected_not_saved" = "接続済み — 未保存";
+"personal.retry_save" = "保存を再試行";
 
 /* ==================== */
 /* MARK: - Provider Parity */

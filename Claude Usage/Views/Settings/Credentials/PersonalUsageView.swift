@@ -50,11 +50,11 @@ struct PersonalUsageView: View {
                 // Professional Status Card
                 HStack(spacing: DesignTokens.Spacing.medium) {
                     Circle()
-                        .fill(currentCredentials?.hasClaudeAI == true ? Color.green : Color.secondary.opacity(0.4))
+                        .fill(statusDotColor)
                         .frame(width: DesignTokens.StatusDot.standard, height: DesignTokens.StatusDot.standard)
 
                     VStack(alignment: .leading, spacing: DesignTokens.Spacing.extraSmall) {
-                        Text(currentCredentials?.hasClaudeAI == true ? "general.connected".localized : "general.not_connected".localized)
+                        Text(statusTitle)
                             .font(DesignTokens.Typography.bodyMedium)
 
                         if let creds = currentCredentials, creds.hasClaudeAI {
@@ -65,6 +65,17 @@ struct PersonalUsageView: View {
                     }
 
                     Spacer()
+
+                    // The credential works but is not in the Keychain, so it
+                    // is lost at quit unless this succeeds.
+                    if isActiveCredentialSessionOnly {
+                        Button(action: retryCredentialSave) {
+                            Text("personal.retry_save".localized)
+                                .font(DesignTokens.Typography.body)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.regular)
+                    }
 
                     // Remove button integrated into status card
                     if currentCredentials?.hasClaudeAI == true {
@@ -213,6 +224,37 @@ struct PersonalUsageView: View {
         let prefix = String(key.prefix(12))
         let suffix = String(key.suffix(4))
         return "\(prefix)•••••\(suffix)"
+    }
+
+    /// True when the active Claude profile's credential is being held in
+    /// memory because secure storage refused it.
+    private var isActiveCredentialSessionOnly: Bool {
+        guard let id = profileManager.activeClaudeProfile?.id else {
+            return false
+        }
+        return profileManager.sessionOnlyCredentialProfileIDs.contains(id)
+    }
+
+    private var statusDotColor: Color {
+        guard currentCredentials?.hasClaudeAI == true else {
+            return Color.secondary.opacity(0.4)
+        }
+        return isActiveCredentialSessionOnly ? .orange : .green
+    }
+
+    private var statusTitle: String {
+        guard currentCredentials?.hasClaudeAI == true else {
+            return "general.not_connected".localized
+        }
+        return isActiveCredentialSessionOnly
+            ? "personal.connected_not_saved".localized
+            : "general.connected".localized
+    }
+
+    private func retryCredentialSave() {
+        profileManager.retrySessionOnlyCredentialSave(
+            profileID: profileManager.activeClaudeProfile?.id
+        )
     }
 
     private func removeCredentials() {

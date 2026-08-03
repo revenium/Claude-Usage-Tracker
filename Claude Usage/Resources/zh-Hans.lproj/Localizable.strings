@@ -960,6 +960,8 @@
 "popover.banner.credentials_not_saved" = "凭据未保存 (%d)";
 "popover.banner.credentials_not_saved.detail" = "仅在本次会话中保存，退出后将丢失。";
 "popover.banner.credentials_not_saved.retry" = "重试保存";
+"personal.connected_not_saved" = "已连接 — 未保存";
+"personal.retry_save" = "重试保存";
 
 /* ==================== */
 /* MARK: - Provider Parity */

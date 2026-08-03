@@ -1054,6 +1054,8 @@
 "popover.banner.credentials_not_saved" = "Credentials not saved (%d)";
 "popover.banner.credentials_not_saved.detail" = "Saved for this session only — lost at quit.";
 "popover.banner.credentials_not_saved.retry" = "Retry Save";
+"personal.connected_not_saved" = "Connected — not saved";
+"personal.retry_save" = "Retry Save";
 
 /* ==================== */
 /* MARK: - Provider Parity */

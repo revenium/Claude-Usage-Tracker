@@ -962,6 +962,8 @@
 "popover.banner.credentials_not_saved" = "Anmeldedaten nicht gespeichert (%d)";
 "popover.banner.credentials_not_saved.detail" = "Nur für diese Sitzung gespeichert — beim Beenden verloren.";
 "popover.banner.credentials_not_saved.retry" = "Erneut speichern";
+"personal.connected_not_saved" = "Verbunden — nicht gespeichert";
+"personal.retry_save" = "Erneut speichern";
 
 /* ==================== */
 /* MARK: - Provider Parity */

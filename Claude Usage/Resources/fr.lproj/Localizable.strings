@@ -940,6 +940,8 @@
 "popover.banner.credentials_not_saved" = "Identifiants non enregistrés (%d)";
 "popover.banner.credentials_not_saved.detail" = "Enregistrés pour cette session uniquement — perdus à la fermeture.";
 "popover.banner.credentials_not_saved.retry" = "Réessayer l’enregistrement";
+"personal.connected_not_saved" = "Connecté — non enregistré";
+"personal.retry_save" = "Réessayer l’enregistrement";
 
 /* ==================== */
 /* MARK: - Provider Parity */

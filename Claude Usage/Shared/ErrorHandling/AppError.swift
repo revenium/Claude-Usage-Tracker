@@ -438,6 +438,10 @@ extension AppError {
             isRecoverable: false,
             recoverySuggestion:
                 "error.credential_storage_unavailable.suggestion".localized,
+            // ErrorPresenter only auto-injects an action for the sessionKey
+            // and api categories, so a dataStorage alert would otherwise
+            // offer the user nothing to do.
+            recoveryActions: [.openSettings],
             file: file,
             line: line,
             function: function
@@ -458,6 +462,7 @@ extension AppError {
             isRecoverable: true,
             recoverySuggestion:
                 "error.credential_storage_failed.suggestion".localized,
+            recoveryActions: [.openSettings],
             file: file,
             line: line,
             function: function
