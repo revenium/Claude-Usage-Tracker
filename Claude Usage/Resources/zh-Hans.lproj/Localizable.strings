@@ -965,6 +965,7 @@
 "quit.credentials_unsaved.title" = "无法保存凭据";
 "quit.credentials_unsaved.body" = "退出后需要重新输入。";
 "quit.credentials_unsaved.quit" = "仍然退出";
+"setup.use_session_only" = "仅在本次会话中使用";
 
 /* ==================== */
 /* MARK: - Provider Parity */

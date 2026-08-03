@@ -945,6 +945,7 @@
 "quit.credentials_unsaved.title" = "Impossible d’enregistrer les identifiants";
 "quit.credentials_unsaved.body" = "En quittant, il faudra les saisir à nouveau.";
 "quit.credentials_unsaved.quit" = "Quitter quand même";
+"setup.use_session_only" = "Utiliser pour cette session uniquement";
 
 /* ==================== */
 /* MARK: - Provider Parity */

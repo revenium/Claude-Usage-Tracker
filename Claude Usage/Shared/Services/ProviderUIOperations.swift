@@ -510,7 +510,8 @@ final class ProviderUIDependencies {
     func completeClaudeManualSetup(
         sessionKey: String,
         organizationID: String?,
-        autoStartSessionEnabled: Bool
+        autoStartSessionEnabled: Bool,
+        acceptSessionOnlyStorage: Bool = false
     ) async throws -> Profile {
         let target = try claudeSetupProfile()
         var credentials = try profileManager.loadCredentials(
@@ -520,7 +521,8 @@ final class ProviderUIDependencies {
         credentials.organizationId = organizationID
         try profileManager.saveCredentials(
             for: target.id,
-            credentials: credentials
+            credentials: credentials,
+            acceptingSessionOnly: acceptSessionOnlyStorage
         )
         var profile = try requiredProfile(target.id)
         profile.autoStartSessionEnabled =

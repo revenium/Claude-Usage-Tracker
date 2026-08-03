@@ -1241,6 +1241,9 @@ struct ConfirmStepSetup: View {
     let dismiss: DismissAction
     let dependencies: ProviderUIDependencies
     @State private var isSaving = false
+    /// Set only when the save failed because secure storage refused the
+    /// credential, which is the one case the user can knowingly accept.
+    @State private var offerSessionOnly = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1319,6 +1322,16 @@ struct ConfirmStepSetup: View {
                     // where it reads as a rejected session key.
                     if case .error(let message) = wizardState.validationState {
                         WizardStatusBox(message: message, type: .error)
+
+                        if offerSessionOnly {
+                            Button(action: { saveConfiguration(acceptSessionOnly: true) }) {
+                                Text("setup.use_session_only".localized)
+                                    .font(.system(size: 12))
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(isSaving)
+                            .accessibilityIdentifier("setup.use_session_only")
+                        }
                     }
                 }
                 .padding(32)
@@ -1344,7 +1357,7 @@ struct ConfirmStepSetup: View {
 
                 Spacer()
 
-                Button(action: saveConfiguration) {
+                Button(action: { saveConfiguration() }) {
                     if isSaving {
                         ProgressView()
                             .scaleEffect(0.6)
@@ -1361,7 +1374,7 @@ struct ConfirmStepSetup: View {
         }
     }
 
-    private func saveConfiguration() {
+    private func saveConfiguration(acceptSessionOnly: Bool = false) {
         isSaving = true
 
         Task {
@@ -1373,7 +1386,8 @@ struct ConfirmStepSetup: View {
                             wizardState.selectedOrgId,
                         autoStartSessionEnabled:
                             wizardState
-                                .autoStartSessionEnabled
+                                .autoStartSessionEnabled,
+                        acceptSessionOnlyStorage: acceptSessionOnly
                     )
                 LoggingService.shared.log(
                     "SetupWizard: Updated profile setup preferences"
@@ -1398,6 +1412,13 @@ struct ConfirmStepSetup: View {
                     wizardState.validationState = .error(
                         SetupErrorMessage.text(for: appError)
                     )
+                    // Only a storage refusal is something the user can
+                    // knowingly accept; every other failure needs fixing.
+                    offerSessionOnly =
+                        !acceptSessionOnly
+                        && SetupErrorMessage.isCredentialStorageFailure(
+                            appError
+                        )
                     isSaving = false
                 }
             }
@@ -1500,6 +1521,13 @@ struct InstructionRow: View {
 /// The error code stays for support conversations, but it is no longer the
 /// only actionable thing in the box.
 enum SetupErrorMessage {
+    /// True when the credential itself was fine and only storing it failed,
+    /// which the user can accept for the session.
+    static func isCredentialStorageFailure(_ error: AppError) -> Bool {
+        error.code == .credentialStorageUnavailable
+            || error.code == .credentialStorageFailed
+    }
+
     static func text(for error: AppError) -> String {
         var text = error.message
         if let suggestion = error.recoverySuggestion,

@@ -1059,6 +1059,7 @@
 "quit.credentials_unsaved.title" = "Credentials couldn’t be saved";
 "quit.credentials_unsaved.body" = "Quitting will require entering them again.";
 "quit.credentials_unsaved.quit" = "Quit Anyway";
+"setup.use_session_only" = "Use for this session only";
 
 /* ==================== */
 /* MARK: - Provider Parity */

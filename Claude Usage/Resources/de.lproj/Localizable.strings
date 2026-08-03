@@ -967,6 +967,7 @@
 "quit.credentials_unsaved.title" = "Anmeldedaten konnten nicht gespeichert werden";
 "quit.credentials_unsaved.body" = "Beim Beenden müssen sie erneut eingegeben werden.";
 "quit.credentials_unsaved.quit" = "Trotzdem beenden";
+"setup.use_session_only" = "Nur für diese Sitzung verwenden";
 
 /* ==================== */
 /* MARK: - Provider Parity */

@@ -967,6 +967,7 @@
 "quit.credentials_unsaved.title" = "認証情報を保存できませんでした";
 "quit.credentials_unsaved.body" = "終了すると再入力が必要になります。";
 "quit.credentials_unsaved.quit" = "終了する";
+"setup.use_session_only" = "このセッションのみ使用";
 
 /* ==================== */
 /* MARK: - Provider Parity */

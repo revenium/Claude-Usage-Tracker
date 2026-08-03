@@ -612,6 +612,9 @@ struct ConfirmStep: View {
     let apiService: ClaudeAPIService
     let onSave: () -> Void
     @State private var isSaving = false
+    /// Set only when the save failed because secure storage refused the
+    /// credential, which is the one case the user can knowingly accept.
+    @State private var offerSessionOnly = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -691,6 +694,16 @@ struct ConfirmStep: View {
             if case .error(let message) = wizardState.validationState {
                 WizardStatusBox(message: message, type: .error)
                     .frame(maxWidth: .infinity, alignment: .leading)
+
+                if offerSessionOnly {
+                    Button(action: { saveConfiguration(acceptSessionOnly: true) }) {
+                        Text("setup.use_session_only".localized)
+                            .font(DesignTokens.Typography.body)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(isSaving)
+                    .accessibilityIdentifier("setup.use_session_only")
+                }
             }
 
             // Navigation buttons
@@ -719,7 +732,7 @@ struct ConfirmStep: View {
 
                 Spacer()
 
-                Button(action: saveConfiguration) {
+                Button(action: { saveConfiguration() }) {
                     HStack(spacing: 6) {
                         if isSaving {
                             ProgressView()
@@ -745,7 +758,7 @@ struct ConfirmStep: View {
         return originalKey != wizardState.sessionKey
     }
 
-    private func saveConfiguration() {
+    private func saveConfiguration(acceptSessionOnly: Bool = false) {
         guard let profileId = ProfileManager.shared.activeClaudeProfile?.id else { return }
 
         isSaving = true
@@ -758,7 +771,8 @@ struct ConfirmStep: View {
                 creds.organizationId = wizardState.selectedOrgId
                 try ProfileManager.shared.saveCredentials(
                     for: profileId,
-                    credentials: creds
+                    credentials: creds,
+                    acceptingSessionOnly: acceptSessionOnly
                 )
 
                 // Update statusline scripts if key or org changed (only if already installed)
@@ -790,6 +804,11 @@ struct ConfirmStep: View {
                     wizardState.validationState = .error(
                         SetupErrorMessage.text(for: appError)
                     )
+                    offerSessionOnly =
+                        !acceptSessionOnly
+                        && SetupErrorMessage.isCredentialStorageFailure(
+                            appError
+                        )
                     isSaving = false
                 }
             }

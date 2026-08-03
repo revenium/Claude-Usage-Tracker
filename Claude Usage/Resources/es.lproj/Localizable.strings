@@ -948,6 +948,7 @@
 "quit.credentials_unsaved.title" = "No se pudieron guardar las credenciales";
 "quit.credentials_unsaved.body" = "Al salir tendrás que volver a introducirlas.";
 "quit.credentials_unsaved.quit" = "Salir de todos modos";
+"setup.use_session_only" = "Usar solo en esta sesión";
 
 /* ==================== */
 /* MARK: - Provider Parity */

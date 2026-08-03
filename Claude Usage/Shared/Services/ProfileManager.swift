@@ -1208,7 +1208,25 @@ class ProfileManager: ObservableObject {
         return try profileStore.loadProfileCredentials(profileId)
     }
 
-    func saveCredentials(for profileId: UUID, credentials: ProfileCredentials) throws {
+    /// Saves credentials, accepting session-only storage if the Keychain
+    /// refuses. Only for a user who has been shown the consequence and
+    /// chosen it — the ordinary `saveCredentials` still fails closed.
+    func saveCredentialsAcceptingSessionOnly(
+        for profileId: UUID,
+        credentials: ProfileCredentials
+    ) throws {
+        try saveCredentials(
+            for: profileId,
+            credentials: credentials,
+            acceptingSessionOnly: true
+        )
+    }
+
+    func saveCredentials(
+        for profileId: UUID,
+        credentials: ProfileCredentials,
+        acceptingSessionOnly: Bool = false
+    ) throws {
         guard let index = profiles.firstIndex(where: { $0.id == profileId }) else {
             throw ProfileStoreError.profileNotFound(profileId)
         }
@@ -1220,7 +1238,19 @@ class ProfileManager: ObservableObject {
             || previous.apiOrganizationId != credentials.apiOrganizationId
             || previous.cliCredentialsJSON != credentials.cliCredentialsJSON
 
-        try profileStore.saveProfileCredentials(profileId, credentials: credentials)
+        if acceptingSessionOnly {
+            try profileStore.saveProfileCredentialsAcceptingSessionOnly(
+                profileId,
+                credentials: credentials
+            )
+        } else {
+            try profileStore.saveProfileCredentials(
+                profileId,
+                credentials: credentials
+            )
+        }
+        sessionOnlyCredentialProfileIDs =
+            profileStore.profilesWithSessionOnlyCredentials
 
         profiles[index].claudeSessionKey = credentials.claudeSessionKey
         profiles[index].organizationId = credentials.organizationId

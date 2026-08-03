@@ -965,6 +965,7 @@
 "quit.credentials_unsaved.title" = "Não foi possível salvar as credenciais";
 "quit.credentials_unsaved.body" = "Ao sair, será necessário inseri-las novamente.";
 "quit.credentials_unsaved.quit" = "Sair mesmo assim";
+"setup.use_session_only" = "Usar apenas nesta sessão";
 
 /* ==================== */
 /* MARK: - Provider Parity */
