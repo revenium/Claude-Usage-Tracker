@@ -61,6 +61,11 @@ struct PersonalUsageView: View {
                             Text(maskKey(creds.claudeSessionKey ?? ""))
                                 .font(DesignTokens.Typography.captionMono)
                                 .foregroundColor(.secondary)
+                                // The Retry Save button narrows this column
+                                // when a credential is held; the masked key
+                                // is a glance-check, not something to wrap.
+                                .lineLimit(1)
+                                .truncationMode(.middle)
                         }
                     }
 
