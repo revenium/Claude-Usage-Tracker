@@ -719,6 +719,10 @@ class ProfileStore {
         profiles[index].cliCredentialsJSON = credentials.cliCredentialsJSON
         profiles[index].credentialMigrationRetry = .init()
 
+        // Snapshot for the same reason performCredentialTransaction takes
+        // one: after a failed persist, whether metadata actually reverted is
+        // something to observe, not assume.
+        let previousProfileData = defaults.data(forKey: Keys.profiles)
         var heldHere: [ProfileSecretLocator] = []
         var written: [(ProfileSecretLocator, ProfileSecretReadResult)] = []
         for field in ProfileSecretField.allCases {
@@ -779,10 +783,15 @@ class ProfileStore {
                 }
             }
             guard rollbackFailedFields.isEmpty else {
+                // persistProfiles can fail to put the old metadata back. If
+                // it did, saying "metadata: restored" here would be the same
+                // kind of lie about stored state this change exists to stop.
+                let metadataRollbackFailed =
+                    defaults.data(forKey: Keys.profiles) != previousProfileData
                 throw ProfileStoreError.credentialRollbackFailed(
                     profileId,
                     rollbackFailedFields,
-                    metadata: false
+                    metadata: metadataRollbackFailed
                 )
             }
             throw error

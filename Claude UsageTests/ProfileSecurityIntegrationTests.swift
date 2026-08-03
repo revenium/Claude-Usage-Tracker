@@ -1456,6 +1456,7 @@ final class ProfileSecurityIntegrationTests: HostedAppTestCase {
                 return XCTFail("Expected credentialRollbackFailed, got \(error)")
             }
             XCTAssertEqual(fields, [.apiSessionKey])
+            // Observed, not assumed: this fixture's metadata does revert.
             XCTAssertFalse(metadata)
         }
     }
