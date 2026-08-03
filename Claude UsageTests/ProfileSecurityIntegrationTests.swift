@@ -56,7 +56,11 @@ final class ProfileSecurityIntegrationTests: HostedAppTestCase {
     }
 
     @MainActor
-    func testLegacyProfileDecodesAndReencodesAsExplicitRetryEnvelope() throws {
+    /// Decoding a legacy record still recovers every secret — that is what
+    /// makes an existing install rescuable — but re-encoding emits none of
+    /// them, in any shape. The old contract re-emitted them as an explicit
+    /// envelope, which is precisely the behaviour being retired.
+    func testLegacyProfileDecodesEverySecretAndReencodesNone() throws {
         let id = UUID()
         let legacyObject: [[String: Any]] = [[
             "id": id.uuidString,
@@ -79,8 +83,12 @@ final class ProfileSecurityIntegrationTests: HostedAppTestCase {
         XCTAssertFalse(text.contains("\"claudeSessionKey\""))
         XCTAssertFalse(text.contains("\"apiSessionKey\""))
         XCTAssertFalse(text.contains("\"cliCredentialsJSON\""))
-        XCTAssertTrue(text.contains("\"credentialMigrationRetry\""))
-        XCTAssertTrue(text.contains("LEGACY_CLAUDE_FIXTURE"))
+        XCTAssertFalse(text.contains("\"credentialMigrationRetry\""))
+        // By value, not just by key: a secret must not survive a round trip
+        // under any name.
+        XCTAssertFalse(text.contains("LEGACY_CLAUDE_FIXTURE"))
+        XCTAssertFalse(text.contains("LEGACY_API_FIXTURE"))
+        XCTAssertFalse(text.contains("LEGACY_CLI_FIXTURE"))
     }
 
     func testSuccessfulLegacyMigrationScrubsAllPlaintext() throws {
@@ -304,12 +312,14 @@ final class ProfileSecurityIntegrationTests: HostedAppTestCase {
         var retry = ProfileCredentialMigrationRetry()
         retry.setValue("OLD_RETRY", for: .claudeSessionKey)
         defaults.set(
-            try JSONEncoder().encode([
-                Profile(
-                    id: profileID,
-                    name: "Before",
-                    organizationId: "old-org",
-                    credentialMigrationRetry: retry
+            try legacyProfilesData([
+                (
+                    Profile(
+                        id: profileID,
+                        name: "Before",
+                        organizationId: "old-org"
+                    ),
+                    retry
                 )
             ]),
             forKey: "profiles_v3"
@@ -371,12 +381,8 @@ final class ProfileSecurityIntegrationTests: HostedAppTestCase {
             for: .apiSessionKey
         )
         defaults.set(
-            try JSONEncoder().encode([
-                Profile(
-                    id: profileID,
-                    name: "CLI retry",
-                    credentialMigrationRetry: retry
-                )
+            try legacyProfilesData([
+                (Profile(id: profileID, name: "CLI retry"), retry)
             ]),
             forKey: "profiles_v3"
         )

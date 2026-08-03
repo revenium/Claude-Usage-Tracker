@@ -56,6 +56,16 @@ struct Profile: Codable, Identifiable, Equatable {
     /// Plaintext retained only when a legacy credential could not yet be
     /// committed to verified secure storage. ProfileStore retries each field
     /// independently and removes it after successful Keychain readback.
+    /// Legacy plaintext secrets from an older on-disk profile.
+    ///
+    /// Inbound only, and deliberately asymmetric: `decode` still reads it so
+    /// an existing install can be rescued, `encode` never writes it, and
+    /// adoption at the decode boundary empties it before any caller can
+    /// persist. Nothing sets it to a value — every remaining `setValue`
+    /// writes nil.
+    ///
+    /// Keeping it decodable is what lets old data be migrated; refusing to
+    /// encode it is what stops a secret reaching disk again.
     var credentialMigrationRetry: ProfileCredentialMigrationRetry
 
     /// Usage retained only while a legacy preference-blob migration has not
@@ -296,9 +306,6 @@ struct Profile: Codable, Identifiable, Equatable {
             try container.encode(true, forKey: .deletionInProgress)
         }
 
-        if !credentialMigrationRetry.isEmpty {
-            try container.encode(credentialMigrationRetry, forKey: .credentialMigrationRetry)
-        }
         if let currentUsageMigrationRetry, !currentUsageMigrationRetry.isEmpty {
             try container.encode(
                 currentUsageMigrationRetry,

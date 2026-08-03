@@ -827,17 +827,18 @@ final class ProfileCurrentUsageIntegrationTests: HostedAppTestCase {
                 for: .cliCredentialsJSON
             )
             backing.storage["profiles_v3"] =
-                try JSONEncoder().encode([
-                    Profile(
-                        id: profileID,
-                        name: "Profile",
-                        organizationId: "claude-org",
-                        apiOrganizationId: "api-org",
-                        apiSessionKeyExpiry: Date(
-                            timeIntervalSinceReferenceDate: 900
+                try legacyProfilesData([
+                    (
+                        Profile(
+                            id: profileID,
+                            name: "Profile",
+                            organizationId: "claude-org",
+                            apiOrganizationId: "api-org",
+                            apiSessionKeyExpiry: Date(
+                                timeIntervalSinceReferenceDate: 900
+                            )
                         ),
-                        credentialMigrationRetry:
-                            runtimeCredentialRetry
+                        runtimeCredentialRetry
                     )
                 ])
             let usageFiles = MockCurrentUsageFileStore()
@@ -1067,13 +1068,15 @@ final class ProfileCurrentUsageIntegrationTests: HostedAppTestCase {
             retry.setValue(retrySecret, for: component.secretField)
             let backing = FaultingProfileDefaults()
             backing.set(
-                try JSONEncoder().encode([
-                    Profile(
-                        id: profileID,
-                        name: "Retry-only target",
-                        organizationId: "claude-org",
-                        apiOrganizationId: "api-org",
-                        credentialMigrationRetry: retry
+                try legacyProfilesData([
+                    (
+                        Profile(
+                            id: profileID,
+                            name: "Retry-only target",
+                            organizationId: "claude-org",
+                            apiOrganizationId: "api-org"
+                        ),
+                        retry
                     )
                 ]),
                 forKey: "profiles_v3"
@@ -1163,15 +1166,17 @@ final class ProfileCurrentUsageIntegrationTests: HostedAppTestCase {
             )
             let backing = FaultingProfileDefaults()
             backing.set(
-                try JSONEncoder().encode([
-                    Profile(
-                        id: profileID,
-                        name: "Fallback identity",
-                        organizationId: "claude-org",
-                        apiOrganizationId: "api-org",
-                        apiSessionKeyExpiry: expiry,
-                        credentialMigrationRetry: credentialRetry,
-                        currentUsageMigrationRetry: usageRetry
+                try legacyProfilesData([
+                    (
+                        Profile(
+                            id: profileID,
+                            name: "Fallback identity",
+                            organizationId: "claude-org",
+                            apiOrganizationId: "api-org",
+                            apiSessionKeyExpiry: expiry,
+                            currentUsageMigrationRetry: usageRetry
+                        ),
+                        credentialRetry
                     )
                 ]),
                 forKey: "profiles_v3"
@@ -1330,14 +1335,16 @@ final class ProfileCurrentUsageIntegrationTests: HostedAppTestCase {
             let backing = SequencedProfileWriteFaultDefaults(
                 corruptProfileWrite: 2
             )
-            backing.storage["profiles_v3"] = try JSONEncoder().encode([
-                Profile(
-                    id: profileID,
-                    name: "Recovery rewrite",
-                    organizationId: "claude-org",
-                    apiOrganizationId: "api-org",
-                    credentialMigrationRetry: credentialRetry,
-                    currentUsageMigrationRetry: usageRetry
+            backing.storage["profiles_v3"] = try legacyProfilesData([
+                (
+                    Profile(
+                        id: profileID,
+                        name: "Recovery rewrite",
+                        organizationId: "claude-org",
+                        apiOrganizationId: "api-org",
+                        currentUsageMigrationRetry: usageRetry
+                    ),
+                    credentialRetry
                 )
             ])
             backing.storage[
@@ -1510,13 +1517,15 @@ final class ProfileCurrentUsageIntegrationTests: HostedAppTestCase {
             )
             let backing = FaultingProfileDefaults()
             backing.set(
-                try JSONEncoder().encode([
-                    Profile(
-                        id: profileID,
-                        name: "Unrelated retry",
-                        organizationId: "claude-org",
-                        apiOrganizationId: "api-org",
-                        credentialMigrationRetry: retry
+                try legacyProfilesData([
+                    (
+                        Profile(
+                            id: profileID,
+                            name: "Unrelated retry",
+                            organizationId: "claude-org",
+                            apiOrganizationId: "api-org"
+                        ),
+                        retry
                     )
                 ]),
                 forKey: "profiles_v3"

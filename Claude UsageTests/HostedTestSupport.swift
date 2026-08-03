@@ -60,3 +60,47 @@ final class FaultingProfileDefaults: ProfileDefaultsStore {
         storage.removeValue(forKey: defaultName)
     }
 }
+
+/// Builds `profiles_v3` data in the **frozen legacy on-disk format**: the v3
+/// profile record plus the `credentialMigrationRetry` plaintext envelope.
+///
+/// Deliberately not produced with `Profile`'s encoder. Current code cannot
+/// emit that envelope — that is the whole point of the change — and legacy
+/// data was written by an *older* encoder anyway. Synthesising it keeps this
+/// helper pinned to the format it exists to model, instead of drifting toward
+/// whatever the current encoder happens to do.
+///
+/// Frozen format v3. Do not "modernise" it; add a new helper if the on-disk
+/// shape ever gains another legacy variant to migrate.
+func legacyProfilesData(
+    _ entries: [(profile: Profile, retry: ProfileCredentialMigrationRetry)]
+) throws -> Data {
+    var objects: [[String: Any]] = []
+    for entry in entries {
+        let encoded = try JSONEncoder().encode(entry.profile)
+        guard var object = try JSONSerialization.jsonObject(
+            with: encoded
+        ) as? [String: Any] else {
+            throw LegacyFixtureError.notAnObject
+        }
+        var envelope: [String: Any] = [:]
+        if let value = entry.retry.claudeSessionKey {
+            envelope["claude-session-key"] = value
+        }
+        if let value = entry.retry.apiSessionKey {
+            envelope["api-session-key"] = value
+        }
+        if let value = entry.retry.cliCredentialsJSON {
+            envelope["cli-credentials"] = value
+        }
+        if !envelope.isEmpty {
+            object["credentialMigrationRetry"] = envelope
+        }
+        objects.append(object)
+    }
+    return try JSONSerialization.data(withJSONObject: objects)
+}
+
+enum LegacyFixtureError: Error {
+    case notAnObject
+}
