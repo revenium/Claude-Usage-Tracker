@@ -7,11 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-08-02
+
 ### Changed
 
+- Redesigned menu bar popover on a native macOS design system: `.popover`
+  vibrancy material with a readability scrim, uppercase section headers over
+  grouped cards, a consistent type scale with monospaced-digit percentages,
+  and capsule progress bars.
+- The popover now leads with usage for the account you clicked, followed by an
+  Accounts footer listing every profile grouped by provider — a green dot marks
+  the active account, an accent chip marks the one being viewed.
+- Viewing an account and activating it are now distinct actions: browsing is
+  chips-only, and activation happens exclusively through an explicit
+  "Make Active" button with a clarifying tooltip.
+- The header profile dropdown is removed; it duplicated the accounts chips and
+  read as if it could change the active account.
+- Detached popover panels widened from 280 to 320 points to match the
+  redesigned content.
 - The About screen now credits Revenium as maintainer first, with a
   "Maintained By" entry linking to the fork's repository, while keeping the
   original creator credit ("Created By" Hamed Elfayome) intact below it.
+
+### Fixed
+
+- Switching between menu bar items while the popover is open no longer flashes
+  a stale render of the previous profile.
+- Viewing a profile without its own menu bar item in multi-profile display
+  mode no longer silently snaps back to the active profile.
 
 ## [3.0.5] - 2026-08-02
 
