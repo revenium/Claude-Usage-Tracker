@@ -1415,6 +1415,51 @@ final class ProfileSecurityIntegrationTests: HostedAppTestCase {
         XCTAssertTrue(store.profilesWithSessionOnlyCredentials.isEmpty)
     }
 
+    /// A rollback that cannot complete must say so, not quietly assert a
+    /// baseline it did not achieve — a later ordinary save consults that
+    /// baseline and would skip rewriting a diverged value.
+    @MainActor
+    func testOptInSaveSurfacesAFailedRollback() throws {
+        let profileID = UUID()
+        let secrets = MockProfileSecretStore()
+        let backing = FaultingProfileDefaults()
+        let store = retain(
+            ProfileStore(defaults: backing, secretStore: secrets)
+        )
+        try seedProfilesForTesting(
+            [Profile(id: profileID, name: "Rollback")],
+            in: store
+        )
+        secrets.writeErrors[.claudeSessionKey] = TestError.expected
+        backing.corruptNextProfileWrite = true
+        // api had no prior value, so rolling it back means deleting it — and
+        // that delete fails, leaving the new secret durably written against
+        // metadata that never landed.
+        secrets.deleteErrors[.apiSessionKey] = TestError.expected
+
+        var credentials = ProfileCredentials()
+        credentials.claudeSessionKey = "NEW_CLAUDE"
+        credentials.apiSessionKey = "NEW_API"
+        credentials.organizationId = "org"
+
+        XCTAssertThrowsError(
+            try store.saveProfileCredentialsAcceptingSessionOnly(
+                profileID,
+                credentials: credentials
+            )
+        ) { error in
+            guard case ProfileStoreError.credentialRollbackFailed(
+                _,
+                let fields,
+                let metadata
+            ) = error else {
+                return XCTFail("Expected credentialRollbackFailed, got \(error)")
+            }
+            XCTAssertEqual(fields, [.apiSessionKey])
+            XCTAssertFalse(metadata)
+        }
+    }
+
     // MARK: - A removal must not be undone by a held credential
 
     /// The load path overlays held values when secure storage reports

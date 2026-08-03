@@ -763,9 +763,27 @@ class ProfileStore {
             }
             // Nor may a secret stay in the Keychain paired with metadata that
             // never landed, while the caller is told the save failed.
+            var rollbackFailedFields: [ProfileSecretField] = []
             for (locator, previous) in written {
-                try? restoreSecret(previous, at: locator)
-                credentialBaselines[locator] = previous
+                do {
+                    try restoreSecret(previous, at: locator)
+                    credentialBaselines[locator] = previous
+                    unresolvedLocators.remove(locator)
+                } catch {
+                    // Never claim a baseline the restore did not achieve: a
+                    // later ordinary save consults it and would skip
+                    // rewriting a value that has actually diverged.
+                    credentialBaselines.removeValue(forKey: locator)
+                    unresolvedLocators.insert(locator)
+                    rollbackFailedFields.append(locator.field)
+                }
+            }
+            guard rollbackFailedFields.isEmpty else {
+                throw ProfileStoreError.credentialRollbackFailed(
+                    profileId,
+                    rollbackFailedFields,
+                    metadata: false
+                )
             }
             throw error
         }
