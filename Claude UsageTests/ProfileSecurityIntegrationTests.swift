@@ -1243,6 +1243,101 @@ final class ProfileSecurityIntegrationTests: HostedAppTestCase {
         )
     }
 
+    // MARK: - Opt-in session-only save (setup wizard's explicit choice)
+
+    /// The default save path fails closed and loud. This one exists only for
+    /// a user who has been told the consequence and chosen it anyway.
+    @MainActor
+    func testOptInSaveCompletesAndHoldsTheRefusedCredential() throws {
+        let profileID = UUID()
+        let secrets = MockProfileSecretStore()
+        let store = retain(
+            ProfileStore(defaults: defaults, secretStore: secrets)
+        )
+        try seedProfilesForTesting(
+            [Profile(id: profileID, name: "Wizard")],
+            in: store
+        )
+        secrets.writeErrors[.claudeSessionKey] = TestError.expected
+
+        var credentials = ProfileCredentials()
+        credentials.claudeSessionKey = "OPTIN_SESSION_ONLY"
+        credentials.organizationId = "org"
+
+        XCTAssertNoThrow(
+            try store.saveProfileCredentialsAcceptingSessionOnly(
+                profileID,
+                credentials: credentials
+            )
+        )
+
+        XCTAssertTrue(
+            store.profilesWithSessionOnlyCredentials.contains(profileID)
+        )
+        XCTAssertNil(secrets.values[locator(profileID, .claudeSessionKey)])
+        XCTAssertFalse(
+            try persistedProfileText().contains("OPTIN_SESSION_ONLY"),
+            "Opting in must not put the secret on disk — that is the whole point"
+        )
+    }
+
+    /// A hold is only durable if the profile it belongs to is.
+    @MainActor
+    func testOptInSaveClearsTheHoldWhenMetadataPersistFails() throws {
+        let profileID = UUID()
+        let secrets = MockProfileSecretStore()
+        let backing = FaultingProfileDefaults()
+        let store = retain(
+            ProfileStore(defaults: backing, secretStore: secrets)
+        )
+        try seedProfilesForTesting(
+            [Profile(id: profileID, name: "Wizard")],
+            in: store
+        )
+        secrets.writeErrors[.claudeSessionKey] = TestError.expected
+        backing.corruptNextProfileWrite = true
+
+        var credentials = ProfileCredentials()
+        credentials.claudeSessionKey = "OPTIN_METADATA_FAILURE"
+        credentials.organizationId = "org"
+
+        XCTAssertThrowsError(
+            try store.saveProfileCredentialsAcceptingSessionOnly(
+                profileID,
+                credentials: credentials
+            )
+        )
+        XCTAssertTrue(
+            store.profilesWithSessionOnlyCredentials.isEmpty,
+            "Never keep a secret for a profile that failed to persist"
+        )
+    }
+
+    /// Opting in converts storage refusals, nothing else.
+    @MainActor
+    func testOptInSaveStillThrowsForNonStorageFailures() throws {
+        let secrets = MockProfileSecretStore()
+        let store = retain(
+            ProfileStore(defaults: defaults, secretStore: secrets)
+        )
+        try seedProfilesForTesting([], in: store)
+
+        var credentials = ProfileCredentials()
+        credentials.claudeSessionKey = "UNKNOWN_PROFILE"
+
+        XCTAssertThrowsError(
+            try store.saveProfileCredentialsAcceptingSessionOnly(
+                UUID(),
+                credentials: credentials
+            )
+        ) { error in
+            guard case ProfileStoreError.profileNotFound = error else {
+                return XCTFail("Expected profileNotFound, got \(error)")
+            }
+        }
+        XCTAssertTrue(store.profilesWithSessionOnlyCredentials.isEmpty)
+    }
+
     private func persistedProfileText() throws -> String {
         let data = try XCTUnwrap(defaults.data(forKey: "profiles_v3"))
         return try XCTUnwrap(String(data: data, encoding: .utf8))

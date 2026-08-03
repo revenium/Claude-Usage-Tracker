@@ -599,4 +599,17 @@ struct ProfileCredentials {
     var hasCLI: Bool {
         cliCredentialsJSON != nil
     }
+
+    /// Mirrors `Profile.secretValue(for:)` so credential-set and profile
+    /// code can iterate the same field list without duplicating the mapping.
+    func secretValue(for field: ProfileSecretField) -> String? {
+        switch field {
+        case .claudeSessionKey:
+            return claudeSessionKey
+        case .apiSessionKey:
+            return apiSessionKey
+        case .cliCredentialsJSON:
+            return cliCredentialsJSON
+        }
+    }
 }

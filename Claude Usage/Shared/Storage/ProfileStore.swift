@@ -644,6 +644,92 @@ class ProfileStore {
     ///
     /// A nil secret is a verified deletion here. This is intentionally
     /// different from `saveProfiles`, where nil is credential-neutral.
+    /// Saves credentials, accepting session-only storage if the Keychain
+    /// refuses.
+    ///
+    /// The ordinary path fails closed and loud: a refused write rolls back
+    /// and throws, so nothing half-succeeds behind the user's back. This
+    /// variant exists for the one case where the user has been told the
+    /// consequence and chosen it anyway — the setup wizard's "use for this
+    /// session only". The credential is held in memory exactly as elsewhere,
+    /// so the popover banner, the Settings card, and the quit guard all pick
+    /// it up.
+    func saveProfileCredentialsAcceptingSessionOnly(
+        _ profileId: UUID,
+        credentials: ProfileCredentials
+    ) throws {
+        do {
+            try saveProfileCredentials(profileId, credentials: credentials)
+        } catch let error as ProfileStoreError {
+            guard case .credentialTransactionFailed = error else {
+                // A rollback that could not complete leaves storage in an
+                // unknown state. Holding a value on top of that would be
+                // guessing, so it still surfaces.
+                throw error
+            }
+            try holdCredentialsForSessionOnly(
+                profileId,
+                credentials: credentials
+            )
+        }
+    }
+
+    /// Writes the metadata and keeps the secrets in memory only.
+    private func holdCredentialsForSessionOnly(
+        _ profileId: UUID,
+        credentials: ProfileCredentials
+    ) throws {
+        var profiles = try loadProfilesWithVerifiedMigration()
+        guard let index = profiles.firstIndex(where: { $0.id == profileId }) else {
+            throw ProfileStoreError.profileNotFound(profileId)
+        }
+        profiles[index].claudeSessionKey = credentials.claudeSessionKey
+        profiles[index].organizationId = credentials.organizationId
+        profiles[index].apiSessionKey = credentials.apiSessionKey
+        profiles[index].apiOrganizationId = credentials.apiOrganizationId
+        profiles[index].apiSessionKeyExpiry = credentials.apiSessionKeyExpiry
+        profiles[index].cliCredentialsJSON = credentials.cliCredentialsJSON
+        profiles[index].credentialMigrationRetry = .init()
+
+        var heldHere: [ProfileSecretLocator] = []
+        for field in ProfileSecretField.allCases {
+            guard let value = credentials.secretValue(for: field) else {
+                continue
+            }
+            let locator = ProfileSecretLocator(
+                profileID: profileId,
+                field: field
+            )
+            do {
+                try secretStore.write(value, to: locator)
+                credentialBaselines[locator] = .value(value)
+                sessionOnlySecrets.removeValue(forKey: locator)
+                notifySessionOnlyChange()
+            } catch {
+                // Retrying here also disambiguates why the transaction
+                // failed: if the writes succeed now, the original failure was
+                // the metadata persist, not storage, and nothing is held.
+                holdInMemoryOnly(value, at: locator, error: error)
+                heldHere.append(locator)
+            }
+        }
+
+        do {
+            // Metadata only — Profile.encode carries no secret material.
+            try persistProfiles(profiles)
+        } catch {
+            // A hold is only durable if the profile it belongs to is. Never
+            // keep a secret for a profile that failed to persist.
+            for locator in heldHere {
+                sessionOnlySecrets.removeValue(forKey: locator)
+            }
+            if !heldHere.isEmpty {
+                notifySessionOnlyChange()
+            }
+            throw error
+        }
+    }
+
     func saveProfileCredentials(_ profileId: UUID, credentials: ProfileCredentials) throws {
         var profiles = try loadProfilesWithVerifiedMigration()
         guard let index = profiles.firstIndex(where: { $0.id == profileId }) else {
