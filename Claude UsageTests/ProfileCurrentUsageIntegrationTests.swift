@@ -1204,9 +1204,13 @@ final class ProfileCurrentUsageIntegrationTests: HostedAppTestCase {
                     for: component.secretField
                 )
             )
-            XCTAssertEqual(
-                masked.credentialMigrationRetry.cliCredentialsJSON,
-                unrelatedRetry
+            // Adoption at the decode boundary empties the envelope and moves
+            // the value into the in-memory hold. Same intent as before — the
+            // unrelated credential survives the masking — but it now survives
+            // somewhere it is not plaintext on disk.
+            XCTAssertNil(masked.credentialMigrationRetry.cliCredentialsJSON)
+            XCTAssertTrue(
+                store.profilesWithSessionOnlyCredentials.contains(profileID)
             )
             XCTAssertEqual(
                 masked.cliCredentialsJSON,
@@ -1382,12 +1386,21 @@ final class ProfileCurrentUsageIntegrationTests: HostedAppTestCase {
                     for: component.secretField
                 )
             )
+            // The unrelated credential is still preserved across recovery —
+            // in secure storage now, with no plaintext left in the envelope.
+            XCTAssertNil(fallback.credentialMigrationRetry.cliCredentialsJSON)
+            XCTAssertNil(persisted.credentialMigrationRetry.cliCredentialsJSON)
+            // Not asserted on the decoded models: a plain decode hydrates no
+            // secrets, and once adoption has scrubbed the envelope there is
+            // nothing plaintext left for it to carry. Secure storage is the
+            // only place the value should now be.
             XCTAssertEqual(
-                fallback.credentialMigrationRetry.cliCredentialsJSON,
-                "UNRELATED_CREDENTIAL_RETRY"
-            )
-            XCTAssertEqual(
-                persisted.credentialMigrationRetry.cliCredentialsJSON,
+                secrets.values[
+                    ProfileSecretLocator(
+                        profileID: profileID,
+                        field: .cliCredentialsJSON
+                    )
+                ],
                 "UNRELATED_CREDENTIAL_RETRY"
             )
 
@@ -1514,9 +1527,12 @@ final class ProfileCurrentUsageIntegrationTests: HostedAppTestCase {
                 field: component.secretField
             )
             secrets.values[targetLocator] = targetSecret
-            // The first load fails the migration replay, the second fails the
-            // in-session self-heal; the third is allowed to succeed.
-            secrets.writeErrorCounts[.cliCredentialsJSON] = 2
+            // Sticky, not a budget. Adoption now runs at every decode, so a
+            // counted budget makes "is it still refused?" depend on how many
+            // times the flow happened to decode — the drift that made the
+            // earlier counter-based fixtures wrong. The intent here is
+            // "secure storage will not take this", so say exactly that.
+            secrets.writeErrors[.cliCredentialsJSON] = TestFailure.expected
             let usageFiles = MockCurrentUsageFileStore()
             usageFiles.values[profileID] = ProfileCurrentUsage(
                 claudeUsage: makeClaudeUsage(tokens: 41),
@@ -1552,6 +1568,7 @@ final class ProfileCurrentUsageIntegrationTests: HostedAppTestCase {
 
             // Same process, next load: the self-heal writes it to secure
             // storage once the store stops refusing.
+            secrets.writeErrors.removeValue(forKey: .cliCredentialsJSON)
             let healed = try XCTUnwrap(
                 store.loadProfilesWithVerifiedMigration().first
             )
@@ -2170,6 +2187,11 @@ private final class MockSecretStore: ProfileSecretStore {
     var values: [ProfileSecretLocator: String] = [:]
     var readErrors: [ProfileSecretField: Error] = [:]
     var deleteErrors: [ProfileSecretField: Error] = [:]
+    /// Sticky, unlike `writeErrorCounts`. Use this when the intent is
+    /// "secure storage will not take this field" rather than "the next N
+    /// attempts fail" — a counted budget makes assertions depend on how many
+    /// times the flow happens to write, which drifts as call paths change.
+    var writeErrors: [ProfileSecretField: Error] = [:]
     var writeErrorCounts: [ProfileSecretField: Int] = [:]
     var writeCount = 0
 
@@ -2181,6 +2203,9 @@ private final class MockSecretStore: ProfileSecretStore {
     }
 
     func write(_ value: String, to locator: ProfileSecretLocator) throws {
+        if let error = writeErrors[locator.field] {
+            throw error
+        }
         if let count = writeErrorCounts[locator.field], count > 0 {
             writeErrorCounts[locator.field] = count - 1
             throw TestFailure.expected
