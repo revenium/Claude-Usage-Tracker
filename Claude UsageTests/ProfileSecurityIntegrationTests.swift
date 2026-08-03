@@ -1281,6 +1281,39 @@ final class ProfileSecurityIntegrationTests: HostedAppTestCase {
         )
     }
 
+    /// "Cannot read the prior state" is not "there was no prior state".
+    /// Swallowing it would roll back to the wrong thing later.
+    @MainActor
+    func testOptInSaveSurfacesAnUnreadablePriorState() throws {
+        let profileID = UUID()
+        let secrets = MockProfileSecretStore()
+        let store = retain(
+            ProfileStore(defaults: defaults, secretStore: secrets)
+        )
+        try seedProfilesForTesting(
+            [Profile(id: profileID, name: "Unreadable")],
+            in: store
+        )
+        secrets.readErrors[.claudeSessionKey] = TestError.expected
+
+        var credentials = ProfileCredentials()
+        credentials.claudeSessionKey = "VALUE"
+        credentials.organizationId = "org"
+
+        XCTAssertThrowsError(
+            try store.saveProfileCredentialsAcceptingSessionOnly(
+                profileID,
+                credentials: credentials
+            )
+        ) { error in
+            guard case ProfileStoreError.credentialReadUnresolved = error else {
+                return XCTFail(
+                    "Expected credentialReadUnresolved, got \(error)"
+                )
+            }
+        }
+    }
+
     /// A hold is only durable if the profile it belongs to is.
     @MainActor
     func testOptInSaveClearsTheHoldWhenMetadataPersistFails() throws {

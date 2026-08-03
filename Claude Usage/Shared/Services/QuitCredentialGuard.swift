@@ -41,12 +41,10 @@ nonisolated enum QuitCredentialGuard {
         let names = orderedProfiles
             .filter { remaining.contains($0.id) }
             .map(\.name)
-        // A held credential whose profile has since disappeared should still
-        // stop the quit; falling through to `.terminate` would discard it
+        // Note the absence of an is-empty guard: a held credential whose
+        // profile has since disappeared yields no name, and must still stop
+        // the quit. Falling through to `.terminate` would discard it
         // silently, which is the behaviour this whole change exists to end.
-        guard !names.isEmpty else {
-            return .confirm(accountNames: [])
-        }
         return .confirm(accountNames: names)
     }
 }

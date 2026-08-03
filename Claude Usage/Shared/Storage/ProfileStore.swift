@@ -668,10 +668,6 @@ class ProfileStore {
 
     // MARK: - Credential Helpers
 
-    /// Explicitly replaces the complete credential set for a profile.
-    ///
-    /// A nil secret is a verified deletion here. This is intentionally
-    /// different from `saveProfiles`, where nil is credential-neutral.
     /// Saves credentials, accepting session-only storage if the Keychain
     /// refuses.
     ///
@@ -734,16 +730,24 @@ class ProfileStore {
                 field: field
             )
             // Snapshot before mutating, so a later metadata failure can undo
-            // this write the same way performCredentialTransaction does.
-            let previous = try? secretStore.read(locator)
+            // this write the same way performCredentialTransaction does --
+            // including how it treats an unreadable prior state. Swallowing
+            // the error here would silently downgrade "cannot tell" to "no
+            // previous value" and roll back to the wrong thing.
+            let previous: ProfileSecretReadResult
+            do {
+                previous = try secretStore.read(locator)
+            } catch {
+                credentialBaselines.removeValue(forKey: locator)
+                unresolvedLocators.insert(locator)
+                throw ProfileStoreError.credentialReadUnresolved(locator)
+            }
             do {
                 try secretStore.write(value, to: locator)
                 credentialBaselines[locator] = .value(value)
                 sessionOnlySecrets.removeValue(forKey: locator)
                 notifySessionOnlyChange()
-                if let previous {
-                    written.append((locator, previous))
-                }
+                written.append((locator, previous))
             } catch {
                 // Retrying here also disambiguates why the transaction
                 // failed: if the writes succeed now, the original failure was
@@ -798,6 +802,10 @@ class ProfileStore {
         }
     }
 
+    /// Explicitly replaces the complete credential set for a profile.
+    ///
+    /// A nil secret is a verified deletion here. This is intentionally
+    /// different from `saveProfiles`, where nil is credential-neutral.
     func saveProfileCredentials(_ profileId: UUID, credentials: ProfileCredentials) throws {
         var profiles = try loadProfilesWithVerifiedMigration()
         guard let index = profiles.firstIndex(where: { $0.id == profileId }) else {
