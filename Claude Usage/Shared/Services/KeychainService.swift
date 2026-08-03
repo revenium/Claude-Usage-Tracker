@@ -127,6 +127,27 @@ nonisolated final class ProfileKeychainDomainResolver: @unchecked Sendable {
     }
 }
 
+/// Remembers which credentials have already been looked for in the file
+/// Keychain, so the one-time recovery below stays one-time.
+///
+/// Scoped per credential rather than per process: a miss on one profile's
+/// session key says nothing about another profile's.
+nonisolated final class ProfileKeychainRecoveryLedger: @unchecked Sendable {
+    static let shared = ProfileKeychainRecoveryLedger()
+
+    private let lock = NSLock()
+    private var checked: Set<String> = []
+
+    /// Returns true the first time it is asked about a credential, false
+    /// every time after.
+    func shouldAttemptRecovery(service: String, account: String) -> Bool {
+        let key = "\(service)\u{0}\(account)"
+        lock.lock()
+        defer { lock.unlock() }
+        return checked.insert(key).inserted
+    }
+}
+
 /// The four `SecItem*` entry points, behind a seam.
 ///
 /// Without it the entitlement fallback below could only be exercised on a
@@ -170,14 +191,17 @@ nonisolated struct SecurityKeychainItemOperations: KeychainItemOperations {
 nonisolated struct SecurityProfileKeychainBackend: ProfileKeychainBackend {
     private let resolver: ProfileKeychainDomainResolver
     private let operations: any KeychainItemOperations
+    private let recoveryLedger: ProfileKeychainRecoveryLedger
 
     init(
         resolver: ProfileKeychainDomainResolver = .shared,
         operations: any KeychainItemOperations =
-            SecurityKeychainItemOperations()
+            SecurityKeychainItemOperations(),
+        recoveryLedger: ProfileKeychainRecoveryLedger = .shared
     ) {
         self.resolver = resolver
         self.operations = operations
+        self.recoveryLedger = recoveryLedger
     }
 
     func upsert(_ data: Data, service: String, account: String) throws {
@@ -187,9 +211,72 @@ nonisolated struct SecurityProfileKeychainBackend: ProfileKeychainBackend {
     }
 
     func read(service: String, account: String) throws -> Data? {
-        try withEntitlementFallback {
+        let found = try withEntitlementFallback {
             try read(service: service, account: account, domain: $0)
         }
+        if let found {
+            return found
+        }
+        return try recoverFromFileKeychain(service: service, account: account)
+    }
+
+    /// Looks once in the file Keychain for a credential the data-protection
+    /// Keychain does not have, and moves it across if it is there.
+    ///
+    /// This is the upgrade path off an ad-hoc signed build: that build could
+    /// only ever write to the file Keychain, so after installing a properly
+    /// signed release the credential would otherwise look deleted and the
+    /// user would be sent back through setup.
+    ///
+    /// It is deliberately not a general search of both Keychains. It runs
+    /// only when the data-protection Keychain is in use and the lookup
+    /// missed, and only once per credential — so an install that never had a
+    /// file-Keychain copy pays a single extra miss, with no access prompt,
+    /// because a Keychain with no such item has no ACL to consult.
+    private func recoverFromFileKeychain(
+        service: String,
+        account: String
+    ) throws -> Data? {
+        guard resolver.domain == .dataProtection,
+              recoveryLedger.shouldAttemptRecovery(
+                  service: service,
+                  account: account
+              ) else {
+            return nil
+        }
+
+        // A failure here means "nothing to recover", never "the read
+        // failed" — the caller already has its answer from the Keychain
+        // that is actually in use.
+        guard let recovered = try? read(
+            service: service,
+            account: account,
+            domain: .file
+        ) else {
+            return nil
+        }
+
+        do {
+            try upsert(
+                recovered,
+                service: service,
+                account: account,
+                domain: .dataProtection
+            )
+            // Only drop the old copy once the new one is definitely in place.
+            try remove(service: service, account: account, domain: .file)
+            LoggingService.shared.log(
+                "Keychain: recovered a profile credential from the login "
+                    + "Keychain into the data-protection Keychain"
+            )
+        } catch {
+            // Leave the file copy alone and try again next launch.
+            LoggingService.shared.log(
+                "Keychain: could not migrate a recovered credential; "
+                    + "leaving it in the login Keychain"
+            )
+        }
+        return recovered
     }
 
     func remove(service: String, account: String) throws {
@@ -206,11 +293,10 @@ nonisolated struct SecurityProfileKeychainBackend: ProfileKeychainBackend {
     /// Only writes and deletes can trigger this. A refused *read* reports
     /// `errSecItemNotFound` rather than `errSecMissingEntitlement`, so it is
     /// indistinguishable from a genuinely absent item and cannot be retried on
-    /// that signal. Reads are protected instead by going to whichever domain
-    /// the probe or a prior live rejection already settled on — never by
-    /// searching both, which would prompt for Keychain access on every absent
-    /// secret. The retry stays wired up for reads only as a no-cost guard in
-    /// case a future macOS starts reporting the entitlement failure directly.
+    /// that signal. Reads are covered instead by the resolved domain plus the
+    /// bounded recovery in `recoverFromFileKeychain`. The retry stays wired up
+    /// for reads as a no-cost guard in case a future macOS starts reporting
+    /// the entitlement failure directly.
     private func withEntitlementFallback<T>(
         _ operation: (ProfileKeychainDomain) throws -> T
     ) throws -> T {

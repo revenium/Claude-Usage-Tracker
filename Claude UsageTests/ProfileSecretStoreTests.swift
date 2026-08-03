@@ -332,14 +332,25 @@ final class EntitlementFallbackTests: XCTestCase {
     private let service = "service"
     private let account = "account"
 
+    private func makeBackend(
+        _ operations: SpyKeychainItemOperations,
+        probe: @escaping () -> OSStatus = { errSecSuccess }
+    ) -> (SecurityProfileKeychainBackend, ProfileKeychainDomainResolver) {
+        let resolver = ProfileKeychainDomainResolver(probe: probe)
+        let backend = SecurityProfileKeychainBackend(
+            resolver: resolver,
+            operations: operations,
+            // A fresh ledger per test: recovery is once per credential per
+            // process, and tests must not inherit another test's process.
+            recoveryLedger: ProfileKeychainRecoveryLedger()
+        )
+        return (backend, resolver)
+    }
+
     func testLiveRejectionRetriesAgainstTheFileKeychain() throws {
         let operations = SpyKeychainItemOperations()
         operations.refuseDataProtection = true
-        let resolver = ProfileKeychainDomainResolver { errSecSuccess }
-        let backend = SecurityProfileKeychainBackend(
-            resolver: resolver,
-            operations: operations
-        )
+        let (backend, resolver) = makeBackend(operations)
 
         try backend.upsert(
             Data("secret".utf8),
@@ -347,10 +358,21 @@ final class EntitlementFallbackTests: XCTestCase {
             account: account
         )
 
+        XCTAssertEqual(operations.attemptedDomains.first, .dataProtection)
+        XCTAssertTrue(
+            operations.attemptedDomains.dropFirst().allSatisfy {
+                $0 == .file
+            },
+            "Once refused, nothing else may go to the data-protection Keychain"
+        )
         XCTAssertEqual(
-            operations.attemptedDomains,
-            [.dataProtection, .file],
-            "The write must be retried against the file Keychain"
+            operations.value(
+                domain: .file,
+                service: service,
+                account: account
+            ),
+            Data("secret".utf8),
+            "The credential must actually land in the fallback Keychain"
         )
         XCTAssertEqual(resolver.domain, .file)
     }
@@ -358,10 +380,7 @@ final class EntitlementFallbackTests: XCTestCase {
     func testDowngradeSticksForSubsequentOperations() throws {
         let operations = SpyKeychainItemOperations()
         operations.refuseDataProtection = true
-        let backend = SecurityProfileKeychainBackend(
-            resolver: ProfileKeychainDomainResolver { errSecSuccess },
-            operations: operations
-        )
+        let (backend, _) = makeBackend(operations)
 
         try backend.upsert(
             Data("secret".utf8),
@@ -382,10 +401,7 @@ final class EntitlementFallbackTests: XCTestCase {
     func testUnrelatedFailuresAreNotRetried() {
         let operations = SpyKeychainItemOperations()
         operations.forcedStatus = errSecAuthFailed
-        let backend = SecurityProfileKeychainBackend(
-            resolver: ProfileKeychainDomainResolver { errSecSuccess },
-            operations: operations
-        )
+        let (backend, _) = makeBackend(operations)
 
         XCTAssertThrowsError(
             try backend.upsert(
@@ -397,36 +413,120 @@ final class EntitlementFallbackTests: XCTestCase {
         XCTAssertEqual(operations.attemptedDomains, [.dataProtection])
     }
 
-    /// A refused read reports `errSecItemNotFound`, not
-    /// `errSecMissingEntitlement` — measured, not assumed — so it is
-    /// indistinguishable from a genuinely absent item. Reads therefore cannot
-    /// self-heal, and must not pretend to.
-    func testRefusedReadReportsAbsentRatherThanSearchingBothKeychains() throws {
+    /// The upgrade path off an ad-hoc signed build: the credential was only
+    /// ever writable to the file Keychain, and must not look deleted once a
+    /// properly signed release can reach the data-protection Keychain.
+    func testCredentialLeftInTheFileKeychainIsRecovered() throws {
         let operations = SpyKeychainItemOperations()
-        operations.refuseDataProtection = true
-        let backend = SecurityProfileKeychainBackend(
-            resolver: ProfileKeychainDomainResolver { errSecSuccess },
-            operations: operations
-        )
+        operations.store(Data("stranded".utf8), domain: .file,
+                         service: service, account: account)
+        let (backend, _) = makeBackend(operations)
 
-        XCTAssertNil(try backend.read(service: service, account: account))
         XCTAssertEqual(
-            operations.attemptedDomains,
-            [.dataProtection],
-            "Searching the second Keychain would prompt for access on every "
-                + "absent secret"
+            try backend.read(service: service, account: account),
+            Data("stranded".utf8)
         )
     }
 
-    /// What actually protects reads: a write is refused with a signal that can
-    /// be recognised, and every later read follows the downgrade.
+    func testRecoveredCredentialIsMovedIntoTheDataProtectionKeychain() throws {
+        let operations = SpyKeychainItemOperations()
+        operations.store(Data("stranded".utf8), domain: .file,
+                         service: service, account: account)
+        let (backend, _) = makeBackend(operations)
+
+        _ = try backend.read(service: service, account: account)
+
+        XCTAssertEqual(
+            operations.value(domain: .dataProtection,
+                             service: service, account: account),
+            Data("stranded".utf8)
+        )
+        XCTAssertNil(
+            operations.value(domain: .file,
+                             service: service, account: account),
+            "The old copy must not be left behind once it has been moved"
+        )
+    }
+
+    func testAFailedMigrationLeavesTheOriginalInPlace() throws {
+        let operations = SpyKeychainItemOperations()
+        operations.store(Data("stranded".utf8), domain: .file,
+                         service: service, account: account)
+        operations.refuseWrites = true
+        let (backend, _) = makeBackend(operations)
+
+        XCTAssertEqual(
+            try backend.read(service: service, account: account),
+            Data("stranded".utf8),
+            "The caller still gets its credential"
+        )
+        XCTAssertEqual(
+            operations.value(domain: .file,
+                             service: service, account: account),
+            Data("stranded".utf8),
+            "Losing the only copy would be worse than not migrating"
+        )
+    }
+
+    /// The recovery is bounded: one extra lookup per credential, then never
+    /// again. A general search of both Keychains on every read would prompt
+    /// for access repeatedly.
+    func testRecoveryIsAttemptedOnlyOncePerCredential() throws {
+        let operations = SpyKeychainItemOperations()
+        let (backend, _) = makeBackend(operations)
+
+        _ = try backend.read(service: service, account: account)
+        XCTAssertEqual(
+            operations.attemptedDomains,
+            [.dataProtection, .file]
+        )
+
+        operations.attemptedDomains.removeAll()
+        _ = try backend.read(service: service, account: account)
+        _ = try backend.read(service: service, account: account)
+
+        XCTAssertEqual(
+            operations.attemptedDomains,
+            [.dataProtection, .dataProtection],
+            "A credential that was already looked for is not looked for again"
+        )
+    }
+
+    func testRecoveryIsScopedToTheCredentialThatMissed() throws {
+        let operations = SpyKeychainItemOperations()
+        let (backend, _) = makeBackend(operations)
+
+        _ = try backend.read(service: service, account: account)
+        operations.attemptedDomains.removeAll()
+        _ = try backend.read(service: service, account: "other-profile")
+
+        XCTAssertEqual(
+            operations.attemptedDomains,
+            [.dataProtection, .file],
+            "A miss on one credential says nothing about another"
+        )
+    }
+
+    func testNoRecoveryOnceTheFileKeychainIsTheOneInUse() throws {
+        let operations = SpyKeychainItemOperations()
+        let (backend, _) = makeBackend(
+            operations,
+            probe: { errSecMissingEntitlement }
+        )
+
+        _ = try backend.read(service: service, account: account)
+
+        XCTAssertEqual(
+            operations.attemptedDomains,
+            [.file],
+            "There is no second Keychain to recover from"
+        )
+    }
+
     func testReadsFollowAWriteTriggeredDowngrade() throws {
         let operations = SpyKeychainItemOperations()
         operations.refuseDataProtection = true
-        let backend = SecurityProfileKeychainBackend(
-            resolver: ProfileKeychainDomainResolver { errSecSuccess },
-            operations: operations
-        )
+        let (backend, _) = makeBackend(operations)
 
         try backend.upsert(
             Data("secret".utf8),
@@ -443,15 +543,51 @@ final class EntitlementFallbackTests: XCTestCase {
 /// Records which Keychain each call was aimed at, and can refuse the
 /// data-protection one the way an ad-hoc signed binary is refused.
 private final class SpyKeychainItemOperations: KeychainItemOperations {
+    private struct ItemKey: Hashable {
+        let domain: ProfileKeychainDomain
+        let service: String
+        let account: String
+    }
+
     var refuseDataProtection = false
+    /// Refuses every write, to exercise a migration that cannot complete.
+    var refuseWrites = false
     /// Applied to every call regardless of domain.
     var forcedStatus: OSStatus?
     var attemptedDomains: [ProfileKeychainDomain] = []
+
+    private var items: [ItemKey: Data] = [:]
+
+    func store(
+        _ data: Data,
+        domain: ProfileKeychainDomain,
+        service: String,
+        account: String
+    ) {
+        items[ItemKey(domain: domain, service: service, account: account)] =
+            data
+    }
+
+    func value(
+        domain: ProfileKeychainDomain,
+        service: String,
+        account: String
+    ) -> Data? {
+        items[ItemKey(domain: domain, service: service, account: account)]
+    }
 
     private func domain(of query: [String: Any]) -> ProfileKeychainDomain {
         query[kSecUseDataProtectionKeychain as String] as? Bool == true
             ? .dataProtection
             : .file
+    }
+
+    private func key(_ query: [String: Any]) -> ItemKey {
+        ItemKey(
+            domain: domain(of: query),
+            service: query[kSecAttrService as String] as? String ?? "",
+            account: query[kSecAttrAccount as String] as? String ?? ""
+        )
     }
 
     private func status(for query: [String: Any]) -> OSStatus? {
@@ -484,18 +620,41 @@ private final class SpyKeychainItemOperations: KeychainItemOperations {
     }
 
     func add(_ query: [String: Any]) -> OSStatus {
-        status(for: query) ?? errSecSuccess
+        if let status = status(for: query) {
+            return status
+        }
+        if refuseWrites {
+            return errSecAuthFailed
+        }
+        items[key(query)] = query[kSecValueData as String] as? Data
+        return errSecSuccess
     }
 
     func update(
         _ query: [String: Any],
         attributes: [String: Any]
     ) -> OSStatus {
-        status(for: query) ?? errSecSuccess
+        if let status = status(for: query) {
+            return status
+        }
+        if refuseWrites {
+            return errSecAuthFailed
+        }
+        guard items[key(query)] != nil else {
+            return errSecItemNotFound
+        }
+        items[key(query)] = attributes[kSecValueData as String] as? Data
+        return errSecSuccess
     }
 
     func delete(_ query: [String: Any]) -> OSStatus {
-        status(for: query) ?? errSecSuccess
+        if let status = status(for: query) {
+            return status
+        }
+        guard items.removeValue(forKey: key(query)) != nil else {
+            return errSecItemNotFound
+        }
+        return errSecSuccess
     }
 
     func copyMatching(
@@ -505,8 +664,12 @@ private final class SpyKeychainItemOperations: KeychainItemOperations {
         if let status = readStatus(for: query) {
             return status
         }
-        result = nil
-        return errSecItemNotFound
+        guard let data = items[key(query)] else {
+            result = nil
+            return errSecItemNotFound
+        }
+        result = data as AnyObject
+        return errSecSuccess
     }
 }
 
