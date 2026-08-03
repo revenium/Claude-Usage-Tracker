@@ -1338,6 +1338,82 @@ final class ProfileSecurityIntegrationTests: HostedAppTestCase {
         XCTAssertTrue(store.profilesWithSessionOnlyCredentials.isEmpty)
     }
 
+    // MARK: - A removal must not be undone by a held credential
+
+    /// The load path overlays held values when secure storage reports
+    /// absent, so a hold that outlives its deletion resurrects exactly what
+    /// the user removed.
+    @MainActor
+    func testUnlinkDiscardsTheHeldCredentialItRemoved() throws {
+        let profileID = UUID()
+        let secrets = MockProfileSecretStore()
+        let store = retain(
+            ProfileStore(defaults: defaults, secretStore: secrets)
+        )
+        try seedProfilesForTesting(
+            [Profile(id: profileID, name: "Held")],
+            in: store
+        )
+        secrets.writeErrors[.claudeSessionKey] = TestError.expected
+        var credentials = ProfileCredentials()
+        credentials.claudeSessionKey = "HELD_THEN_UNLINKED"
+        credentials.organizationId = "org"
+        try store.saveProfileCredentialsAcceptingSessionOnly(
+            profileID,
+            credentials: credentials
+        )
+        XCTAssertTrue(
+            store.profilesWithSessionOnlyCredentials.contains(profileID)
+        )
+
+        secrets.writeErrors.removeValue(forKey: .claudeSessionKey)
+        try store.unlinkClaudeAI(for: profileID)
+
+        XCTAssertTrue(
+            store.profilesWithSessionOnlyCredentials.isEmpty,
+            "The hold must not outlive the credential it belongs to"
+        )
+        let reloaded = try XCTUnwrap(
+            store.loadProfilesWithVerifiedMigration().first
+        )
+        XCTAssertNil(
+            reloaded.claudeSessionKey,
+            "A later load must not resurrect what the user removed"
+        )
+        XCTAssertNil(secrets.values[locator(profileID, .claudeSessionKey)])
+    }
+
+    /// Deleting the profile must leave no banner or quit warning behind.
+    @MainActor
+    func testDeletingSecretsDiscardsHeldCredentials() throws {
+        let profileID = UUID()
+        let secrets = MockProfileSecretStore()
+        let store = retain(
+            ProfileStore(defaults: defaults, secretStore: secrets)
+        )
+        try seedProfilesForTesting(
+            [Profile(id: profileID, name: "Held")],
+            in: store
+        )
+        secrets.writeErrors[.claudeSessionKey] = TestError.expected
+        var credentials = ProfileCredentials()
+        credentials.claudeSessionKey = "HELD_THEN_DELETED"
+        credentials.organizationId = "org"
+        try store.saveProfileCredentialsAcceptingSessionOnly(
+            profileID,
+            credentials: credentials
+        )
+
+        secrets.writeErrors.removeValue(forKey: .claudeSessionKey)
+        try store.deleteProfileSecrets(for: profileID)
+
+        XCTAssertTrue(store.profilesWithSessionOnlyCredentials.isEmpty)
+        let reloaded = try XCTUnwrap(
+            store.loadProfilesWithVerifiedMigration().first
+        )
+        XCTAssertNil(reloaded.claudeSessionKey)
+    }
+
     private func persistedProfileText() throws -> String {
         let data = try XCTUnwrap(defaults.data(forKey: "profiles_v3"))
         return try XCTUnwrap(String(data: data, encoding: .utf8))

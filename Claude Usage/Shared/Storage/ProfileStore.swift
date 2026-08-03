@@ -95,6 +95,29 @@ class ProfileStore {
     /// and the user is asked to sign in again.
     private var sessionOnlySecrets: [ProfileSecretLocator: String] = [:]
 
+    /// Drops a held credential. Every path that removes a secret must call
+    /// this: the load path overlays held values when secure storage reports
+    /// absent, so a hold that outlives its deletion resurrects the very
+    /// credential the user removed.
+    private func discardHeldSecret(at locator: ProfileSecretLocator) {
+        guard sessionOnlySecrets.removeValue(forKey: locator) != nil else {
+            return
+        }
+        notifySessionOnlyChange()
+    }
+
+    /// Drops every held credential for a profile — used when the whole
+    /// profile goes away, so no stale banner or quit warning survives it.
+    private func discardHeldSecrets(for profileID: UUID) {
+        let before = sessionOnlySecrets.count
+        sessionOnlySecrets = sessionOnlySecrets.filter {
+            $0.key.profileID != profileID
+        }
+        if sessionOnlySecrets.count != before {
+            notifySessionOnlyChange()
+        }
+    }
+
     /// Profiles holding a credential that is not in secure storage.
     ///
     /// The UI must tell the user, because these do not survive a relaunch.
@@ -339,6 +362,7 @@ class ProfileStore {
                     || profiles[profileIndex].currentUsageMigrationRetry != nil
                 profiles[profileIndex].credentialMigrationRetry = .init()
                 profiles[profileIndex].currentUsageMigrationRetry = nil
+                discardHeldSecrets(for: profiles[profileIndex].id)
                 profiles[profileIndex].claudeSessionKey = nil
                 profiles[profileIndex].apiSessionKey = nil
                 profiles[profileIndex].cliCredentialsJSON = nil
@@ -1119,6 +1143,7 @@ class ProfileStore {
             try secretStore.delete(locator)
             credentialBaselines[locator] = .absent
             unresolvedLocators.remove(locator)
+            discardHeldSecret(at: locator)
         }
     }
 
@@ -1174,6 +1199,9 @@ class ProfileStore {
             throw ProfileProviderConfigurationError.profileSetChanged
         }
         try persistProfiles(remaining)
+        // The profile is gone; nothing may keep warning about credentials
+        // belonging to it, and no later load may write one back.
+        discardHeldSecrets(for: profileId)
     }
 
     // MARK: - Current Usage
@@ -1739,10 +1767,14 @@ class ProfileStore {
             try secretStore.write(value, to: locator)
             credentialBaselines[locator] = .value(value)
             unresolvedLocators.remove(locator)
+            // Secure storage now owns it; a stale hold would only be a
+            // second, divergent copy.
+            discardHeldSecret(at: locator)
         } else {
             try secretStore.delete(locator)
             credentialBaselines[locator] = .absent
             unresolvedLocators.remove(locator)
+            discardHeldSecret(at: locator)
         }
     }
 
