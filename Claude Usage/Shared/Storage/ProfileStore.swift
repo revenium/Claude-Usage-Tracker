@@ -369,6 +369,9 @@ class ProfileStore {
                 // A prior deletion failed after its retained marker was
                 // committed. Never let retry envelopes or surviving backing
                 // stores rehydrate data into that scrubbed identity.
+                // The credential half is likewise always false now —
+                // adoption already emptied the envelope at decode. Only the
+                // usage-retry half can still be true.
                 let hadRetryData =
                     !profiles[profileIndex].credentialMigrationRetry.isEmpty
                     || profiles[profileIndex].currentUsageMigrationRetry != nil
@@ -422,6 +425,12 @@ class ProfileStore {
                     field: field
                 )
 
+                // Unreachable since adoption moved to the decode boundary:
+                // decodeStoredProfiles empties every envelope before this
+                // loop can see one, so `value(for:)` is always nil here.
+                // Kept as a belt-and-braces replay in case a future decode
+                // path is added that does not adopt — do not read it as live
+                // behaviour, and do not build on it without checking that.
                 if let retryValue = profiles[profileIndex].credentialMigrationRetry.value(for: field) {
                     needsRewrite = true
                     do {
