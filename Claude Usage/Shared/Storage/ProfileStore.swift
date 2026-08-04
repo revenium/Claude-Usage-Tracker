@@ -550,11 +550,9 @@ class ProfileStore {
         }
 
         if needsRewrite {
+            // persistProfiles clears the debt itself, once the write is
+            // verified — a throw leaves it set, so nothing is lost.
             try persistProfiles(profiles)
-            // Only once the rewrite has actually landed. Clearing earlier
-            // would drop the debt on a throw and leave plaintext on disk with
-            // nothing left to notice it.
-            profilesAwaitingPlaintextScrub.removeAll()
             LoggingService.shared.log("ProfileStore: Verified profile credential migration rewrite")
         }
 
@@ -2427,6 +2425,14 @@ class ProfileStore {
             try restoreProfiles(previousData)
             throw ProfileStoreError.profileWriteVerificationFailed
         }
+
+        // A verified write replaces the whole record, and `encode` cannot
+        // emit the legacy envelope, so nothing on disk carries plaintext any
+        // more — whichever caller got here. Clearing the debt anywhere else
+        // means the callers that persist adopted profiles directly leave it
+        // set, and the next load then forces a pointless rewrite that can
+        // fail verification and turn a clean read into a hard error.
+        profilesAwaitingPlaintextScrub.removeAll()
     }
 
     private func validateProfileSet(_ profiles: [Profile]) throws {

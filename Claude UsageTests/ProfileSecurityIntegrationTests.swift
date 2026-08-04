@@ -1371,6 +1371,54 @@ final class ProfileSecurityIntegrationTests: HostedAppTestCase {
         XCTAssertTrue(relaunched.profilesWithSessionOnlyCredentials.isEmpty)
     }
 
+    /// Any verified persist settles the debt, not just the load path's own
+    /// rewrite. Several public methods decode (adopting the plaintext) and
+    /// persist that same record directly; if only the load path cleared the
+    /// debt, they would leave it set and the next load would force a rewrite
+    /// nothing needs — one that can fail verification and turn a clean read
+    /// into a hard error.
+    @MainActor
+    func testAnyVerifiedPersistSettlesTheAdoptionDebt() throws {
+        let profileID = UUID()
+        seedLegacyProfile(
+            id: profileID,
+            claude: "DEBT_CLAUDE",
+            api: "DEBT_API",
+            cli: "DEBT_CLI"
+        )
+        let secrets = MockProfileSecretStore()
+        let backing = FaultingProfileDefaults()
+        backing.storage["profiles_v3"] = defaults.data(forKey: "profiles_v3")
+        let store = retain(
+            ProfileStore(defaults: backing, secretStore: secrets)
+        )
+
+        // Decoded here, not via the store: calling loadProfiles first would
+        // run the verified load, which clears the debt itself and would hide
+        // exactly the bypass this test is about.
+        let seeded = try JSONDecoder().decode(
+            [Profile].self,
+            from: try XCTUnwrap(backing.data(forKey: "profiles_v3"))
+        )
+        try store.saveProfilesThrowing(seeded)
+        XCTAssertFalse(
+            try XCTUnwrap(
+                backing.data(forKey: "profiles_v3")
+                    .flatMap { String(data: $0, encoding: .utf8) }
+            ).contains("DEBT_CLAUDE"),
+            "That persist already scrubbed the plaintext"
+        )
+
+        // Armed only now: with the debt settled there is nothing left to
+        // rewrite, so this load must not write at all.
+        backing.corruptNextProfileWrite = true
+        XCTAssertNoThrow(
+            try store.loadProfilesWithVerifiedMigration(),
+            "A clean read must not be turned into a hard error by a rewrite "
+                + "that nothing needs"
+        )
+    }
+
     // MARK: - Opt-in session-only save (setup wizard's explicit choice)
 
     /// The default save path fails closed and loud. This one exists only for
