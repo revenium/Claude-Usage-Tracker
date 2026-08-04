@@ -24,6 +24,7 @@ final class TestIsolationGuardTests: HostedAppTestCase {
     /// store reads them back. If the helper stopped injecting, the store would
     /// return the developer's real profiles and this fails — without having
     /// written anything anywhere.
+    @MainActor
     func testTheIsolatedStoreReadsInjectedDefaultsNotTheRealOnes() throws {
         let defaults = IsolatedProfileDefaults()
         let marker = "Isolated-\(UUID().uuidString)"
@@ -44,6 +45,7 @@ final class TestIsolationGuardTests: HostedAppTestCase {
     }
 
     /// The real preferences domain must be untouched by the above.
+    @MainActor
     func testTheIsolatedStoreDoesNotWriteToRealDefaults() throws {
         let before = UserDefaults.standard.data(forKey: Self.profilesKey)
         let defaults = IsolatedProfileDefaults()
@@ -87,18 +89,59 @@ final class TestIsolationGuardTests: HostedAppTestCase {
         )
     }
 
-    /// A manager from the helper must not be sitting on the shared store.
+    /// A manager from the helper must read the store it was given.
+    ///
+    /// Asserted with a seeded marker rather than by checking the list is
+    /// empty. "Empty" passes vacuously on CI and on any fresh machine even
+    /// with the injection removed, so it would have been a guard that cannot
+    /// fail exactly where it runs most — the tautology trap in different
+    /// clothes. Requiring a specific profile fails everywhere.
     @MainActor
-    func testTheIsolatedManagerDoesNotSeeRealProfiles() throws {
-        let manager = retain(makeIsolatedProfileManager())
+    func testTheIsolatedManagerReadsTheInjectedStore() throws {
+        let defaults = IsolatedProfileDefaults()
+        let marker = "Isolated-\(UUID().uuidString)"
+        defaults.set(
+            try JSONEncoder().encode([Profile(name: marker)]),
+            forKey: Self.profilesKey
+        )
+        let manager = retain(
+            ProfileManager(
+                profileStore: retain(
+                    makeIsolatedProfileStore(defaults: defaults)
+                )
+            )
+        )
 
-        // The shared store is the developer's real profile list, which on any
-        // configured machine is non-empty. A freshly injected in-memory store
-        // has nothing in it.
-        XCTAssertTrue(
-            manager.profiles.isEmpty,
-            "The manager loaded profiles from somewhere — expected an empty "
-                + "in-memory store, got \(manager.profiles.count)"
+        // The manager does not load at init — which is why the earlier
+        // `profiles.isEmpty` version of this test passed no matter what store
+        // it was given. Drive the load explicitly.
+        manager.loadProfiles()
+
+        XCTAssertEqual(
+            manager.profiles.map(\.name),
+            [marker],
+            "The manager read profiles from somewhere other than the injected "
+                + "store"
+        )
+    }
+
+    /// The usage files are the third dependency, and the one that was missed:
+    /// `ProfileStore` resolves it to the real Application Support directory
+    /// when un-injected, so isolation covered the defaults and the Keychain
+    /// but not the disk.
+    @MainActor
+    func testTheIsolatedStoreKeepsUsageFilesInMemory() throws {
+        let usageFiles = retain(IsolatedProfileUsageFiles())
+        let profileID = UUID()
+
+        _ = try usageFiles.updateCurrentUsage(for: profileID) { usage in
+            usage.providerRevision = 7
+        }
+
+        XCTAssertNotNil(try usageFiles.loadCurrentUsage(for: profileID))
+        XCTAssertNil(
+            try usageFiles.loadCurrentUsage(for: UUID()),
+            "An unknown profile must have no usage, not someone else's"
         )
     }
 }

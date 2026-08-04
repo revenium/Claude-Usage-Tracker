@@ -350,23 +350,58 @@ final class StatuslinePublishingTests: XCTestCase {
     /// the directory the app actually installed into. This one is a concrete
     /// path by necessity — it is a value, not a script that can resolve a
     /// variable itself.
-    /// Asserted on the value rather than by running the enable flow, which
-    /// requires an active profile — and standing one up would mean reaching
-    /// into the shared store this suite is deliberately isolated from.
+    /// Asserts what settings.json actually receives, by driving the write.
+    ///
+    /// Checking the `installedCommandPath` accessor alone was not enough: its
+    /// consumer could have been reverted to a hardcoded `~/.claude` path and
+    /// the suite would still have passed.
     func testClaudeSettingsPointAtTheInstalledScript() throws {
-        let command = StatuslineService.installedCommandPath
+        try StatuslineService.shared.applyStatuslineSettings(enabled: true)
 
-        XCTAssertEqual(
-            command,
-            configDirectory
-                .appendingPathComponent("statusline-command.sh").path,
-            "settings.json would point outside the configured directory"
+        let statusLine = try XCTUnwrap(
+            try settingsJSON()["statusLine"] as? [String: Any]
         )
+        let command = try XCTUnwrap(statusLine["command"] as? String)
         XCTAssertTrue(
-            FileManager.default.fileExists(
-                atPath: configDirectory.path
-            ),
-            "Sanity: the redirect is still in effect"
+            command.contains(configDirectory.path),
+            "settings.json points outside the configured directory: \(command)"
+        )
+        XCTAssertEqual(statusLine["type"] as? String, "command")
+    }
+
+    /// Enabling must not discard the rest of the user's settings.
+    func testEnablingPreservesOtherSettings() throws {
+        try #"{"model":"opus","statusLine":{"type":"command","command":"old"}}"#
+            .write(
+                to: configDirectory.appendingPathComponent("settings.json"),
+                atomically: true,
+                encoding: .utf8
+            )
+
+        try StatuslineService.shared.applyStatuslineSettings(enabled: true)
+
+        let settings = try settingsJSON()
+        XCTAssertEqual(settings["model"] as? String, "opus")
+        let statusLine = try XCTUnwrap(settings["statusLine"] as? [String: Any])
+        XCTAssertNotEqual(statusLine["command"] as? String, "old")
+    }
+
+    /// Disabling removes only the statusline entry.
+    func testDisablingRemovesOnlyTheStatuslineEntry() throws {
+        try StatuslineService.shared.applyStatuslineSettings(enabled: true)
+
+        try StatuslineService.shared.applyStatuslineSettings(enabled: false)
+
+        XCTAssertNil(try settingsJSON()["statusLine"])
+    }
+
+    private func settingsJSON() throws -> [String: Any] {
+        let data = try Data(
+            contentsOf: configDirectory
+                .appendingPathComponent("settings.json")
+        )
+        return try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: data) as? [String: Any]
         )
     }
 

@@ -828,6 +828,14 @@ PROFILE_NAME="\(profileName)"
     /// problem unless the user's home directory contained a space; now that
     /// `CLAUDE_CONFIG_DIR` can point anywhere, an unquoted path breaks the
     /// statusline for any directory with a space in its name.
+    ///
+    /// One case this does **not** close, because it is decided before the app
+    /// reaches here: if the app is launched *without* `CLAUDE_CONFIG_DIR`
+    /// while the user's shell has it set, the scripts and settings.json are
+    /// installed under `~/.claude` while Claude Code reads
+    /// `$CLAUDE_CONFIG_DIR/settings.json`, and the statusline is simply
+    /// absent with nothing to explain why. Pre-existing, and it needs the app
+    /// to learn the shell's value rather than its own.
     static var statuslineCommand: String {
         "bash \(shellQuoted(installedCommandPath))"
     }
@@ -842,46 +850,51 @@ PROFILE_NAME="\(profileName)"
     /// When enabling, also installs the reader script
     /// When disabling, replaces it with the placeholder
     func updateClaudeCodeSettings(enabled: Bool) throws {
+        if enabled {
+            try installScripts(configureForActiveProfile: true)
+        } else {
+            try removeSessionKeyFromScript()
+        }
+        try applyStatuslineSettings(enabled: enabled)
+    }
+
+    /// Adds or removes the `statusLine` entry in Claude Code's settings.json.
+    ///
+    /// Split out from `updateClaudeCodeSettings` so the value a user's
+    /// settings.json actually receives can be asserted. The enclosing method
+    /// requires an active profile, so before this split the one path
+    /// settings.json really goes through had no test — reverting the command
+    /// to a hardcoded `~/.claude` path would have left the suite green.
+    func applyStatuslineSettings(enabled: Bool) throws {
         let settingsPath = Constants.ClaudePaths.claudeDirectory
             .appendingPathComponent("settings.json")
-
+        var settings: [String: Any] = [:]
+        if FileManager.default.fileExists(atPath: settingsPath.path) {
+            let existingData = try Data(contentsOf: settingsPath)
+            if let existing = try JSONSerialization.jsonObject(
+                with: existingData
+            ) as? [String: Any] {
+                settings = existing
+            }
+        } else if !enabled {
+            // Nothing written yet, so there is nothing to disable.
+            return
+        }
 
         if enabled {
-            // Install scripts with session key injection
-            try installScripts(configureForActiveProfile: true)
-
-            // Update settings.json
-            var settings: [String: Any] = [:]
-
-            if FileManager.default.fileExists(atPath: settingsPath.path) {
-                let existingData = try Data(contentsOf: settingsPath)
-                if let existing = try JSONSerialization.jsonObject(with: existingData) as? [String: Any] {
-                    settings = existing
-                }
-            }
-
             settings["statusLine"] = [
                 "type": "command",
                 "command": Self.statuslineCommand
             ]
-
-            let jsonData = try JSONSerialization.data(withJSONObject: settings, options: .prettyPrinted)
-            try jsonData.write(to: settingsPath)
         } else {
-            // Remove session key from Swift script
-            try removeSessionKeyFromScript()
-
-            // Update settings.json
-            if FileManager.default.fileExists(atPath: settingsPath.path) {
-                let existingData = try Data(contentsOf: settingsPath)
-                if var settings = try JSONSerialization.jsonObject(with: existingData) as? [String: Any] {
-                    settings.removeValue(forKey: "statusLine")
-
-                    let jsonData = try JSONSerialization.data(withJSONObject: settings, options: .prettyPrinted)
-                    try jsonData.write(to: settingsPath)
-                }
-            }
+            settings.removeValue(forKey: "statusLine")
         }
+
+        let jsonData = try JSONSerialization.data(
+            withJSONObject: settings,
+            options: .prettyPrinted
+        )
+        try jsonData.write(to: settingsPath)
     }
 
     // MARK: - Status
