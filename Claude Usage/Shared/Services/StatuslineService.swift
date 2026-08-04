@@ -53,13 +53,29 @@ class StatuslineService {
             withJSONObject: payload,
             options: [.sortedKeys]
         )
-        let destination = directory
-            .appendingPathComponent(Self.usageCacheFilename)
-        // Same directory, so the rename below stays on one filesystem and is
-        // therefore atomic.
-        let temporary = directory.appendingPathComponent(
-            ".\(Self.usageCacheFilename).\(UUID().uuidString)"
+        try writePrivately(
+            data,
+            to: directory.appendingPathComponent(Self.usageCacheFilename)
         )
+    }
+
+    /// Writes `data` so the file is never readable by anyone but this user,
+    /// including while it is being written.
+    ///
+    /// The mode goes on the temporary file *before* it is moved into place,
+    /// rather than on the destination afterwards. `Data.write(options:
+    /// .atomic)` also writes-then-renames, but the new inode starts at
+    /// umask default and the chmod lands after the rename — a world-readable
+    /// window on every single write, which for these files means every few
+    /// minutes forever.
+    private func writePrivately(_ data: Data, to destination: URL) throws {
+        // Same directory as the destination, so the rename stays on one
+        // filesystem and is therefore atomic.
+        let temporary = destination
+            .deletingLastPathComponent()
+            .appendingPathComponent(
+                ".\(destination.lastPathComponent).\(UUID().uuidString)"
+            )
         guard FileManager.default.createFile(
             atPath: temporary.path,
             contents: data,
@@ -67,13 +83,9 @@ class StatuslineService {
         ) else {
             throw CocoaError(.fileWriteUnknown)
         }
-        do {
-            guard rename(temporary.path, destination.path) == 0 else {
-                throw CocoaError(.fileWriteUnknown)
-            }
-        } catch {
+        guard rename(temporary.path, destination.path) == 0 else {
             try? FileManager.default.removeItem(at: temporary)
-            throw error
+            throw CocoaError(.fileWriteUnknown)
         }
     }
 
@@ -115,8 +127,15 @@ import Foundation
 let staleAfterSeconds: Double = \(Int(Self.usageCacheStaleAfter))
 
 func readPublishedUsage() -> (utilization: Int, resetsAt: String?)? {
-    let path = ("~/.claude/\(Self.usageCacheFilename)" as NSString)
-        .expandingTildeInPath
+    // Resolved when the script runs, not when it was written: the app may
+    // have been launched with a different CLAUDE_CONFIG_DIR than the shell
+    // running the statusline, and baking a path in at generation time would
+    // freeze whichever one happened to come first.
+    let configuredDirectory = ProcessInfo.processInfo
+        .environment["CLAUDE_CONFIG_DIR"]
+        ?? ("~/.claude" as NSString).expandingTildeInPath
+    let path = (configuredDirectory as NSString)
+        .appendingPathComponent("\(Self.usageCacheFilename)")
     guard let data = FileManager.default.contents(atPath: path),
           let object = try? JSONSerialization.jsonObject(with: data),
           let json = object as? [String: Any],
@@ -167,11 +186,14 @@ exit(1)
     }
 
     /// Bash script that builds the statusline display.
-    /// Installed to ~/.claude/statusline-command.sh and configured in Claude Code settings.json.
-    /// Reads user preferences from ~/.claude/statusline-config.txt and displays selected components.
+    /// Installed to the Claude config directory and configured in Claude Code settings.json.
+    /// Reads user preferences from statusline-config.txt and displays selected components.
     private let bashScript = """
 #!/bin/bash
-config_file="$HOME/.claude/statusline-config.txt"
+# Resolved at run time, not baked in when this file was written, so a shell
+# with CLAUDE_CONFIG_DIR set reads the same directory the app writes to.
+claude_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+config_file="$claude_dir/statusline-config.txt"
 if [ -f "$config_file" ]; then
   source "$config_file"
   show_model=$SHOW_MODEL
@@ -394,7 +416,7 @@ fi
 usage_text=""
 if [ "$show_usage" = "1" ]; then
   # Try reading from cache first (written by Claude Usage app on each refresh)
-  cache_file="$HOME/.claude/.statusline-usage-cache"
+  cache_file="$claude_dir/.statusline-usage-cache"
   swift_result=""
   if [ -f "$cache_file" ]; then
     cache_ts=$(grep "^TIMESTAMP=" "$cache_file" 2>/dev/null | cut -d= -f2)
@@ -413,7 +435,7 @@ if [ "$show_usage" = "1" ]; then
 
   # Fall back to swift script if cache is stale or missing
   if [ -z "$swift_result" ]; then
-    swift_result=$(swift "$HOME/.claude/fetch-claude-usage.swift" 2>/dev/null)
+    swift_result=$(swift "$claude_dir/fetch-claude-usage.swift" 2>/dev/null)
   fi
 
   if [ $? -eq 0 ] && [ -n "$swift_result" ]; then
@@ -788,15 +810,25 @@ PROFILE_NAME="\(profileName)"
         try content.write(to: configPath, atomically: true, encoding: .utf8)
     }
 
+    /// Where the bash script actually lives, which is not `~/.claude` when
+    /// `CLAUDE_CONFIG_DIR` is set.
+    ///
+    /// Unlike the scripts, this one must be a concrete path: it is a value
+    /// stored in settings.json, not something that can resolve the variable
+    /// when it runs.
+    static var installedCommandPath: String {
+        Constants.ClaudePaths.claudeDirectory
+            .appendingPathComponent("statusline-command.sh").path
+    }
+
     /// Enables or disables statusline in Claude Code settings.json
-    /// When enabling, also injects the session key into the Swift script
-    /// When disabling, removes the session key from the Swift script
+    /// When enabling, also installs the reader script
+    /// When disabling, replaces it with the placeholder
     func updateClaudeCodeSettings(enabled: Bool) throws {
         let settingsPath = Constants.ClaudePaths.claudeDirectory
             .appendingPathComponent("settings.json")
 
-        let homeDir = Constants.ClaudePaths.homeDirectory.path
-        let commandPath = "\(homeDir)/.claude/statusline-command.sh"
+        let commandPath = Self.installedCommandPath
 
         if enabled {
             // Install scripts with session key injection
@@ -873,7 +905,11 @@ PROFILE_NAME="\(profileName)"
             cacheContent += "\nPROFILE_NAME=\(name)"
         }
 
-        try? cacheContent.write(to: cachePath, atomically: true, encoding: .utf8)
+        // Same private write as the JSON below. This file carries
+        // PROFILE_NAME, which the bash script renders, so it is if anything
+        // the more identifying of the two — there was no reason for it to be
+        // the one left at umask default.
+        try? writePrivately(Data(cacheContent.utf8), to: cachePath)
 
         // Best effort, like the write above: a statusline that misses one
         // refresh shows the previous number and recovers on the next one.

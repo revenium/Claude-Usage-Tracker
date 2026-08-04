@@ -658,7 +658,7 @@ final class ProfileCurrentUsageIntegrationTests: HostedAppTestCase {
 
     @MainActor
     func testActiveProfileGenerationTracksIdentityTransitionsOnly() {
-        let manager = retain(ProfileManager())
+        let manager = retain(makeIsolatedProfileManager())
         let first = Profile(name: "First")
         let second = Profile(name: "Second")
 

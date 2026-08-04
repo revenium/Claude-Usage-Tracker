@@ -458,7 +458,7 @@ final class MenuReliabilityTests: HostedAppTestCase {
             name: "Codex",
             providerConfiguration: .codex(.init())
         )
-        let profileManager = retain(ProfileManager())
+        let profileManager = retain(makeIsolatedProfileManager())
         profileManager.profiles = [claudeProfile, codexProfile]
         profileManager.activeProfile = claudeProfile
         profileManager.displayMode = .multi
@@ -574,7 +574,7 @@ final class MenuReliabilityTests: HostedAppTestCase {
             name: "codex",
             providerConfiguration: .codex(.init())
         )
-        let profileManager = retain(ProfileManager())
+        let profileManager = retain(makeIsolatedProfileManager())
         profileManager.profiles = [claudeProfile, codexProfile]
         profileManager.activeProfile = claudeProfile
         profileManager.displayMode = .multi
@@ -660,7 +660,7 @@ final class MenuReliabilityTests: HostedAppTestCase {
             name: "codex",
             providerConfiguration: .codex(.init())
         )
-        let profileManager = retain(ProfileManager())
+        let profileManager = retain(makeIsolatedProfileManager())
         profileManager.profiles = [claudeProfile, codexProfile]
         profileManager.activeProfile = claudeProfile
         profileManager.displayMode = .single
@@ -742,7 +742,7 @@ final class MenuReliabilityTests: HostedAppTestCase {
 
     func testSetViewedProfileIgnoresUnknownProfileID() {
         let claudeProfile = Profile(name: "jc@example.com")
-        let profileManager = retain(ProfileManager())
+        let profileManager = retain(makeIsolatedProfileManager())
         profileManager.profiles = [claudeProfile]
         profileManager.activeProfile = claudeProfile
         profileManager.displayMode = .multi
