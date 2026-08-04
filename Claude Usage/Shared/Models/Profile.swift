@@ -53,9 +53,6 @@ struct Profile: Codable, Identifiable, Equatable {
     var createdAt: Date
     var lastUsedAt: Date
 
-    /// Plaintext retained only when a legacy credential could not yet be
-    /// committed to verified secure storage. ProfileStore retries each field
-    /// independently and removes it after successful Keychain readback.
     /// Legacy plaintext secrets from an older on-disk profile.
     ///
     /// Inbound only, and deliberately asymmetric: `decode` still reads it so

@@ -737,27 +737,44 @@ class ProfileStore {
         let previousProfileData = defaults.data(forKey: Keys.profiles)
         var heldHere: [ProfileSecretLocator] = []
         var written: [(ProfileSecretLocator, ProfileSecretReadResult)] = []
+
+        // Every prior state is read before anything is written, exactly as
+        // performCredentialTransaction does it. Reading inside the write loop
+        // meant a later unreadable field threw after earlier fields were
+        // already committed, past the only rollback — the caller was told the
+        // save failed while part of the set was durably in the Keychain.
+        //
+        // An unreadable prior state is still surfaced rather than swallowed:
+        // "cannot tell" downgraded to "no previous value" would roll back to
+        // the wrong thing. It just has to be discovered before the first
+        // mutation, not after.
+        var priorStates: [ProfileSecretField: ProfileSecretReadResult] = [:]
         for field in ProfileSecretField.allCases {
-            guard let value = credentials.secretValue(for: field) else {
+            guard credentials.secretValue(for: field) != nil else {
                 continue
             }
             let locator = ProfileSecretLocator(
                 profileID: profileId,
                 field: field
             )
-            // Snapshot before mutating, so a later metadata failure can undo
-            // this write the same way performCredentialTransaction does --
-            // including how it treats an unreadable prior state. Swallowing
-            // the error here would silently downgrade "cannot tell" to "no
-            // previous value" and roll back to the wrong thing.
-            let previous: ProfileSecretReadResult
             do {
-                previous = try secretStore.read(locator)
+                priorStates[field] = try secretStore.read(locator)
             } catch {
                 credentialBaselines.removeValue(forKey: locator)
                 unresolvedLocators.insert(locator)
                 throw ProfileStoreError.credentialReadUnresolved(locator)
             }
+        }
+
+        for field in ProfileSecretField.allCases {
+            guard let value = credentials.secretValue(for: field),
+                  let previous = priorStates[field] else {
+                continue
+            }
+            let locator = ProfileSecretLocator(
+                profileID: profileId,
+                field: field
+            )
             do {
                 try secretStore.write(value, to: locator)
                 credentialBaselines[locator] = .value(value)
