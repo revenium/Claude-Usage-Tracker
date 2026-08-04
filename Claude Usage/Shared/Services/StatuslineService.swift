@@ -804,14 +804,22 @@ PROFILE_NAME="\(profileName)"
     }
 
     /// Writes usage data to cache file for fast bash script access
+    ///
+    /// Also publishes the same numbers for the Swift script. The bash script
+    /// reads the key/value cache first and falls back to the script, so both
+    /// must come from one derivation — two derivations could disagree and the
+    /// statusline would show a different figure depending on which path
+    /// happened to serve it.
     func writeUsageCache(usage: ClaudeUsage, profileName: String? = nil) {
         let cachePath = Constants.ClaudePaths.claudeDirectory
             .appendingPathComponent(".statusline-usage-cache")
 
         let formatter = ISO8601DateFormatter()
+        let utilization = Int(usage.effectiveSessionPercentage)
+        let resetsAt = formatter.string(from: usage.sessionResetTime)
         var cacheContent = """
-        UTILIZATION=\(Int(usage.effectiveSessionPercentage))
-        RESETS_AT=\(formatter.string(from: usage.sessionResetTime))
+        UTILIZATION=\(utilization)
+        RESETS_AT=\(resetsAt)
         TIMESTAMP=\(Int(Date().timeIntervalSince1970))
         """
 
@@ -820,6 +828,14 @@ PROFILE_NAME="\(profileName)"
         }
 
         try? cacheContent.write(to: cachePath, atomically: true, encoding: .utf8)
+
+        // Best effort, like the write above: a statusline that misses one
+        // refresh shows the previous number and recovers on the next one.
+        // Failing a usage refresh over it would be worse than that.
+        try? publishUsageForStatusline(
+            utilization: utilization,
+            resetsAt: resetsAt
+        )
     }
 
     /// Updates scripts only if already installed (installation is optional)
