@@ -13,8 +13,6 @@ struct ProfileActivationClaudeEffects {
     var resyncBeforeSwitching: (UUID) throws -> Void
     var applyProfileCredentials: (UUID) throws -> Void
     var switchAccountAndSync: (String) throws -> Void
-    var updateStatuslineScripts: () throws -> Void
-    var updateStatuslineProfileName: (String) throws -> Void
 
     static func live(
         cliSyncService: ClaudeCodeSyncService
@@ -32,12 +30,6 @@ struct ProfileActivationClaudeEffects {
                     _ = ClaudeSwitchService.shared.bidirectionalMcpSync()
                     _ = ClaudeSwitchService.shared.syncSkills()
                 }
-            },
-            updateStatuslineScripts: {
-                try StatuslineService.shared.updateScriptsIfInstalled()
-            },
-            updateStatuslineProfileName: {
-                try StatuslineService.shared.updateProfileNameInConfig($0)
             }
         )
     }
@@ -119,7 +111,7 @@ class ProfileManager: ObservableObject {
     /// Single-display mode, the menu-bar title, and every other "whichever
     /// profile is currently shown" call site key off this — it is preserved
     /// exactly as before the per-provider activation split. Provider-scoped
-    /// consumers (Claude CLI sync, statusline, Codex CLI switching, etc.)
+    /// consumers (Claude CLI sync, Codex CLI switching, etc.)
     /// must use `activeClaudeProfile` / `activeCodexProfile` instead, since
     /// this can point at either provider's profile at any time.
     @Published var activeProfile: Profile? {
@@ -953,26 +945,6 @@ class ProfileManager: ObservableObject {
                 )
             }
         }
-        if profile.claudeSessionKey != nil
-            && profile.organizationId != nil {
-            do {
-                try activationClaudeEffects.updateStatuslineScripts()
-            } catch {
-                LoggingService.shared.logError(
-                    "Post-delete statusline update failed",
-                    error: error
-                )
-            }
-        }
-        do {
-            try activationClaudeEffects
-                .updateStatuslineProfileName(profile.name)
-        } catch {
-            LoggingService.shared.logError(
-                "Post-delete statusline profile update failed",
-                error: error
-            )
-        }
     }
 
     func toggleProfileSelection(_ id: UUID) {
@@ -1180,24 +1152,6 @@ class ProfileManager: ObservableObject {
         profileStore.saveActiveProfileId(id, for: .claude)
         activeProfile = updated
         profileStore.saveProfiles(profiles)
-
-        // Update statusline script if the new profile has credentials
-        if updated.claudeSessionKey != nil && updated.organizationId != nil {
-            do {
-                try activationClaudeEffects.updateStatuslineScripts()
-                LoggingService.shared.log("✓ Updated statusline for profile: \(updated.name)")
-            } catch {
-                LoggingService.shared.logError("Failed to update statusline (non-fatal)", error: error)
-            }
-        }
-
-        // Update profile name in statusline config
-        do {
-            try activationClaudeEffects
-                .updateStatuslineProfileName(updated.name)
-        } catch {
-            LoggingService.shared.logError("Failed to update statusline profile name (non-fatal)", error: error)
-        }
 
         LoggingService.shared.log("Successfully activated profile: \(updatedProfile.name)")
     }

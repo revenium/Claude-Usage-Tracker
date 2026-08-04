@@ -98,9 +98,7 @@ enum UITestApplicationBootstrap {
             activationClaudeEffects: ProfileActivationClaudeEffects(
                 resyncBeforeSwitching: { _ in },
                 applyProfileCredentials: { _ in },
-                switchAccountAndSync: { _ in },
-                updateStatuslineScripts: {},
-                updateStatuslineProfileName: { _ in }
+                switchAccountAndSync: { _ in }
             ),
             lifecycleEventSink: ProfileLifecycleEventSink(
                 deletionStarted: { _ in },

@@ -48,7 +48,6 @@ public struct ProviderCapability: Hashable, Sendable, Codable, CustomStringConve
     public static let interactiveLogin = ProviderCapability(unchecked: "interactive-login")
     public static let automaticSessionStart = ProviderCapability(unchecked: "automatic-session-start")
     public static let automaticProfileSwitch = ProviderCapability(unchecked: "automatic-profile-switch")
-    public static let statusLineIntegration = ProviderCapability(unchecked: "status-line-integration")
     public static let usageHistory = ProviderCapability(unchecked: "usage-history")
     public static let usageNotifications = ProviderCapability(unchecked: "usage-notifications")
     public static let cliAccountSync = ProviderCapability(unchecked: "cli-account-sync")

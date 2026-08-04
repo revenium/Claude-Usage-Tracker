@@ -46,8 +46,6 @@
 "settings.session_management.description" = "自动会话管理";
 "settings.notifications" = "通知";
 "settings.notifications.description" = "使用警报和通知";
-"settings.claude_cli" = "Claude CLI";
-"settings.claude_cli.description" = "Terminal statusline 集成";
 "settings.updates" = "更新";
 "settings.updates.description" = "保持您的应用为最新版本";
 "settings.about" = "关于";
@@ -313,14 +311,6 @@
 "personal.remove" = "移除会话密钥";
 
 /* ==================== */
-/* MARK: - Claude Code (CLI) */
-/* ==================== */
-"claudecode.title" = "Claude CLI 集成";
-"claudecode.description" = "在您的终端状态行中显示使用信息";
-"claudecode.coming_soon" = "即将推出";
-"claudecode.features_description" = "与 Claude Code CLI 的终端状态行显示集成将在未来更新中推出。";
-
-/* ==================== */
 /* MARK: - Additional UI Labels */
 /* ==================== */
 "ui.app_behavior" = "应用行为";
@@ -346,30 +336,6 @@
 "session.auto_description_line2" = "• 向 Claude 3.5 Haiku 发送 'Hi'（最便宜的模型）";
 "session.auto_description_line3" = "• 使用不会出现在您历史记录中的临时聊天";
 "session.auto_description_line4" = "• 新的 5小时会话立即准备就绪";
-
-/* ==================== */
-/* MARK: - Claude CLI (Additional) */
-/* ==================== */
-"claudecode.subtitle" = "自定义您的终端状态行显示";
-"claudecode.preview_label" = "实时预览";
-"claudecode.preview_description" = "这是您的状态行在 Claude CLI 中的显示方式";
-"claudecode.component_model" = "模型名称";
-"claudecode.component_directory" = "目录名称";
-"claudecode.component_branch" = "Git 分支";
-"claudecode.component_context" = "上下文窗口";
-"claudecode.component_context_tokens" = "显示为令牌（而不是 %）";
-"claudecode.component_usage" = "使用统计";
-"claudecode.component_progressbar" = "进度条";
-"claudecode.component_pace_marker" = "节奏标记";
-"claudecode.pace_marker_info" = "在已用时间位置显示彩色标记";
-"claudecode.component_resettime" = "重置时间";
-"claudecode.requirement_sessionkey" = "• 在凭据 → Claude.ai 标签页中配置了会话密钥";
-"claudecode.requirement_restart" = "• 应用更改后重启 Claude CLI";
-"claudecode.error_no_components" = "请至少选择一个要显示的组件";
-"claudecode.error_no_sessionkey" = "会话密钥未配置。请先在个人使用标签页中设置。";
-"claudecode.success_applied" = "配置已应用！重启 Claude CLI 查看更改。";
-"claudecode.success_disabled" = "状态行已禁用。重启 Claude CLI。";
-"claudecode.preview_no_components" = "未选择组件";
 
 /* ==================== */
 /* MARK: - API Billing (Additional) */
@@ -713,11 +679,6 @@
 "api.single_organization" = "找到单个组织并自动选择";
 "api.remove_title" = "移除凭据";
 "api.remove_subtitle" = "从此配置文件中永久删除您的 API 控制台会话密钥";
-"claudecode.button_apply" = "应用";
-"claudecode.button_reset" = "重置";
-"claudecode.actions_title" = "操作";
-"claudecode.component_profile" = "配置文件名称";
-"claudecode.context_info" = "上下文可能显示约80-95%而非100%——Claude会在达到上限前自动压缩，输出令牌也会占用上下文空间。";
 "error.generic" = "错误：%@";
 "personal.button_saving" = "保存中...";
 "personal.button_setup_wizard" = "设置向导";
@@ -748,7 +709,7 @@
 
 /* Claude Code Info */
 "wizard.claude_code_info_title" = "使用 Claude Code？";
-"wizard.claude_code_info_description" = "使用跟踪将正常工作，但没有会话密钥，CLI 状态行和自动启动会话将无法工作";
+"wizard.claude_code_info_description" = "使用跟踪将正常工作，但没有会话密钥，自动启动会话将无法工作";
 "wizard.claude_code_skip_setup" = "跳过设置";
 "wizard.migrate_description_short" = "从以前的应用版本导入您的旧配置文件数据";
 

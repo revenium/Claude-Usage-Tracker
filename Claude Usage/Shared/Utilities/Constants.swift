@@ -12,12 +12,6 @@ enum Constants {
         static let refreshInterval = "refreshInterval"
         static let autoStartSessionEnabled = "autoStartSessionEnabled"
 
-        // Statusline component configuration
-        static let statuslineShowDirectory = "statuslineShowDirectory"
-        static let statuslineShowBranch = "statuslineShowBranch"
-        static let statuslineShowUsage = "statuslineShowUsage"
-        static let statuslineShowProgressBar = "statuslineShowProgressBar"
-
         // GitHub star prompt tracking
         static let firstLaunchDate = "firstLaunchDate"
         static let lastGitHubStarPromptDate = "lastGitHubStarPromptDate"

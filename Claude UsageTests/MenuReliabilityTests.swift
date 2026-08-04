@@ -1297,7 +1297,6 @@ final class MenuReliabilityTests: HostedAppTestCase {
             [
                 "api-history:Initiating name",
                 "notify:Initiating name:false:Captured sound",
-                "statusline:Initiating name",
                 "auto:\(profileID.uuidString)"
             ]
         )
@@ -1316,7 +1315,6 @@ final class MenuReliabilityTests: HostedAppTestCase {
             profileID: profile.id,
             context: context,
             capabilities: ProviderCapabilities([
-                .statusLineIntegration: .available,
                 .usageHistory: .available,
                 .usageNotifications: .available,
                 .automaticProfileSwitch: .unavailable
@@ -1335,10 +1333,7 @@ final class MenuReliabilityTests: HostedAppTestCase {
 
         XCTAssertEqual(
             recorder.snapshot(),
-            [
-                "notify:Captured:true:default",
-                "statusline:Captured"
-            ]
+            ["notify:Captured:true:default"]
         )
     }
 
@@ -1879,7 +1874,6 @@ final class MenuReliabilityTests: HostedAppTestCase {
             NotificationSettings(),
         capabilities: ProviderCapabilities =
             ProviderCapabilities([
-                .statusLineIntegration: .available,
                 .usageHistory: .available,
                 .usageNotifications: .available,
                 .automaticProfileSwitch: .available
@@ -2021,11 +2015,6 @@ final class MenuReliabilityTests: HostedAppTestCase {
                     recorder.append("history:\(event.profileName)")
                 },
                 recordClaude: { _, _ in },
-                writeStatusline: { event, _ in
-                    recorder.append(
-                        "statusline:\(event.profileName)"
-                    )
-                },
                 notifyNormalized: { event, _ in
                     recorder.append(
                         "notify:\(event.profileName):"

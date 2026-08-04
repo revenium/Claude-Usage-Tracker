@@ -169,11 +169,6 @@ class DataStore: StorageProvider {
         return defaults.bool(forKey: "debugAPILoggingEnabled")
     }
 
-    // MARK: - Statusline Configuration
-    // NOTE: Statusline settings have been moved to SharedDataStore.swift
-    // as they are app-wide settings, not profile-specific.
-    // Use SharedDataStore.shared for statusline preferences.
-
     // MARK: - Setup State
 
     /// Saves whether the user has completed the setup wizard

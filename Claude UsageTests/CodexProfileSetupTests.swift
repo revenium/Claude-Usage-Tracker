@@ -474,9 +474,6 @@ final class CodexProfileSetupTests: HostedAppTestCase {
         XCTAssertFalse(
             capabilities.supports(.automaticSessionStart)
         )
-        XCTAssertFalse(
-            capabilities.supports(.statusLineIntegration)
-        )
     }
 
     func testTypedNavigationRoutesBothProvidersAndExistingWindow()
@@ -1309,9 +1306,7 @@ final class CodexProfileSetupTests: HostedAppTestCase {
                 activationClaudeEffects: .init(
                     resyncBeforeSwitching: { _ in },
                     applyProfileCredentials: { _ in },
-                    switchAccountAndSync: { _ in },
-                    updateStatuslineScripts: {},
-                    updateStatuslineProfileName: { _ in }
+                    switchAccountAndSync: { _ in }
                 ),
                 lifecycleEventSink: .init(
                     deletionStarted: { _ in },

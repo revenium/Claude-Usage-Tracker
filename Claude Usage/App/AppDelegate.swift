@@ -98,12 +98,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         // Load profiles into ProfileManager (synchronously)
         providerUICompositionRoot.profileManager.loadProfiles()
 
-        // An installed statusline script written before the runtime-read
-        // change still holds the session key in its source, at 0o755. Only a
-        // rewrite removes it, and only after profiles are loaded is there an
-        // active profile to bind to.
-        StatuslineService.shared.rewriteScriptEmbeddingCredentialIfNeeded()
-
         // Initialize update manager to enable automatic update checks
         _ = UpdateManager.shared
 

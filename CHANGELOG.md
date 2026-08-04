@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- The Claude Code terminal statusline integration, in full: the Claude Code
+  settings tab, the installed `fetch-claude-usage.swift` and
+  `statusline-command.sh` scripts, the usage cache files, the 17 statusline
+  preferences, and the `status-line-integration` provider capability.
+
+  Claude Code now supplies rate-limit data to statusline scripts natively —
+  `rate_limits.five_hour` and `rate_limits.seven_day` arrive on the script's
+  stdin as `used_percentage` and `resets_at` — so a statusline can show usage
+  with no credential, no API call, and no involvement from this app. The
+  integration existed only to fill that gap.
+
+  Removing it also removes the reason the app ever wrote a session key into an
+  executable file on disk, and the mismatch where the app resolved
+  `CLAUDE_CONFIG_DIR` as a GUI process while Claude Code resolved it from the
+  shell.
+
+  Existing installed scripts are left alone rather than uninstalled: they stop
+  receiving fresh usage and degrade to rendering nothing. Delete
+  `~/.claude/fetch-claude-usage.swift` and `~/.claude/statusline-command.sh`,
+  and remove the `statusLine` entry from `~/.claude/settings.json`, to clean up
+  by hand. The menu bar remains the app's usage surface, and Claude Code CLI
+  account syncing is unaffected.
+
 ## [3.1.0] - 2026-08-02
 
 ### Changed

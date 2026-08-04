@@ -1393,9 +1393,6 @@ struct ConfirmStepSetup: View {
                     "SetupWizard: Updated profile setup preferences"
                 )
 
-                // Update statusline scripts if installed
-                try? StatuslineService.shared.updateScriptsIfInstalled()
-
                 await MainActor.run {
                     // Reset circuit breaker on successful credential save
                     ErrorRecovery.shared.recordSuccess(for: .api)

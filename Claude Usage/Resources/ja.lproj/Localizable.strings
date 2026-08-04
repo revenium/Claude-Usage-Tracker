@@ -46,8 +46,6 @@
 "settings.session_management.description" = "自動セッション管理";
 "settings.notifications" = "通知";
 "settings.notifications.description" = "使用状況アラートと通知";
-"settings.claude_cli" = "Claude CLI";
-"settings.claude_cli.description" = "ターミナルステータスライン統合";
 "settings.updates" = "アップデート";
 "settings.updates.description" = "アプリを最新の状態に保つ";
 "settings.about" = "このアプリについて";
@@ -313,14 +311,6 @@
 "personal.remove" = "セッションキーを削除";
 
 /* ==================== */
-/* MARK: - Claude Code (CLI) */
-/* ==================== */
-"claudecode.title" = "Claude CLI統合";
-"claudecode.description" = "ターミナルステータスラインに使用状況情報を表示";
-"claudecode.coming_soon" = "近日公開";
-"claudecode.features_description" = "Claude Code CLIとの統合によるターミナルステータスライン表示は、今後のアップデートで提供されます。";
-
-/* ==================== */
 /* MARK: - Additional UI Labels */
 /* ==================== */
 "ui.app_behavior" = "アプリの動作";
@@ -346,30 +336,6 @@
 "session.auto_description_line2" = "• Claude（最安のモデル）に「こんにちは」を送信";
 "session.auto_description_line3" = "• 履歴に表示されない一時的なチャットを使用";
 "session.auto_description_line4" = "• 新しい5時間セッションが即座に準備完了";
-
-/* ==================== */
-/* MARK: - Claude CLI (Additional) */
-/* ==================== */
-"claudecode.subtitle" = "ターミナルステータスライン表示をカスタマイズ";
-"claudecode.preview_label" = "ライブプレビュー";
-"claudecode.preview_description" = "Claude CLIでのステータスラインの表示方法";
-"claudecode.component_model" = "モデル名";
-"claudecode.component_directory" = "ディレクトリ名";
-"claudecode.component_branch" = "Gitブランチ";
-"claudecode.component_context" = "コンテキストウィンドウ";
-"claudecode.component_context_tokens" = "トークンで表示（%の代わり）";
-"claudecode.component_usage" = "使用統計";
-"claudecode.component_progressbar" = "プログレスバー";
-"claudecode.component_pace_marker" = "ペースマーカー";
-"claudecode.pace_marker_info" = "経過時間位置にカラーマークを表示";
-"claudecode.component_resettime" = "リセット時刻";
-"claudecode.requirement_sessionkey" = "• 認証情報 → Claude.aiタブでセッションキーが構成されている";
-"claudecode.requirement_restart" = "• 変更適用後にClaude CLIを再起動";
-"claudecode.error_no_components" = "表示する少なくとも1つのコンポーネントを選択してください";
-"claudecode.error_no_sessionkey" = "セッションキーが構成されていません。最初に個人使用タブで設定してください。";
-"claudecode.success_applied" = "構成が適用されました！変更を確認するにはClaude CLIを再起動してください。";
-"claudecode.success_disabled" = "ステータスラインが無効になりました。Claude CLIを再起動してください。";
-"claudecode.preview_no_components" = "コンポーネントが選択されていません";
 
 /* ==================== */
 /* MARK: - API Billing (Additional) */
@@ -486,10 +452,6 @@
 /* MARK: - New Keys Added */
 /* ==================== */
 "api.single_organization" = "単一の組織が見つかり、自動的に選択されました";
-"claudecode.button_apply" = "適用";
-"claudecode.button_reset" = "リセット";
-"claudecode.component_profile" = "プロファイル名";
-"claudecode.context_info" = "コンテキストは100%ではなく約80-95%と表示される場合があります。Claudeは上限に達する前に自動圧縮を行い、出力トークンもコンテキスト領域を使用します。";
 "error.generic" = "エラー：%@";
 "personal.button_saving" = "保存中...";
 "personal.button_setup_wizard" = "セットアップウィザード";
@@ -724,7 +686,6 @@
 /* ==================== */
 "api.remove_title" = "認証情報を削除";
 "api.remove_subtitle" = "このプロファイルからAPIコンソールセッションキーを完全に削除";
-"claudecode.actions_title" = "アクション";
 "personal.remove_title" = "認証情報を削除";
 "personal.remove_subtitle" = "このプロファイルからClaude.aiセッションキーを完全に削除";
 "personal.signin_description" = "サインインしてセッションキーを自動的に取得します。";
@@ -748,7 +709,7 @@
 
 /* Claude Code Info */
 "wizard.claude_code_info_title" = "Claude Codeを使用していますか？";
-"wizard.claude_code_info_description" = "使用状況の追跡は機能しますが、CLIステータスラインと自動セッション開始はセッションキーがないと機能しません";
+"wizard.claude_code_info_description" = "使用状況の追跡は機能しますが、自動セッション開始はセッションキーがないと機能しません";
 "wizard.claude_code_skip_setup" = "セットアップをスキップ";
 
 /* Migration Strings */

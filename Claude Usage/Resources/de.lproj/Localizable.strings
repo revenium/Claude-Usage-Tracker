@@ -46,8 +46,6 @@
 "settings.session_management.description" = "Automatische Sitzungsverwaltung";
 "settings.notifications" = "Benachrichtigungen";
 "settings.notifications.description" = "Nutzungswarnungen und Benachrichtigungen";
-"settings.claude_cli" = "Claude CLI";
-"settings.claude_cli.description" = "Terminal-Statuszeilen-Integration";
 "settings.updates" = "Updates";
 "settings.updates.description" = "Halten Sie Ihre App auf dem neuesten Stand";
 "settings.about" = "Über";
@@ -299,14 +297,6 @@
 "personal.remove" = "Sitzungsschlüssel Entfernen";
 
 /* ==================== */
-/* MARK: - Claude Code (CLI) */
-/* ==================== */
-"claudecode.title" = "Claude CLI-Integration";
-"claudecode.description" = "Nutzungsinformationen in Ihrer Terminal-Statuszeile anzeigen";
-"claudecode.coming_soon" = "Demnächst Verfügbar";
-"claudecode.features_description" = "Die Integration mit Claude Code CLI für die Terminal-Statuszeilenanzeige wird in einem zukünftigen Update verfügbar sein.";
-
-/* ==================== */
 /* MARK: - Additional UI Labels */
 /* ==================== */
 "ui.app_behavior" = "App-Verhalten";
@@ -332,30 +322,6 @@
 "session.auto_description_line2" = "• Sendet 'Hallo' an Claude (günstigstes Modell)";
 "session.auto_description_line3" = "• Verwendet einen temporären Chat, der nicht in Ihrem Verlauf erscheint";
 "session.auto_description_line4" = "• Neue 5-Stunden-Sitzung ist sofort bereit";
-
-/* ==================== */
-/* MARK: - Claude CLI (Additional) */
-/* ==================== */
-"claudecode.subtitle" = "Passen Sie Ihre Terminal-Statuszeilenanzeige an";
-"claudecode.preview_label" = "Live-Vorschau";
-"claudecode.preview_description" = "So wird Ihre Statuszeile in Claude CLI erscheinen";
-"claudecode.component_model" = "Modellname";
-"claudecode.component_directory" = "Verzeichnisname";
-"claudecode.component_branch" = "Git-Branch";
-"claudecode.component_context" = "Kontextfenster";
-"claudecode.component_context_tokens" = "Als Tokens anzeigen (statt %)";
-"claudecode.component_usage" = "Nutzungsstatistiken";
-"claudecode.component_progressbar" = "Fortschrittsbalken";
-"claudecode.component_pace_marker" = "Tempo-Markierung";
-"claudecode.pace_marker_info" = "Zeigt einen farbigen Strich an der verstrichenen Zeitposition";
-"claudecode.component_resettime" = "Zurücksetzungszeit";
-"claudecode.requirement_sessionkey" = "• Sitzungsschlüssel im Tab 'Anmeldedaten → Claude.ai' konfiguriert";
-"claudecode.requirement_restart" = "• Claude CLI nach Anwendung der Änderungen neu starten";
-"claudecode.error_no_components" = "Bitte wählen Sie mindestens eine Komponente zur Anzeige";
-"claudecode.error_no_sessionkey" = "Sitzungsschlüssel nicht konfiguriert. Bitte richten Sie ihn zuerst im Tab 'Persönliche Nutzung' ein.";
-"claudecode.success_applied" = "Konfiguration angewendet! Starten Sie Claude CLI neu, um die Änderungen zu sehen.";
-"claudecode.success_disabled" = "Statuszeile deaktiviert. Starten Sie Claude CLI neu.";
-"claudecode.preview_no_components" = "Keine Komponenten ausgewählt";
 
 /* ==================== */
 /* MARK: - API Billing (Additional) */
@@ -472,10 +438,6 @@
 /* MARK: - New Keys Added */
 /* ==================== */
 "api.single_organization" = "Einzelne Organisation gefunden und automatisch ausgewählt";
-"claudecode.button_apply" = "Anwenden";
-"claudecode.button_reset" = "Zurücksetzen";
-"claudecode.component_profile" = "Profilname";
-"claudecode.context_info" = "Der Kontext kann ~80-95% statt 100% anzeigen — Claude komprimiert automatisch vor dem Limit, und Ausgabe-Tokens nutzen ebenfalls Kontextplatz.";
 "error.generic" = "Fehler: %@";
 "personal.button_saving" = "Speichern...";
 "personal.button_setup_wizard" = "Einrichtungsassistent";
@@ -724,7 +686,6 @@
 /* ==================== */
 "api.remove_title" = "Anmeldedaten Entfernen";
 "api.remove_subtitle" = "Ihren API Console-Sitzungsschlüssel dauerhaft aus diesem Profil löschen";
-"claudecode.actions_title" = "Aktionen";
 "personal.remove_title" = "Anmeldedaten Entfernen";
 "personal.remove_subtitle" = "Ihren Claude.ai-Sitzungsschlüssel dauerhaft aus diesem Profil löschen";
 "personal.signin_description" = "Melden Sie sich an, um Ihren Sitzungsschlüssel automatisch zu extrahieren.";
@@ -748,7 +709,7 @@
 
 /* Claude Code Info */
 "wizard.claude_code_info_title" = "Claude Code verwenden?";
-"wizard.claude_code_info_description" = "Nutzungsverfolgung funktioniert, aber CLI-Statuszeile & Auto-Start-Sitzung funktionieren nicht ohne Sitzungsschlüssel";
+"wizard.claude_code_info_description" = "Nutzungsverfolgung funktioniert, aber die Auto-Start-Sitzung funktioniert nicht ohne Sitzungsschlüssel";
 "wizard.claude_code_skip_setup" = "Setup überspringen";
 
 /* Migration Strings */

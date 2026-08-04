@@ -274,9 +274,6 @@ struct PersonalUsageView: View {
             // Use ProfileManager's shared removal method
             try profileManager.removeClaudeAICredentials(for: profileId)
 
-            // Update statusline scripts if installed
-            try? StatuslineService.shared.updateScriptsIfInstalled()
-
             // Reload UI to update the view
             loadCurrentCredentials()
 
@@ -779,13 +776,6 @@ struct ConfirmStep: View {
                     credentials: creds,
                     acceptingSessionOnly: acceptSessionOnly
                 )
-
-                // Update statusline scripts if key or org changed (only if already installed)
-                let keyChanged = keyHasChanged()
-                let orgChanged = wizardState.selectedOrgId != wizardState.originalOrgId
-                if keyChanged || orgChanged {
-                    try? StatuslineService.shared.updateScriptsIfInstalled()
-                }
 
                 await MainActor.run {
                     // Reset circuit breaker on successful credential save

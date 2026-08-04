@@ -14,7 +14,6 @@ public struct CodexUsageProvider: UsageProvider, Sendable {
         .interactiveLogin: .available,
         .automaticSessionStart: .unavailable,
         .automaticProfileSwitch: .unavailable,
-        .statusLineIntegration: .unavailable,
         .usageHistory: .available,
         .usageNotifications: .available,
         .cliAccountSync: .unavailable,

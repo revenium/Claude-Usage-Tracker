@@ -101,8 +101,7 @@ Claude Usage/
 │   ├── Services/
 │   │   ├── ClaudeAPIService.swift # API communication
 │   │   ├── ClaudeStatusService.swift
-│   │   ├── NotificationManager.swift
-│   │   └── StatuslineService.swift # Claude Code integration
+│   │   └── NotificationManager.swift
 │   ├── Storage/
 │   │   └── DataStore.swift        # UserDefaults wrapper
 │   └── Utilities/
@@ -251,7 +250,7 @@ feat(api): add support for Opus weekly usage tracking
 
 fix(menubar): resolve icon not updating on appearance change
 
-docs(readme): add Claude Code statusline setup instructions
+docs(readme): clarify session key setup instructions
 
 refactor(services): extract notification logic to NotificationManager
 ```

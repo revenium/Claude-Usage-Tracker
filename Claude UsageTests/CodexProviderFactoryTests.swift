@@ -556,10 +556,6 @@ final class CodexProviderFactoryTests: HostedAppTestCase {
             factory.capabilities[.automaticSessionStart],
             .unavailable
         )
-        XCTAssertEqual(
-            factory.capabilities[.statusLineIntegration],
-            .unavailable
-        )
     }
 
     private func makeTemporaryDirectory() -> URL {

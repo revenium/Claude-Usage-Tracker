@@ -95,10 +95,6 @@ final class CodexUsageProviderTests: XCTestCase {
             provider.capabilities,
             CodexUsageProvider.supportedCapabilities
         )
-        XCTAssertEqual(
-            provider.capabilities[.statusLineIntegration],
-            .unavailable
-        )
 
         let requests = try fake.recordedRequests()
         XCTAssertEqual(

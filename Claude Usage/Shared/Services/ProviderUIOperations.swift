@@ -109,7 +109,6 @@ nonisolated enum ProviderFeatureSurface:
     case notifications
     case automaticSessionStart
     case automaticProfileSwitch
-    case statusLine
     case cliAccountSync
     case apiBilling
     case genericRefresh
@@ -126,8 +125,6 @@ nonisolated enum ProviderFeatureSurface:
             return .automaticSessionStart
         case .automaticProfileSwitch:
             return .automaticProfileSwitch
-        case .statusLine:
-            return .statusLineIntegration
         case .cliAccountSync:
             return .cliAccountSync
         case .apiBilling:

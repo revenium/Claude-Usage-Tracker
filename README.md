@@ -57,7 +57,6 @@ experience.
 - **Headless Mode**: Works on headless Macs via Remote Desktop
 - **Customizable Interface**: 5 icon styles + 3 color modes (Multi-Color/Greyscale/Single Color) + remaining/used percentage toggle
 - **Smart Automation**: Auto-start sessions, auto-switch profiles, threshold notifications
-- **Developer Tools**: Terminal statusline integration with model, context, profile display, pace markers, and color modes
 - **Privacy-First**: Local storage, no telemetry, no cloud sync
 - **Native Performance**: Lightweight Swift/SwiftUI design for macOS
 
@@ -67,10 +66,6 @@ experience.
   <img src=".github/popover.png" alt="Popover Interface" width="200">
 
   <sub>Menu bar icon and detailed usage popover</sub>
-
-  <img src=".github/statusline.png" alt="Claude Code Statusline">
-  <br>
-  <sub>Live terminal statusline showing directory, branch, model, context, and color-coded usage</sub>
 </div>
 
 ---
@@ -128,8 +123,6 @@ eligibility, setup, privacy boundaries, troubleshooting, and exclusions.
 - **Easiest**: [Claude Code](https://claude.com/claude-code) installed and logged in - App automatically uses CLI credentials (v2.2.2+)
 - **Browser Sign-In**: Sign in via the built-in browser — session key extracted automatically (v3.0.2+)
 - **Manual**: Web browser access to extract session key from claude.ai (Chrome, Safari, Firefox, etc.)
-
-**Note**: For terminal statusline integration, you'll still need to manually configure a session key even if using Claude Code OAuth
 
 ### Installation
 
@@ -271,7 +264,6 @@ If you prefer manual configuration:
 - **Customize Icon**: Go to Settings → Appearance to choose your preferred menu bar style
 - **Enable Notifications**: Settings → Notifications to get threshold alerts
 - **Auto-Start Sessions**: Settings → Session Management to enable automatic session initialization
-- **Terminal Integration**: Settings → Claude Code to set up statusline (requires session key configuration)
 - **Keyboard Shortcuts**: Settings → Shortcuts to configure global hotkeys
 
 ---
@@ -431,18 +423,6 @@ Bidirectional sync means MCP configs from any linked account can propagate to al
 - **Configurable Refresh**: Set intervals from 5 to 120 seconds
 - Session reset and auto-start confirmations
 
-### Developer Integration
-- **Claude Code Terminal Statusline**: Real-time usage in your terminal
-- Customizable components: directory, git branch, model name, context window, profile name, usage percentage, progress bar, pace marker, reset timer
-- **3 color modes**: Multi-Color, Greyscale, Single Color (custom hex) for statusline
-- **Pace marker**: 6-tier colored marker on progress bar showing projected usage pace
-- **Label toggles**: Show/hide "Ctx:", "Usage:", "Reset:" prefixes
-- **24-hour time**: Optional 24-hour format for reset time
-- Terminal-matching preview with ANSI-equivalent colors
-- Instant rendering via usage cache (no startup delay)
-- One-click automated installation
-- Live preview before applying changes
-
 ### Security & Privacy
 - **macOS Keychain Storage**: Session keys stored in macOS Keychain (most secure option)
 - **Automatic Migration**: Seamless migration from old storage methods
@@ -553,19 +533,6 @@ Application language preferences:
 - **Live Updates**: Interface updates immediately when language changes
 - Supported: English, Spanish, French, German, Italian, Portuguese, Japanese, Korean, Simplified Chinese
 
-#### Claude Code (Statusline)
-Terminal integration (app-wide):
-- **Component Selection**: Choose what to display (directory, branch, model name, context window, profile name, usage, progress bar, pace marker, reset time)
-- **Color Mode**: Multi-Color, Greyscale, or Single Color with custom hex picker
-- **Pace Marker**: 6-tier colored marker showing projected usage pace on progress bar
-- **Label Toggles**: Show/hide "Ctx:", "Usage:", "Reset:" prefixes for compact display
-- **24-Hour Time**: Optional 24-hour format for reset time
-- **Live Preview**: Terminal-matching preview with ANSI-equivalent colors
-- **One-Click Install**: Automated script installation to `~/.claude/`
-- **Automatic Updates**: Statusline updates when switching profiles
-- **Usage Cache**: Instant CLI rendering via cached usage data
-- See [Claude Code Integration](#claude-code-integration) section for detailed setup
-
 #### Updates
 Automatic update configuration:
 - **Automatic Update Checking**: Configure how often to check for updates
@@ -578,163 +545,6 @@ Application information:
 - **Version Information**: Current app version
 - **Credits**: Contributors and acknowledgments
 - **Links**: GitHub repository, issue tracker, documentation
-
-
-## Claude Code Integration
-
-Bring real-time Claude usage monitoring directly into your terminal with Claude Code statusline integration! Display your current usage percentage, model name, context window, profile name, git branch, and working directory without leaving your development workflow.
-
-### What is Claude Code?
-
-[Claude Code](https://claude.com/claude-code) is Anthropic's official CLI tool for interacting with Claude AI directly from your terminal. The statusline feature allows you to display custom information at the bottom of your terminal window.
-
-<div align="center">
-  <img src=".github/statusline.png" alt="Claude Code Statusline in Action" width="90%">
-  <br>
-  <sub>Example: Terminal statusline with all components enabled</sub>
-</div>
-
-### Setup Instructions
-
-#### Prerequisites
-
-1. **Claude Code installed**: Download from [claude.com/claude-code](https://claude.com/claude-code)
-2. **Session key configured**: Must be manually configured in the Personal Usage tab (Claude Code OAuth doesn't work for statusline - it requires direct session key)
-
-#### Installation Steps
-
-1. **Open Claude Usage Tracker Settings**
-   - Click the menu bar icon
-   - Click "Settings"
-   - Navigate to the "Claude Code" tab
-
-2. **Choose Your Components**
-   - Toggle on/off the components you want to see:
-     - **Directory name**: Shows current working directory
-     - **Git branch**: Displays current branch with ⎇ icon
-     - **Model name**: Shows current model (Opus, Sonnet)
-     - **Profile name**: Shows active profile name
-     - **Context window**: Shows context usage as percentage or token count
-     - **Usage statistics**: Shows session percentage with color coding
-     - **Progress bar**: Visual 10-segment indicator (optional when usage is enabled)
-     - **Pace marker**: Colored `┃` on progress bar at elapsed time position (6-tier pace colors)
-     - **Reset time**: When your session resets (12h or 24h format)
-   - **Color mode**: Choose Multi-Color, Greyscale, or Single Color
-   - **Label toggles**: Show/hide "Ctx:", "Usage:", "Reset:" prefixes
-
-3. **Preview Your Statusline**
-   - The live preview shows exactly how it will appear with terminal-matching ANSI colors
-   - Example: `claude-usage │ ⎇ main │ Opus │ Work │ Ctx: 48% │ Usage: 25% ▓▓┃░░░░░░░ → Reset: 3:45 PM`
-
-4. **Apply Configuration**
-   - Click "Apply" button
-   - Scripts will be installed to `~/.claude/`
-   - Claude Code's `settings.json` will be updated automatically
-
-5. **Restart Claude Code**
-   - Close and reopen your Claude Code terminal
-   - The statusline will appear at the bottom of your terminal window
-
-### What Gets Installed
-
-The setup automatically creates:
-
-- `~/.claude/fetch-claude-usage.swift`: Swift script that fetches usage data from Claude API
-- `~/.claude/statusline-command.sh`: Bash script that builds the statusline display
-- `~/.claude/statusline-config.txt`: Configuration file with your component preferences
-- `~/.claude/settings.json`: Updated with statusline command (or created if doesn't exist)
-
-All scripts are set with secure permissions (755) and only read your existing session key file.
-
-### Customization
-
-#### Available Components
-
-| Component | Description | Example |
-|-----------|-------------|---------|
-| Directory | Current directory name | `claude-usage` |
-| Git Branch | Active git branch | `⎇ main` |
-| Model | Current model name | `Opus` |
-| Profile | Active profile name | `Work` |
-| Context | Context window usage | `Ctx: 48%` or `96K` |
-| Usage | Session percentage | `Usage: 25%` or `25%` |
-| Progress Bar | 10-segment visual indicator | `▓▓░░░░░░░░` |
-| Pace Marker | Colored marker at elapsed time position | `▓▓┃░░░░░░░` |
-| Reset Time | When session resets | `→ Reset: 3:45 PM` or `→ 15:45` |
-
-#### Color Coding
-
-**Usage bar** is color-coded with a 10-level gradient:
-- **0-10%**: Dark green
-- **11-30%**: Green shades
-- **31-50%**: Yellow-green transitioning to olive
-- **51-70%**: Yellow to orange
-- **71-90%**: Dark orange to red
-- **91-100%**: Deep red
-
-**Pace marker** uses a 6-tier system based on projected end-of-period usage:
-- **Comfortable** (projected <50%): Green
-- **On Track** (50-75%): Teal
-- **Warming** (75-90%): Yellow
-- **Pressing** (90-100%): Orange
-- **Critical** (100-120%): Red
-- **Runaway** (>120%): Purple
-
-**Color modes** (applies to both menu bar and statusline):
-- **Multi-Color**: Full color palette (default)
-- **Greyscale**: No colors, adapts to system theme
-- **Single Color**: All elements use your custom hex color
-
-#### Disabling Statusline
-
-To remove the statusline:
-1. Open Claude Usage Tracker Settings → Claude Code tab
-2. Click "Reset" button
-3. Restart Claude Code
-
-This removes the statusline configuration but keeps the scripts installed for easy re-enabling.
-
-### Troubleshooting
-
-#### Statusline Not Appearing
-
-1. Verify Claude Code is installed and working
-2. Check that you restarted Claude Code after applying
-3. Ensure session key is valid in General settings tab
-4. Check that `~/.claude/settings.json` exists and has the statusline configuration
-
-#### Shows "Usage: ~"
-
-This indicates the Swift script couldn't fetch usage data:
-- Verify your session key is valid
-- Check that `~/.claude-session-key` exists
-- Ensure you're connected to the internet
-- Try refreshing your session key from claude.ai
-
-#### Permission Issues
-
-If scripts can't be executed:
-```bash
-chmod 755 ~/.claude/fetch-claude-usage.swift
-chmod 755 ~/.claude/statusline-command.sh
-```
-
-### Example Statuslines
-
-With all components enabled (Multi-Color mode):
-```
-my-project │ ⎇ feature/new-ui │ Opus │ Work │ Ctx: 48% │ Usage: 47% ▓▓▓▓┃░░░░░ → Reset: 4:15 PM
-```
-
-Compact (labels hidden, 24h time):
-```
-my-project │ ⎇ develop │ 12% ▓┃░░░░░░░░ → 16:15
-```
-
-Model and context only:
-```
-Sonnet │ Ctx: 96K │ Usage: 25%
-```
 
 ## Architecture
 

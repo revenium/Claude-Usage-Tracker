@@ -41,10 +41,6 @@ protocol StorageProvider {
     func saveAPIOrganizationId(_ orgId: String)
     func loadAPIOrganizationId() -> String?
 
-    // MARK: - Statusline Configuration
-    // NOTE: Statusline methods moved to SharedDataStore
-    // (app-wide settings, not profile-specific)
-
     // MARK: - Setup State
     func saveHasCompletedSetup(_ completed: Bool)
     func hasCompletedSetup() -> Bool

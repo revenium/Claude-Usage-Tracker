@@ -3282,11 +3282,7 @@ private final class ProviderEffectCounter {
         ProfileActivationClaudeEffects(
             resyncBeforeSwitching: { [weak self] _ in self?.count += 1 },
             applyProfileCredentials: { [weak self] _ in self?.count += 1 },
-            switchAccountAndSync: { [weak self] _ in self?.count += 1 },
-            updateStatuslineScripts: { [weak self] in self?.count += 1 },
-            updateStatuslineProfileName: {
-                [weak self] _ in self?.count += 1
-            }
+            switchAccountAndSync: { [weak self] _ in self?.count += 1 }
         )
     }
 }
@@ -3312,9 +3308,7 @@ private extension ProfileActivationClaudeEffects {
         ProfileActivationClaudeEffects(
             resyncBeforeSwitching: { _ in },
             applyProfileCredentials: { _ in },
-            switchAccountAndSync: { _ in },
-            updateStatuslineScripts: {},
-            updateStatuslineProfileName: { _ in }
+            switchAccountAndSync: { _ in }
         )
     }
 }

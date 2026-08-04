@@ -134,8 +134,6 @@ class MenuBarManager: NSObject, ObservableObject {
                 (AcceptedUsageRefreshEvent, UsageReport) -> Void
             let recordClaude:
                 (AcceptedUsageRefreshEvent, ClaudeUsage) -> Void
-            let writeStatusline:
-                (AcceptedUsageRefreshEvent, ClaudeUsage) -> Void
             let notifyNormalized:
                 (AcceptedUsageRefreshEvent, UsageReport) -> Void
             let autoSwitch:
@@ -224,11 +222,6 @@ class MenuBarManager: NSObject, ObservableObject {
             }
             if event.identity.providerID == .claude,
                let usage = event.currentUsage.claudeUsage {
-                if event.capabilities.supports(
-                    .statusLineIntegration
-                ) {
-                    hooks.writeStatusline(event, usage)
-                }
                 if event.capabilities.supports(
                     .automaticProfileSwitch
                 ) {
@@ -438,15 +431,6 @@ class MenuBarManager: NSObject, ObservableObject {
                     self?.recordAcceptedClaude(
                         event,
                         usage: usage
-                    )
-                },
-                writeStatusline: { event, usage in
-                    guard StatuslineService.shared.isInstalled else {
-                        return
-                    }
-                    StatuslineService.shared.writeUsageCache(
-                        usage: usage,
-                        profileName: event.profileName
                     )
                 },
                 notifyNormalized: { event, report in

@@ -1632,7 +1632,6 @@ final class ProviderHistoryNotificationTests: HostedAppTestCase {
             .usageNotifications,
             .automaticSessionStart,
             .automaticProfileSwitch,
-            .statusLineIntegration,
             .cliAccountSync,
             .apiBilling
         ] {
@@ -1652,7 +1651,6 @@ final class ProviderHistoryNotificationTests: HostedAppTestCase {
             .notifications: (true, true),
             .automaticSessionStart: (true, false),
             .automaticProfileSwitch: (true, false),
-            .statusLine: (true, false),
             .cliAccountSync: (true, false),
             .apiBilling: (true, false),
             .genericRefresh: (true, true),
@@ -1711,13 +1709,25 @@ final class ProviderHistoryNotificationTests: HostedAppTestCase {
         XCTAssertNotEqual(first, second)
     }
 
+    /// Switching to a provider that lacks the selected section's capability
+    /// must redirect to General rather than leave a section on screen that the
+    /// sidebar no longer lists.
+    ///
+    /// Retargeted from `.claudeCode` to `.history` when the statusline was
+    /// removed. The mechanism under test is `normalizeSection`, which is still
+    /// live — the statusline section was only ever this test's *vehicle*, and
+    /// `.history` is now the sole capability-gated section. Deleting the test
+    /// along with the feature would have left the redirect with no coverage at
+    /// all.
     func testProviderChangeRedirectsCapabilityHiddenSection() {
         let navigation = retain(SettingsNavigationModel())
-        navigation.selectedSection = .claudeCode
+        navigation.selectedSection = .history
 
         navigation.activeProviderDidChange(
             .codex,
-            capabilities: CodexProviderFactory.capabilities
+            capabilities: ProviderCapabilities([
+                .usageHistory: .unavailable
+            ])
         )
 
         XCTAssertEqual(navigation.selectedSection, .general)
@@ -1747,9 +1757,6 @@ final class ProviderHistoryNotificationTests: HostedAppTestCase {
                 recordClaude: { _, _ in
                     calls.append("legacy-history")
                 },
-                writeStatusline: { _, _ in
-                    calls.append("statusline")
-                },
                 notifyNormalized: { _, _ in
                     calls.append("notify")
                 },
@@ -1777,8 +1784,7 @@ final class ProviderHistoryNotificationTests: HostedAppTestCase {
             capabilities: ProviderCapabilities([
                 .usageHistory: .available,
                 .usageNotifications: .available,
-                .automaticSessionStart: .unavailable,
-                .statusLineIntegration: .unavailable
+                .automaticSessionStart: .unavailable
             ]),
             committedAt: now
         )

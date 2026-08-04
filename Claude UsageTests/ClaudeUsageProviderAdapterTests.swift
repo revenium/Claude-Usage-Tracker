@@ -223,7 +223,6 @@ final class ClaudeUsageProviderAdapterTests: XCTestCase {
         XCTAssertEqual(capabilities[.credits], .available)
         XCTAssertEqual(capabilities[.resetCredits], .unavailable)
         XCTAssertEqual(capabilities[.automaticSessionStart], .available)
-        XCTAssertEqual(capabilities[.statusLineIntegration], .available)
     }
 
     private func makeReport(usage: ClaudeUsage) throws -> UsageReport {

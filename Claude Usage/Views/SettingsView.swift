@@ -326,10 +326,6 @@ final class SettingsNavigationModel: ObservableObject {
            !policy.supports(.history) {
             selectedSection = .general
         }
-        if selectedSection == .claudeCode,
-           !policy.supports(.statusLine) {
-            selectedSection = .general
-        }
     }
 }
 
@@ -535,9 +531,7 @@ struct SettingsView: View {
 
                 // App Settings Section
                 AppSettingsSection(
-                    selectedSection: $navigation.selectedSection,
-                    providerID: profileManager.activeProfile?.providerID,
-                    dependencies: dependencies
+                    selectedSection: $navigation.selectedSection
                 )
                     .padding(.horizontal, 12)
 
@@ -602,8 +596,6 @@ struct SettingsView: View {
                     )
                 case .language:
                     LanguageSettingsView()
-                case .claudeCode:
-                    ClaudeCodeView()
                 case .shortcuts:
                     ShortcutsSettingsView()
                 case .updates:
@@ -793,8 +785,6 @@ struct ProfileSectionContainer: View {
 
 struct AppSettingsSection: View {
     @Binding var selectedSection: SettingsSection
-    let providerID: ProviderID?
-    let dependencies: ProviderUIDependencies
 
     var sharedSections: [SettingsSection] {
         SettingsSection.allCases.filter {
@@ -802,14 +792,6 @@ struct AppSettingsSection: View {
                   !$0.isCredential,
                   !$0.isBottomBarItem else {
                 return false
-            }
-            if $0 == .claudeCode,
-               let providerID {
-                return ProviderFeatureSurfacePolicy(
-                    capabilities: dependencies.capabilities(
-                        for: providerID
-                    )
-                ).supports(.statusLine)
             }
             return true
         }
@@ -935,7 +917,6 @@ enum SettingsSection: String, CaseIterable {
     case appSettings
     case manageProfiles
     case language
-    case claudeCode
     case shortcuts
     case updates
     case support
@@ -960,7 +941,6 @@ enum SettingsSection: String, CaseIterable {
         case .appSettings: return "section.app_settings_title".localized
         case .manageProfiles: return "section.manage_profiles_title".localized
         case .language: return "language.title".localized
-        case .claudeCode: return "settings.claude_cli".localized
         case .shortcuts: return "section.shortcuts_title".localized
         case .updates: return "settings.updates".localized
         case .support: return "section.support_title".localized
@@ -984,7 +964,6 @@ enum SettingsSection: String, CaseIterable {
         case .appSettings: return "gearshape.2.fill"
         case .manageProfiles: return "person.2.fill"
         case .language: return "globe"
-        case .claudeCode: return "chevron.left.forwardslash.chevron.right"
         case .shortcuts: return "keyboard"
         case .updates: return "arrow.down.circle.fill"
         case .support: return "heart.fill"
@@ -1011,7 +990,6 @@ enum SettingsSection: String, CaseIterable {
         case .appSettings: return "section.app_settings_desc".localized
         case .manageProfiles: return "section.manage_profiles_desc".localized
         case .language: return "language.subtitle".localized
-        case .claudeCode: return "settings.claude_cli.description".localized
         case .shortcuts: return "section.shortcuts_desc".localized
         case .updates: return "settings.updates.description".localized
         case .support: return "section.support_desc".localized

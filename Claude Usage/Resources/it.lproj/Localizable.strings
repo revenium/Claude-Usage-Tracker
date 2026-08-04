@@ -46,8 +46,6 @@
 "settings.session_management.description" = "Gestione automatica delle sessioni";
 "settings.notifications" = "Notifiche";
 "settings.notifications.description" = "Avvisi e notifiche di utilizzo";
-"settings.claude_cli" = "Claude CLI";
-"settings.claude_cli.description" = "Integrazione barra di stato del terminale";
 "settings.about" = "Informazioni";
 "settings.about.description" = "Informazioni sull'app e crediti";
 
@@ -297,14 +295,6 @@
 "personal.remove" = "Rimuovi Chiave di Sessione";
 
 /* ==================== */
-/* MARK: - Claude Code (CLI) */
-/* ==================== */
-"claudecode.title" = "Integrazione Claude CLI";
-"claudecode.description" = "Visualizza informazioni sull'utilizzo nella barra di stato del terminale";
-"claudecode.coming_soon" = "Prossimamente";
-"claudecode.features_description" = "L'integrazione con Claude Code CLI per la visualizzazione della barra di stato del terminale arriverà in un aggiornamento futuro.";
-
-/* ==================== */
 /* MARK: - Additional UI Labels */
 /* ==================== */
 "ui.app_behavior" = "Comportamento App";
@@ -330,30 +320,6 @@
 "session.auto_description_line2" = "• Invia 'Ciao' a Claude (modello più economico)";
 "session.auto_description_line3" = "• Usa una chat temporanea che non apparirà nella cronologia";
 "session.auto_description_line4" = "• La nuova sessione di 5 ore è pronta istantaneamente";
-
-/* ==================== */
-/* MARK: - Claude CLI (Additional) */
-/* ==================== */
-"claudecode.subtitle" = "Personalizza la visualizzazione della barra di stato del terminale";
-"claudecode.preview_label" = "Anteprima dal Vivo";
-"claudecode.preview_description" = "Così apparirà la tua barra di stato in Claude CLI";
-"claudecode.component_model" = "Nome del modello";
-"claudecode.component_directory" = "Nome directory";
-"claudecode.component_branch" = "Branch Git";
-"claudecode.component_context" = "Finestra di contesto";
-"claudecode.component_context_tokens" = "Mostra come token (invece di %)";
-"claudecode.component_usage" = "Statistiche utilizzo";
-"claudecode.component_progressbar" = "Barra di progresso";
-"claudecode.component_pace_marker" = "Indicatore di ritmo";
-"claudecode.pace_marker_info" = "Mostra un segno colorato nella posizione del tempo trascorso";
-"claudecode.component_resettime" = "Ora di ripristino";
-"claudecode.requirement_sessionkey" = "• Chiave di sessione configurata in Credenziali → scheda Claude.ai";
-"claudecode.requirement_restart" = "• Riavvia Claude CLI dopo aver applicato le modifiche";
-"claudecode.error_no_components" = "Seleziona almeno un componente da visualizzare";
-"claudecode.error_no_sessionkey" = "Chiave di sessione non configurata. Configurala prima nella scheda Utilizzo Personale.";
-"claudecode.success_applied" = "Configurazione applicata! Riavvia Claude CLI per vedere le modifiche.";
-"claudecode.success_disabled" = "Barra di stato disabilitata. Riavvia Claude CLI.";
-"claudecode.preview_no_components" = "Nessun componente selezionato";
 
 /* ==================== */
 /* MARK: - API Billing (Additional) */
@@ -470,10 +436,6 @@
 /* MARK: - New Keys Added */
 /* ==================== */
 "api.single_organization" = "Singola organizzazione trovata e selezionata automaticamente";
-"claudecode.button_apply" = "Applica";
-"claudecode.button_reset" = "Ripristina";
-"claudecode.component_profile" = "Nome profilo";
-"claudecode.context_info" = "Il contesto può mostrare ~80-95% invece di 100% — Claude comprime automaticamente prima del limite e i token di output usano anch'essi spazio di contesto.";
 "error.generic" = "Errore: %@";
 "personal.button_saving" = "Salvataggio...";
 "personal.button_setup_wizard" = "Assistente di Configurazione";
@@ -722,7 +684,6 @@
 /* ==================== */
 "api.remove_title" = "Rimuovi Credenziali";
 "api.remove_subtitle" = "Elimina permanentemente la tua chiave di sessione API Console da questo profilo";
-"claudecode.actions_title" = "Azioni";
 "personal.remove_title" = "Rimuovi Credenziali";
 "personal.remove_subtitle" = "Elimina permanentemente la tua chiave di sessione Claude.ai da questo profilo";
 "personal.signin_description" = "Accedi per estrarre automaticamente la tua chiave di sessione.";
@@ -746,7 +707,7 @@
 
 /* Claude Code Info */
 "wizard.claude_code_info_title" = "Stai usando Claude Code?";
-"wizard.claude_code_info_description" = "Il monitoraggio dell'utilizzo funzionerà, ma la riga di stato CLI e l'avvio automatico della sessione non funzioneranno senza chiave di sessione";
+"wizard.claude_code_info_description" = "Il monitoraggio dell'utilizzo funzionerà, ma l'avvio automatico della sessione non funzionerà senza chiave di sessione";
 "wizard.claude_code_skip_setup" = "Salta configurazione";
 
 /* Migration Strings */
