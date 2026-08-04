@@ -22,9 +22,15 @@ class StatuslineService {
     ///
     /// Usage numbers only. The app is the sole credential holder; this file
     /// is how the script gets data without ever touching a secret or the
-    /// Keychain. Atomic write at 0600 — atomic so a concurrent read never
-    /// sees a half-written file, 0600 because there is no reason for anything
-    /// but this user to read it.
+    /// Keychain. Atomic so a concurrent read never sees a half-written file,
+    /// and 0600 because there is no reason for anything but this user to
+    /// read it.
+    ///
+    /// The mode is set on the temporary file *before* it is moved into place,
+    /// not on the destination afterwards. `Data.write(options: .atomic)`
+    /// writes a temp file and renames it, so the new inode briefly carries
+    /// umask-default permissions — a world-readable window on every refresh,
+    /// which is every few minutes forever.
     func publishUsageForStatusline(
         utilization: Int,
         resetsAt: String?
@@ -49,11 +55,26 @@ class StatuslineService {
         )
         let destination = directory
             .appendingPathComponent(Self.usageCacheFilename)
-        try data.write(to: destination, options: [.atomic])
-        try FileManager.default.setAttributes(
-            [.posixPermissions: 0o600],
-            ofItemAtPath: destination.path
+        // Same directory, so the rename below stays on one filesystem and is
+        // therefore atomic.
+        let temporary = directory.appendingPathComponent(
+            ".\(Self.usageCacheFilename).\(UUID().uuidString)"
         )
+        guard FileManager.default.createFile(
+            atPath: temporary.path,
+            contents: data,
+            attributes: [.posixPermissions: 0o600]
+        ) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        do {
+            guard rename(temporary.path, destination.path) == 0 else {
+                throw CocoaError(.fileWriteUnknown)
+            }
+        } catch {
+            try? FileManager.default.removeItem(at: temporary)
+            throw error
+        }
     }
 
     /// Test seam: renders the production template without needing profile
@@ -62,13 +83,17 @@ class StatuslineService {
         generateSwiftScript()
     }
 
-    /// Marks a script that reads its credential at runtime.
+    /// Marks a script that reads published usage and holds no credential.
     ///
     /// Grep-able on purpose: an installed script without it predates this
     /// change and still has a session key baked into its source, so it must
-    /// be rewritten rather than left alone.
-    static let runtimeCredentialMarker =
-        "claude-usage-tracker:runtime-keychain-read:v1"
+    /// be rewritten rather than left alone. Detection is by absence, so the
+    /// marker never has to match anything a previous version wrote.
+    ///
+    /// Bumping the version forces a rewrite on every install, which is safe —
+    /// the replacement depends on no profile state.
+    static let publishedUsageMarker =
+        "claude-usage-tracker:reads-published-usage:v1"
 
     /// Where the app publishes rendered usage for the statusline.
     ///
@@ -80,7 +105,7 @@ class StatuslineService {
     private func generateSwiftScript() -> String {
         return """
 #!/usr/bin/env swift
-// \(Self.runtimeCredentialMarker)
+// \(Self.publishedUsageMarker)
 
 import Foundation
 
@@ -123,16 +148,23 @@ exit(0)
     }
 
     /// Placeholder Swift script for when statusline is disabled
-    /// This script returns an error indicating no session key is available
-    private let placeholderSwiftScript = """
+    ///
+    /// Carries the marker like the real script. Without it, a disabled
+    /// statusline looks to the upgrade check exactly like a stale script and
+    /// gets "remediated" on the next launch — silently undoing the user's
+    /// choice and logging that a credential was removed when none was there.
+    private var placeholderSwiftScript: String {
+        """
 #!/usr/bin/env swift
+// \(Self.publishedUsageMarker)
 
 import Foundation
 
-// No session key available - statusline is disabled
+// Statusline is disabled. Holds no credential, like the enabled script.
 print("ERROR:NO_SESSION_KEY")
 exit(1)
 """
+    }
 
     /// Bash script that builds the statusline display.
     /// Installed to ~/.claude/statusline-command.sh and configured in Claude Code settings.json.
@@ -584,11 +616,13 @@ printf "%s\\n" "$output"
 
     /// Installs the statusline scripts.
     ///
-    /// - Parameter configureForActiveProfile: when true the script is bound
-    ///   to the active profile so it can read that profile's credential from
-    ///   the Keychain at run time. The credential itself is never written
-    ///   into the script; the parameter name used to say "inject" because it
-    ///   was.
+    /// - Parameter configureForActiveProfile: when true, install the real
+    ///   script; when false, the placeholder. The script never touches a
+    ///   credential or the Keychain — it only reads usage the app has already
+    ///   published. The flag is named for the *precondition* it enforces: an
+    ///   active profile with a session key, without which nothing would
+    ///   publish and the statusline would stay empty. The parameter used to
+    ///   say "inject" because the credential really was written into the file.
     func installScripts(configureForActiveProfile: Bool = false) throws {
         let claudeDir = Constants.ClaudePaths.claudeDirectory
 
@@ -605,22 +639,23 @@ printf "%s\\n" "$output"
                 throw StatuslineError.noActiveProfile
             }
 
-            // Still required: without a credential there is nothing for the
-            // script to find, and failing here is clearer than installing a
-            // script that silently shows nothing.
+            // The script itself needs no credential — but nothing publishes
+            // usage without one, so the statusline would sit permanently
+            // empty. Failing here is clearer than enabling a feature that
+            // silently shows nothing.
+            //
+            // This gate is for *enabling* the statusline only. Never gate
+            // credential remediation on it: see
+            // `rewriteScriptEmbeddingCredentialIfNeeded`.
             guard activeClaudeProfile.claudeSessionKey != nil else {
                 throw StatuslineError.sessionKeyNotFound
             }
 
-            guard let organizationId = activeClaudeProfile.organizationId else {
-                throw StatuslineError.organizationNotConfigured
-            }
-
-            _ = organizationId
             swiftScriptContent = generateSwiftScript()
             LoggingService.shared.log(
-                "Bound statusline to profile '\(activeClaudeProfile.name)'; "
-                    + "the credential is read from the Keychain at run time"
+                "Enabled statusline for profile "
+                    + "'\(activeClaudeProfile.name)'; the script reads usage "
+                    + "the app publishes and never touches a credential"
             )
         } else {
             // Install placeholder script
@@ -628,11 +663,7 @@ printf "%s\\n" "$output"
             LoggingService.shared.log("Installed placeholder statusline Swift script")
         }
 
-        try swiftScriptContent.write(to: swiftDestination, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes(
-            [.posixPermissions: 0o755],
-            ofItemAtPath: swiftDestination.path
-        )
+        try writeSwiftScript(swiftScriptContent)
 
         // Install bash script
         let bashDestination = claudeDir.appendingPathComponent("statusline-command.sh")
@@ -643,6 +674,21 @@ printf "%s\\n" "$output"
         )
 
         print("[StatuslineService] Bash script installed to: \(bashDestination.path)")
+    }
+
+    /// Writes the statusline Swift script and marks it executable.
+    ///
+    /// The mode is `0o755` because the bash script executes it. That is also
+    /// why the script must never contain a credential — every process on the
+    /// machine can read it.
+    private func writeSwiftScript(_ content: String) throws {
+        let destination = Constants.ClaudePaths.claudeDirectory
+            .appendingPathComponent("fetch-claude-usage.swift")
+        try content.write(to: destination, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: destination.path
+        )
     }
 
     /// Removes the session key from the statusline Swift script
@@ -846,18 +892,35 @@ PROFILE_NAME="\(profileName)"
 
     /// True when an installed script still carries its credential in source.
     ///
-    /// Detected by the absence of the runtime marker rather than by hunting
-    /// for key-shaped strings: a script written before this change has no
-    /// marker whatever its contents, and a future format change can bump the
-    /// marker to force another rewrite.
-    var installedScriptEmbedsCredential: Bool {
+    /// Detected by the absence of the marker rather than by hunting for
+    /// key-shaped strings: a script written before this change has no marker
+    /// whatever its contents, and a future format change can bump the marker
+    /// to force another rewrite.
+    var installedScriptNeedsRewrite: Bool {
         let script = Constants.ClaudePaths.claudeDirectory
             .appendingPathComponent("fetch-claude-usage.swift")
         guard let contents = try? String(contentsOf: script, encoding: .utf8)
         else {
             return false
         }
-        return !contents.contains(Self.runtimeCredentialMarker)
+        return !contents.contains(Self.publishedUsageMarker)
+    }
+
+    /// Whether Claude Code is currently configured to run the statusline.
+    ///
+    /// `settings.json` is where enabling and disabling is recorded, so it is
+    /// the honest source of truth for which script belongs on disk. Reading it
+    /// involves no profile state and no credential, which is what makes it
+    /// safe to consult during remediation.
+    private var statuslineIsEnabledInClaudeSettings: Bool {
+        let settings = Constants.ClaudePaths.claudeDirectory
+            .appendingPathComponent("settings.json")
+        guard let data = try? Data(contentsOf: settings),
+              let object = try? JSONSerialization.jsonObject(with: data),
+              let json = object as? [String: Any] else {
+            return false
+        }
+        return json["statusLine"] != nil
     }
 
     /// Rewrites an installed script that predates the runtime read.
@@ -870,19 +933,38 @@ PROFILE_NAME="\(profileName)"
     /// - Returns: whether a rewrite happened.
     @discardableResult
     func rewriteScriptEmbeddingCredentialIfNeeded() -> Bool {
-        guard isInstalled, installedScriptEmbedsCredential else {
+        guard isInstalled, installedScriptNeedsRewrite else {
             return false
         }
         do {
-            try installScripts(configureForActiveProfile: true)
+            // Deliberately not `installScripts(configureForActiveProfile:)`.
+            // That path refuses when the active profile is missing or has no
+            // session key — conditions neither replacement cares about, since
+            // both read published usage and hold no credential. Routing
+            // remediation through it meant a profile in that state left the
+            // old 0755 script, and the live credential inside it, sitting on
+            // disk. The one case that most needs cleaning is a profile whose
+            // key has since been removed from the app but is still baked into
+            // the script.
+            //
+            // Which script to write is the user's own enable/disable choice,
+            // read from settings.json. A pre-change *placeholder* has no
+            // marker either, so remediating it with the enabled script would
+            // silently switch the statusline back on.
+            let enabled = statuslineIsEnabledInClaudeSettings
+            try writeSwiftScript(
+                enabled ? generateSwiftScript() : placeholderSwiftScript
+            )
             LoggingService.shared.log(
-                "Statusline: rewrote a script that embedded its credential"
+                "Statusline: replaced a pre-marker script with the "
+                    + "\(enabled ? "published-usage reader" : "placeholder"); "
+                    + "no credential is written to disk"
             )
             return true
         } catch {
-            // Best effort: a missing profile or credential is not a reason to
-            // fail launch. The stale script keeps working until it can be
-            // replaced, which is the same exposure as before the upgrade.
+            // Best effort so a filesystem error cannot fail launch. The
+            // exposure persists until the next attempt, so it is logged
+            // rather than swallowed silently.
             LoggingService.shared.logError(
                 "Statusline: could not rewrite the embedded-credential script",
                 error: error
@@ -909,7 +991,6 @@ PROFILE_NAME="\(profileName)"
 enum StatuslineError: Error, LocalizedError {
     case noActiveProfile
     case sessionKeyNotFound
-    case organizationNotConfigured
 
     var errorDescription: String? {
         switch self {
@@ -917,8 +998,6 @@ enum StatuslineError: Error, LocalizedError {
             return "No active profile found. Please create or select a profile first."
         case .sessionKeyNotFound:
             return "Session key not found in active profile. Please configure your session key first."
-        case .organizationNotConfigured:
-            return "Organization not configured in active profile. Please select an organization in the app settings."
         }
     }
 }

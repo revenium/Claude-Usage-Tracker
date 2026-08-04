@@ -9,21 +9,29 @@ import XCTest
 /// `SecretSerializationGuardTests` asserts encoded output: a future edit that
 /// reintroduces interpolation of a secret fails here.
 final class StatuslineCredentialGuardTests: XCTestCase {
-    private let sentinelKey = "sk-ant-sid01-SENTINEL-9f3c2a"
     private func generatedScript() -> String {
         StatuslineService.shared.renderScriptForTesting()
     }
 
+    /// The template cannot interpolate per-profile data, because it takes no
+    /// parameters. Assert that structurally — identical output across calls —
+    /// rather than searching for a sentinel the template has no way to
+    /// receive, which is an assertion that cannot fail.
+    ///
+    /// Whether the *installed* file ends up credential-free is a separate
+    /// question, covered against real on-disk scripts in
+    /// `StatuslinePublishingTests`.
     func testGeneratedScriptCarriesNoCredential() {
         let script = generatedScript()
 
         XCTAssertFalse(
-            script.contains(sentinelKey),
-            "The script must not contain a credential"
-        )
-        XCTAssertFalse(
             script.contains("sk-ant-"),
             "No key-shaped literal belongs in a 0o755 file"
+        )
+        XCTAssertEqual(
+            script,
+            generatedScript(),
+            "The script varies with something; it must depend on no state"
         )
     }
 
@@ -63,22 +71,12 @@ final class StatuslineCredentialGuardTests: XCTestCase {
         let script = generatedScript()
 
         XCTAssertTrue(
-            script.contains(StatuslineService.runtimeCredentialMarker)
+            script.contains(StatuslineService.publishedUsageMarker)
         )
     }
 
-    /// Detection keys off the marker, not off key-shaped strings, so a script
-    /// from before this change is recognised whatever it happens to contain.
-    func testAScriptWithoutTheMarkerIsTreatedAsEmbedding() {
-        let legacy = """
-        #!/usr/bin/env swift
-        let injectedKey = "\(sentinelKey)"
-        """
-
-        XCTAssertFalse(
-            legacy.contains(StatuslineService.runtimeCredentialMarker),
-            "A pre-change script has no marker, which is what triggers the "
-                + "rewrite"
-        )
-    }
+    // Detection of a pre-change script is exercised against real on-disk
+    // files by `StatuslinePublishingTests`. It used to be asserted here by
+    // checking that a string literal did not contain the marker, which called
+    // no production code and could not fail.
 }

@@ -151,17 +151,39 @@ final class StatuslinePublishingTests: XCTestCase {
     }
 
     /// Published usage is per-user data in a shared directory.
+    ///
+    /// Checked after a *republish* as well: the file is replaced by rename on
+    /// every refresh, so each one lands a new inode whose mode has to be right
+    /// from the start. The transient window this guards against — a file
+    /// created at umask default and chmod-ed afterwards — cannot be observed
+    /// from here without racing the writer; this pins the settled state, and
+    /// the ordering itself is enforced in `publishUsageForStatusline`.
     func testPublishedUsageIsNotWorldReadable() throws {
+        for percentage in [10.0, 20.0] {
+            StatuslineService.shared.writeUsageCache(usage: makeUsage(
+                sessionPercentage: percentage
+            ))
+
+            let attributes = try FileManager.default
+                .attributesOfItem(atPath: publishedURL.path)
+            XCTAssertEqual(
+                attributes[.posixPermissions] as? NSNumber,
+                NSNumber(value: 0o600),
+                "Wrong mode after publishing \(percentage)"
+            )
+        }
+    }
+
+    /// The rename-into-place must not leave scratch files behind.
+    func testPublishingLeavesNoTemporaryFiles() throws {
         StatuslineService.shared.writeUsageCache(usage: makeUsage(
             sessionPercentage: 10
         ))
 
-        let attributes = try FileManager.default
-            .attributesOfItem(atPath: publishedURL.path)
-        XCTAssertEqual(
-            attributes[.posixPermissions] as? NSNumber,
-            NSNumber(value: 0o600)
-        )
+        let leftovers = try FileManager.default
+            .contentsOfDirectory(atPath: configDirectory.path)
+            .filter { $0.hasPrefix(".\(StatuslineService.usageCacheFilename)") }
+        XCTAssertEqual(leftovers, [], "Temporary files were left behind")
     }
 
     /// The bash script parses the reset time with
@@ -203,5 +225,154 @@ final class StatuslinePublishingTests: XCTestCase {
         StatuslineService.shared.writeUsageCache(usage: usage)
 
         XCTAssertEqual(try publishedPayload()["utilization"] as? Int, 0)
+    }
+
+    // MARK: - Remediating a script that still embeds a credential
+
+    private static let legacyKey = "sk-ant-sid01-SENTINEL-LEGACY-4b21e7"
+
+    private var scriptURL: URL {
+        configDirectory.appendingPathComponent("fetch-claude-usage.swift")
+    }
+
+    /// Installs a pre-change script: a live credential baked into a 0755 file,
+    /// and no runtime marker, which is how the upgrade recognises it.
+    private func installLegacyCredentialBearingScript() throws {
+        try """
+        #!/usr/bin/env swift
+        let sessionKey = "\(Self.legacyKey)"
+        """.write(to: scriptURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: scriptURL.path
+        )
+        // `isInstalled` requires both halves to be present.
+        try "#!/bin/bash\n".write(
+            to: configDirectory
+                .appendingPathComponent("statusline-command.sh"),
+            atomically: true,
+            encoding: .utf8
+        )
+    }
+
+    /// The regression this guards is the whole point of the change: a script
+    /// with a live credential in a world-readable file must be replaced on
+    /// upgrade.
+    ///
+    /// Remediation used to run through the profile-gated install path, so a
+    /// user with no active profile — or one with no organization ID, which the
+    /// replacement script never needed — kept the old script and its
+    /// credential. The error was caught and logged, so it looked like nothing
+    /// was wrong.
+    ///
+    /// This test deliberately configures no profile at all.
+    func testALegacyScriptIsRemediatedWithoutAnyProfile() throws {
+        try installLegacyCredentialBearingScript()
+
+        let rewritten = StatuslineService.shared
+            .rewriteScriptEmbeddingCredentialIfNeeded()
+
+        XCTAssertTrue(rewritten, "Remediation refused to run")
+        let script = try String(contentsOf: scriptURL, encoding: .utf8)
+        XCTAssertFalse(
+            script.contains(Self.legacyKey),
+            "The credential is still on disk in a 0755 file"
+        )
+        XCTAssertTrue(
+            script.contains(StatuslineService.publishedUsageMarker),
+            "The replacement must carry the marker, or every launch retries"
+        )
+    }
+
+    /// Once rewritten there is nothing left to do, so the next launch must not
+    /// keep rewriting.
+    func testRemediationIsNotRepeatedOnceDone() throws {
+        try installLegacyCredentialBearingScript()
+
+        XCTAssertTrue(
+            StatuslineService.shared.rewriteScriptEmbeddingCredentialIfNeeded()
+        )
+        XCTAssertFalse(
+            StatuslineService.shared.rewriteScriptEmbeddingCredentialIfNeeded(),
+            "A remediated script was treated as still embedding a credential"
+        )
+    }
+
+    /// Detection runs against the file on disk, keyed on the marker rather
+    /// than on key-shaped strings, so a pre-change script is recognised
+    /// whatever it happens to contain.
+    func testAMarkerlessScriptOnDiskIsDetectedAsNeedingRewrite() throws {
+        try installLegacyCredentialBearingScript()
+
+        XCTAssertTrue(StatuslineService.shared.installedScriptNeedsRewrite)
+    }
+
+    func testAMarkedScriptOnDiskIsNotFlagged() throws {
+        try installLegacyCredentialBearingScript()
+        _ = StatuslineService.shared.rewriteScriptEmbeddingCredentialIfNeeded()
+
+        XCTAssertFalse(StatuslineService.shared.installedScriptNeedsRewrite)
+    }
+
+    /// Enabling is recorded in `settings.json`, so remediation must honour it.
+    ///
+    /// A user who disabled the statusline has a *placeholder* on disk, and a
+    /// pre-change placeholder has no marker either. Remediating it with the
+    /// enabled script would silently switch the feature back on — the user's
+    /// choice undone by a security fix.
+    func testRemediationLeavesADisabledStatuslineDisabled() throws {
+        try installLegacyCredentialBearingScript()
+        // No settings.json at all: the statusline is not enabled.
+
+        XCTAssertTrue(
+            StatuslineService.shared.rewriteScriptEmbeddingCredentialIfNeeded()
+        )
+
+        let script = try String(contentsOf: scriptURL, encoding: .utf8)
+        XCTAssertTrue(
+            script.contains("NO_SESSION_KEY"),
+            "A disabled statusline was switched back on by remediation"
+        )
+        XCTAssertFalse(script.contains(Self.legacyKey))
+        XCTAssertTrue(
+            script.contains(StatuslineService.publishedUsageMarker),
+            "The placeholder needs the marker too, or it is rewritten forever"
+        )
+    }
+
+    /// The mirror of the above: when it *is* enabled, the reader is installed.
+    func testRemediationKeepsAnEnabledStatuslineEnabled() throws {
+        try installLegacyCredentialBearingScript()
+        try #"{"statusLine":{"type":"command","command":"bash x"}}"#
+            .write(
+                to: configDirectory.appendingPathComponent("settings.json"),
+                atomically: true,
+                encoding: .utf8
+            )
+
+        XCTAssertTrue(
+            StatuslineService.shared.rewriteScriptEmbeddingCredentialIfNeeded()
+        )
+
+        let script = try String(contentsOf: scriptURL, encoding: .utf8)
+        XCTAssertTrue(
+            script.contains(StatuslineService.usageCacheFilename),
+            "An enabled statusline must get the published-usage reader"
+        )
+        XCTAssertFalse(script.contains(Self.legacyKey))
+    }
+
+    /// The replacement is executable — the bash statusline runs it.
+    func testTheRemediatedScriptStaysExecutable() throws {
+        try installLegacyCredentialBearingScript()
+
+        _ = StatuslineService.shared.rewriteScriptEmbeddingCredentialIfNeeded()
+
+        let attributes = try FileManager.default
+            .attributesOfItem(atPath: scriptURL.path)
+        XCTAssertEqual(
+            attributes[.posixPermissions] as? NSNumber,
+            NSNumber(value: 0o755)
+        )
     }
 }
