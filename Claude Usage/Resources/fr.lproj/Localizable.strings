@@ -321,8 +321,6 @@
 "session.auto_description_line3" = "• Utilise un chat temporaire qui n'apparaîtra pas dans votre historique";
 "session.auto_description_line4" = "• Nouvelle session de 5 heures prête instantanément";
 
-/* Claude CLI */
-
 /* API Billing */
 "api.title" = "Facturation API";
 "api.subtitle" = "Surveillez l'utilisation et les dépenses de l'API";
