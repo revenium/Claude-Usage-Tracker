@@ -821,6 +821,23 @@ PROFILE_NAME="\(profileName)"
             .appendingPathComponent("statusline-command.sh").path
     }
 
+    /// The exact string stored as `statusLine.command` in settings.json.
+    ///
+    /// Claude Code hands this to a shell, so the path has to survive word
+    /// splitting. It was always `$HOME/.claude/...` before, which hid the
+    /// problem unless the user's home directory contained a space; now that
+    /// `CLAUDE_CONFIG_DIR` can point anywhere, an unquoted path breaks the
+    /// statusline for any directory with a space in its name.
+    static var statuslineCommand: String {
+        "bash \(shellQuoted(installedCommandPath))"
+    }
+
+    /// POSIX-safe single quoting: everything is literal inside single quotes
+    /// except a single quote itself, which is closed, escaped, and reopened.
+    private static func shellQuoted(_ value: String) -> String {
+        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
     /// Enables or disables statusline in Claude Code settings.json
     /// When enabling, also installs the reader script
     /// When disabling, replaces it with the placeholder
@@ -828,7 +845,6 @@ PROFILE_NAME="\(profileName)"
         let settingsPath = Constants.ClaudePaths.claudeDirectory
             .appendingPathComponent("settings.json")
 
-        let commandPath = Self.installedCommandPath
 
         if enabled {
             // Install scripts with session key injection
@@ -846,7 +862,7 @@ PROFILE_NAME="\(profileName)"
 
             settings["statusLine"] = [
                 "type": "command",
-                "command": "bash \(commandPath)"
+                "command": Self.statuslineCommand
             ]
 
             let jsonData = try JSONSerialization.data(withJSONObject: settings, options: .prettyPrinted)

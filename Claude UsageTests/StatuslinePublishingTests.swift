@@ -370,6 +370,55 @@ final class StatuslinePublishingTests: XCTestCase {
         )
     }
 
+    /// Claude Code hands `statusLine.command` to a shell, so the path has to
+    /// survive word splitting. Now that `CLAUDE_CONFIG_DIR` can point
+    /// anywhere, a directory with a space in its name would otherwise split
+    /// into two arguments and the statusline would never start.
+    ///
+    /// Verified by letting a real shell parse it rather than by inspecting
+    /// the string: quoting rules are exactly what one gets wrong by eye.
+    func testTheSettingsCommandSurvivesASpaceInTheDirectory() throws {
+        let spaced = configDirectory
+            .appendingPathComponent("Config Dir With Spaces")
+        try FileManager.default.createDirectory(
+            at: spaced,
+            withIntermediateDirectories: true
+        )
+        setenv("CLAUDE_CONFIG_DIR", spaced.path, 1)
+
+        let command = StatuslineService.statuslineCommand
+
+        // `set -- <command>` makes the shell split it exactly as it would
+        // when running it; then print the arguments one per line.
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = [
+            "-c",
+            "set -- \(command); printf '%s\\n' \"$#\" \"$2\""
+        ]
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = Pipe()
+        try process.run()
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+
+        let lines = (String(data: data, encoding: .utf8) ?? "")
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+        XCTAssertEqual(
+            lines.first,
+            "2",
+            "The command split into \(lines.first ?? "?") words, not 2 — the "
+                + "path is not quoted. Command was: \(command)"
+        )
+        XCTAssertEqual(
+            lines.count > 1 ? lines[1] : "",
+            spaced.appendingPathComponent("statusline-command.sh").path,
+            "The shell reconstructed a different path"
+        )
+    }
+
     // MARK: - Remediating a script that still embeds a credential
 
     private static let legacyKey = "sk-ant-sid01-SENTINEL-LEGACY-4b21e7"
