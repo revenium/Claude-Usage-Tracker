@@ -130,7 +130,7 @@ final class TestIsolationGuardTests: HostedAppTestCase {
     /// when un-injected, so isolation covered the defaults and the Keychain
     /// but not the disk.
     @MainActor
-    func testTheIsolatedStoreKeepsUsageFilesInMemory() throws {
+    func testTheIsolatedUsageFileStoreKeepsUsageInMemory() throws {
         let usageFiles = retain(IsolatedProfileUsageFiles())
         let profileID = UUID()
 
@@ -142,6 +142,53 @@ final class TestIsolationGuardTests: HostedAppTestCase {
         XCTAssertNil(
             try usageFiles.loadCurrentUsage(for: UUID()),
             "An unknown profile must have no usage, not someone else's"
+        )
+    }
+
+    /// Testing the fake is not the same as testing that the store was handed
+    /// it. Without this, dropping `usageFileStore:` from the helper would put
+    /// every isolated store back on the real Application Support directory
+    /// and nothing would fail — a guard that cannot fail, which is the
+    /// mistake this whole file exists to stop repeating.
+    ///
+    /// Same marker technique as the defaults and manager guards: seed the
+    /// injected fake, then require the store to serve that exact value back.
+    @MainActor
+    func testTheIsolatedStoreIsActuallyWiredToTheInjectedUsageFiles() throws {
+        let profile = Profile(name: "Wiring")
+        let defaults = IsolatedProfileDefaults()
+        defaults.set(
+            try JSONEncoder().encode([profile]),
+            forKey: Self.profilesKey
+        )
+        let usageFiles = retain(IsolatedProfileUsageFiles())
+        // The revision has to match the profile's, or the store's identity
+        // fence rejects the record before the wiring question is reached.
+        try usageFiles.saveCurrentUsage(
+            ProfileCurrentUsage(
+                providerID: .claude,
+                providerRevision: profile.providerRevision,
+                claudeUsage: nil
+            ),
+            for: profile.id
+        )
+        let store = retain(
+            makeIsolatedProfileStore(defaults: defaults, usageFiles: usageFiles)
+        )
+
+        let loaded = try store.loadCurrentUsage(
+            for: profile.id,
+            expectedProviderID: .claude,
+            expectedProviderRevision: profile.providerRevision
+        )
+
+        // Presence is the signal: this profile ID is freshly generated, so the
+        // real Application Support directory has no record for it and an
+        // un-injected store returns nil.
+        XCTAssertNotNil(
+            loaded,
+            "The store did not read the injected usage-file store — it is "
+                + "still pointed at real Application Support"
         )
     }
 }
