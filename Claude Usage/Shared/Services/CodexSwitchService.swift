@@ -26,7 +26,13 @@ class CodexSwitchService {
         qos: .utility
     )
 
-    private init() {}
+    /// Tests may write an isolated pointer file, but must never mutate the
+    /// user's real tmux server.
+    private let propagatesToTmux: Bool
+
+    init(propagatesToTmux: Bool = true) {
+        self.propagatesToTmux = propagatesToTmux
+    }
 
     // MARK: - Paths
 
@@ -86,6 +92,8 @@ class CodexSwitchService {
     }
 
     private func propagateToTmux(codexHome: String) {
+        guard propagatesToTmux else { return }
+
         let tmuxPaths = ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux", "/usr/bin/tmux"]
         guard let tmuxPath = tmuxPaths.first(where: { FileManager.default.fileExists(atPath: $0) }) else {
             LoggingService.shared.log("CodexSwitchService: tmux not found — skipping env propagation")
@@ -117,6 +125,8 @@ class CodexSwitchService {
     }
 
     private func unpropagateFromTmux() {
+        guard propagatesToTmux else { return }
+
         let tmuxPaths = ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux", "/usr/bin/tmux"]
         guard let tmuxPath = tmuxPaths.first(where: { FileManager.default.fileExists(atPath: $0) }) else {
             LoggingService.shared.log("CodexSwitchService: tmux not found — skipping env unset")

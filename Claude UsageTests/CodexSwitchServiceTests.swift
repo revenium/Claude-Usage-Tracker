@@ -12,6 +12,7 @@ import XCTest
 final class CodexSwitchServiceTests: XCTestCase {
     private var originalHome: String?
     private var temporaryHome: URL!
+    private var service: CodexSwitchService!
 
     override func setUpWithError() throws {
         try super.setUpWithError()
@@ -26,6 +27,7 @@ final class CodexSwitchServiceTests: XCTestCase {
             withIntermediateDirectories: true
         )
         setenv("HOME", temporaryHome.path, 1)
+        service = CodexSwitchService(propagatesToTmux: false)
     }
 
     override func tearDownWithError() throws {
@@ -48,12 +50,12 @@ final class CodexSwitchServiceTests: XCTestCase {
         let home = try CodexHomeCanonicalizer()
             .canonicalize(linkedHomeURL.path)
 
-        XCTAssertNil(CodexSwitchService.shared.currentHomePath())
+        XCTAssertNil(service.currentHomePath())
 
-        try CodexSwitchService.shared.switchToHome(home)
+        try service.switchToHome(home)
 
         XCTAssertEqual(
-            CodexSwitchService.shared.currentHomePath(),
+            service.currentHomePath(),
             home.path
         )
         let pointerFile = temporaryHome
@@ -78,7 +80,7 @@ final class CodexSwitchServiceTests: XCTestCase {
         let home = try CodexHomeCanonicalizer()
             .canonicalize(linkedHomeURL.path)
 
-        try CodexSwitchService.shared.switchToHome(home)
+        try service.switchToHome(home)
 
         // Only the Codex pointer file exists under .claude-tokens — the
         // Claude `.last-account` mechanism is untouched by a Codex switch.
@@ -100,11 +102,11 @@ final class CodexSwitchServiceTests: XCTestCase {
         )
         let home = try CodexHomeCanonicalizer()
             .canonicalize(linkedHomeURL.path)
-        try CodexSwitchService.shared.switchToHome(home)
-        XCTAssertNotNil(CodexSwitchService.shared.currentHomePath())
+        try service.switchToHome(home)
+        XCTAssertNotNil(service.currentHomePath())
 
-        CodexSwitchService.shared.clearHome()
+        service.clearHome()
 
-        XCTAssertNil(CodexSwitchService.shared.currentHomePath())
+        XCTAssertNil(service.currentHomePath())
     }
 }
