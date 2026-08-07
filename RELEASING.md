@@ -37,7 +37,13 @@ The operational owner changed; the application identity did not.
 
 The Developer ID team and Sparkle key are distribution credentials, not bundle
 identity. They are injected by the protected release environment and must not
-be hard-coded in the project.
+be hard-coded in the project. This includes the `keychain-access-groups`
+entitlement: the entitlements files carry `$(DEVELOPMENT_TEAM)` as a
+placeholder rather than the literal team ID. Xcode resolves it itself for any
+signed local build; the release workflow signs with a bare `codesign` call
+rather than through an Xcode build phase, so it resolves the placeholder
+explicitly from the `APPLE_TEAM_ID` Actions variable into a runner-local copy
+of the entitlements immediately before signing.
 
 ## One-time owner setup
 

@@ -211,10 +211,28 @@ jobs:
       - name: Sign app and Sparkle components
         env:
           SIGNING_IDENTITY: ${{ vars.DEVELOPER_ID_APPLICATION }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
           app_path="build/Build/Products/Release/$PRODUCT_NAME.app"
           sparkle="$app_path/Contents/Frameworks/Sparkle.framework"
+
+          # The entitlements file carries $(DEVELOPMENT_TEAM) as a
+          # placeholder so the team ID is never hard-coded in the project
+          # (see RELEASING.md "Distribution identity"). Xcode itself resolves
+          # that placeholder for a signed build going through its own build
+          # phases, but signing here is a bare `codesign` call, so it is
+          # resolved explicitly from the APPLE_TEAM_ID Actions variable into
+          # a runner-local copy immediately before use.
+          resolved_entitlements="$RUNNER_TEMP/claude-usage-release.entitlements"
+          sed "s/\$(DEVELOPMENT_TEAM)/${APPLE_TEAM_ID}/g" \
+            'Claude Usage/Claude UsageRelease.entitlements' \
+            > "$resolved_entitlements"
+          if grep -q '\$(DEVELOPMENT_TEAM)' "$resolved_entitlements"; then
+            echo "Entitlements still contain an unresolved DEVELOPMENT_TEAM placeholder." >&2
+            exit 1
+          fi
+          plutil -lint "$resolved_entitlements"
 
           codesign --force --sign "$SIGNING_IDENTITY" \
             --timestamp --options runtime \
@@ -233,7 +251,7 @@ jobs:
             "$sparkle"
           codesign --force --sign "$SIGNING_IDENTITY" \
             --timestamp --options runtime \
-            --entitlements 'Claude Usage/Claude UsageRelease.entitlements' \
+            --entitlements "$resolved_entitlements" \
             "$app_path"
 
           codesign --verify --deep --strict --verbose=2 "$app_path"

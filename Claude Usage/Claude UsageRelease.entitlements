@@ -4,5 +4,18 @@
 <dict>
 	<key>com.apple.security.network.client</key>
 	<true/>
+	<key>keychain-access-groups</key>
+	<array>
+		<!--
+		Team-prefixed data-protection Keychain access group. $(DEVELOPMENT_TEAM)
+		is a build setting, never a literal team ID, so no distribution
+		credential is hard-coded here (see RELEASING.md "Distribution
+		identity"). Xcode itself resolves it for any signed local build; the
+		release workflow, which signs with a bare `codesign` call rather than
+		through an Xcode build phase, resolves it explicitly from the
+		APPLE_TEAM_ID Actions variable immediately before signing.
+		-->
+		<string>$(DEVELOPMENT_TEAM).com.claudeusagetracker.credentials</string>
+	</array>
 </dict>
 </plist>
