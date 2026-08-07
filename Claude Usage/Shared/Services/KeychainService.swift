@@ -32,6 +32,30 @@ extension ProfileKeychainBackend {
     }
 }
 
+/// Direct, domain-scoped Keychain access used only by the one-time batch
+/// migration in `ProfileKeychainDomainMigrationService`.
+///
+/// Everything else in this file goes through `ProfileKeychainBackend`, which
+/// resolves a single domain for the process and layers in lazy recovery. The
+/// batch migration is different: it must address the legacy file Keychain and
+/// the data-protection Keychain explicitly, in the same pass, regardless of
+/// which one the resolver has cached — so it is kept on its own narrow
+/// protocol rather than widening the one every other caller depends on.
+nonisolated protocol ProfileKeychainDomainAccess {
+    func read(
+        service: String,
+        account: String,
+        domain: ProfileKeychainDomain
+    ) throws -> Data?
+
+    func write(
+        _ data: Data,
+        service: String,
+        account: String,
+        domain: ProfileKeychainDomain
+    ) throws
+}
+
 /// Which macOS Keychain implementation profile credentials live in.
 ///
 /// The data-protection Keychain is preferred, but macOS only grants a process
@@ -347,7 +371,10 @@ nonisolated struct SecurityProfileKeychainBackend: ProfileKeychainBackend {
         }
     }
 
-    private func upsert(
+    /// Not `private`: `ProfileKeychainDomainAccess` conformance below needs
+    /// it, and the batch domain migration needs to address a specific
+    /// Keychain directly rather than through the resolver's cached decision.
+    func upsert(
         _ data: Data,
         service: String,
         account: String,
@@ -400,7 +427,8 @@ nonisolated struct SecurityProfileKeychainBackend: ProfileKeychainBackend {
         throw KeychainError.saveFailed(status: addStatus)
     }
 
-    private func read(
+    /// Not `private`: see `upsert(_:service:account:domain:)` above.
+    func read(
         service: String,
         account: String,
         domain: ProfileKeychainDomain
@@ -495,6 +523,17 @@ nonisolated struct SecurityProfileKeychainBackend: ProfileKeychainBackend {
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         return query
+    }
+}
+
+extension SecurityProfileKeychainBackend: ProfileKeychainDomainAccess {
+    func write(
+        _ data: Data,
+        service: String,
+        account: String,
+        domain: ProfileKeychainDomain
+    ) throws {
+        try upsert(data, service: service, account: account, domain: domain)
     }
 }
 

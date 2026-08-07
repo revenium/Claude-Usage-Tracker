@@ -104,6 +104,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         // before any normal profile hydration or first-launch decisions.
         ProfileMigrationService.shared.migrateIfNeeded()
 
+        // Copy any profile credential still sitting in the legacy file
+        // Keychain into the data-protection Keychain now that this build can
+        // use it. Additive only; see the service's own documentation.
+        ProfileKeychainDomainMigrationService.shared.migrateIfNeeded()
+
         // Load profiles into ProfileManager (synchronously)
         providerUICompositionRoot.profileManager.loadProfiles()
 
