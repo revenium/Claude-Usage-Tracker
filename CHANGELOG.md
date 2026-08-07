@@ -5,6 +5,29 @@ All notable changes to Claude Usage Tracker will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Notarized releases can now actually use the modern Keychain.** The app
+  carried no Keychain access group, so every profile credential — for every
+  user — was silently stored in the legacy, ACL-based login Keychain instead
+  of the data-protection Keychain the app already knew how to prefer. Legacy
+  ACLs are bound to the exact build that created them: once bound, no later
+  properly signed release could read that item back, "Always Allow" would
+  not stick, and not even the correct login password could repair it. The
+  app now carries a team-scoped `keychain-access-groups` entitlement, so
+  future credential writes land in the data-protection Keychain, which has
+  no such ACL and grants access by code-signing team instead.
+
+  Existing credentials are moved forward automatically and safely on first
+  launch after updating: each one is copied into the new Keychain and
+  verified, and the old copy is left in place rather than deleted. A
+  credential that cannot be read from the old Keychain — including one
+  already stranded by this exact bug — is left untouched rather than lost;
+  it is treated as absent so you can simply re-enter it once, and nothing is
+  deleted.
+
 ## [3.2.1] - 2026-08-07
 
 ### Fixed
