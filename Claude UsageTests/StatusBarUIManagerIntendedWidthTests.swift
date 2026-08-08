@@ -185,10 +185,35 @@ final class StatusBarUIManagerIntendedWidthTests: HostedAppTestCase {
             showWeek: false,
             showProfileLabel: false
         )
+        // `currentOverflowPlan` reads config from
+        // `ProfileManager.shared.multiProfileConfig`, not a value passed
+        // in — so the shared config must be set to match what this test
+        // measures against, and restored afterward since `.shared` is a
+        // process-wide singleton other tests also rely on.
+        let previousConfig = ProfileManager.shared.multiProfileConfig
+        ProfileManager.shared.multiProfileConfig = config
+        defer { ProfileManager.shared.multiProfileConfig = previousConfig }
+
         let claudeProfile = makeProfile(sessionPercentage: 42)
         let codexProfile = Profile(
             name: "Codex",
             providerConfiguration: .codex(.init())
+        )
+
+        // Computed before any status item exists, matching the state
+        // `currentOverflowPlan` sees internally during `setupMultiProfile`
+        // (which calls `cleanup()` first) — `calibratedButtonPadding()` is
+        // stateful and returns a different (real, measured) value once
+        // status items exist, so comparing against a post-setup call here
+        // would compare two different paddings rather than the same width.
+        // `isActive` must also match what `currentOverflowPlan` resolves
+        // internally (`profile.id == ProfileManager.shared.activeClaudeProfileID`),
+        // since the active-profile underline changes the rendered width.
+        let expectedClaudeWidth = manager.intendedItemWidth(
+            for: claudeProfile,
+            config: config,
+            isActive: claudeProfile.id
+                == ProfileManager.shared.activeClaudeProfileID
         )
 
         let target = MenuTarget()
@@ -204,11 +229,6 @@ final class StatusBarUIManagerIntendedWidthTests: HostedAppTestCase {
             "the space probe must be asked to plan both profiles"
         )
 
-        let expectedClaudeWidth = manager.intendedItemWidth(
-            for: claudeProfile,
-            config: config,
-            isActive: false
-        )
         XCTAssertEqual(
             fakeProbe.lastOurItemWidths[0],
             expectedClaudeWidth,
