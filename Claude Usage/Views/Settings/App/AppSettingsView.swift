@@ -22,11 +22,13 @@ struct AppSettingsView: View {
                     title: "general.launch_at_login".localized,
                     subtitle: "general.launch_at_login.description".localized
                 ) {
-                    SettingToggle(
-                        title: "general.launch_at_login".localized,
-                        description: "general.launch_at_login.description".localized,
-                        isOn: $launchAtLogin
-                    )
+                    HStack {
+                        Spacer()
+                        Toggle("", isOn: $launchAtLogin)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .accessibilityLabel("general.launch_at_login".localized)
+                    }
                 }
             }
             .padding()
