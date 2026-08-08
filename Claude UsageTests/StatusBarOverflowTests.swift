@@ -365,6 +365,20 @@ final class StatusBarOverflowTests: HostedAppTestCase {
             1,
             "must never collapse exactly one profile"
         )
+        // `setupMultiProfile` cleans up every prior status item before
+        // computing this plan, so none of the 5 new profiles have a
+        // status item yet. `currentlyOnScreenWidth` must reflect that
+        // truthfully as 0 rather than crediting the estimated ~40pt
+        // fallback width for items that are not actually on the menu bar
+        // yet — the probe's status region measurement already accounts
+        // only for items truly on screen.
+        XCTAssertEqual(
+            fakeProbe.lastCurrentlyOnScreenWidth,
+            0,
+            "must not credit unrendered items an estimated width; only "
+                + "items actually on screen may count toward "
+                + "currentlyOnScreenWidth"
+        )
     }
 
     func testAutomaticModeNeverCollapsesWhenSpaceIsAmple() {

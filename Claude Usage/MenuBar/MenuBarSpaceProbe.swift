@@ -132,11 +132,17 @@ struct MenuBarSpaceProbe: MenuBarSpaceProbing {
     /// `axTotalBudgetSeconds`, which bounds the loop itself.
     private static let axMessagingTimeoutSeconds: Float = 0.25
 
-    /// Wall-clock ceiling on reading the whole menu bar, enforced across
+    /// Wall-clock budget for reading the whole menu bar, enforced across
     /// the child loop. Without it the per-message timeout above multiplies
     /// by the number of menu titles — and this runs synchronously on the
     /// main thread from a debounced recompute that fires on every
     /// application switch, so an unbounded loop is a visible hang.
+    ///
+    /// This gates whether another child is STARTED, so the worst-case wall
+    /// clock is this budget plus one final two-message read — about 1s at
+    /// current values, not 0.5s. Reserving that final read instead is not
+    /// available here: the reserve would equal the entire budget, so the
+    /// first check would fail and no menu bar would ever be measured.
     ///
     /// Exceeding the budget yields a partial measurement rather than a
     /// wrong one: the caller treats a `nil` result as "unmeasurable" and
@@ -283,6 +289,21 @@ struct MenuBarSpaceProbe: MenuBarSpaceProbing {
         // to "unmeasurable", never to a multi-second main-thread stall.
         let deadline = DispatchTime.now().uptimeNanoseconds
             + UInt64(axTotalBudgetSeconds * 1_000_000_000)
+
+        // The budget gates whether another child is STARTED, so a read
+        // already begun still runs to its own per-message timeouts: the
+        // true ceiling is `axTotalBudgetSeconds` plus one final
+        // `frame(of:)`, i.e. two `axMessagingTimeoutSeconds` round-trips
+        // (~1s at current values), not `axTotalBudgetSeconds` alone.
+        //
+        // That overshoot is deliberate rather than an oversight. Reserving
+        // the final read's cost up front instead — refusing to start a
+        // child unless two full round-trips still fit — cannot work while
+        // the reserve is as large as the budget itself: the very first
+        // check would fail and this function would never read a single
+        // child, silently reporting every menu bar as unmeasurable. The
+        // bound that matters is that it terminates well short of the
+        // multi-second stall above, which it does.
         var frames: [CGRect?] = []
         for child in children {
             guard DispatchTime.now().uptimeNanoseconds < deadline else {

@@ -20,10 +20,6 @@ final class StatusBarUIManager {
     /// this count every profile still gets its own item.
     static let overflowThreshold = 4
 
-    /// How many profiles keep their own status item once overflow kicks
-    /// in; the remainder collapse into the single overflow item.
-    static let maxIndividualProfileItems = 3
-
     /// Stable identifier so menu-bar managers (Bartender, Ice, ...) can
     /// track the overflow item the same way they track every other item.
     static let overflowAutosaveName = "claude-usage-tracker.overflow"
@@ -110,10 +106,11 @@ final class StatusBarUIManager {
     private var multiProfileStatusItems: [UUID: NSStatusItem] = [:]
 
     // Once more than `overflowThreshold` profiles are selected for
-    // multi-profile display, only the first `maxIndividualProfileItems`
-    // get their own status item; the rest collapse into this single
-    // overflow item so the menu bar doesn't fill up with one item per
-    // profile.
+    // multi-profile display, `splitForOverflow` keeps only the first
+    // `overflowThreshold - 1` individual (one fewer profile than the
+    // threshold, so the "+N" item itself effectively takes the last slot);
+    // the rest collapse into this single overflow item so the menu bar
+    // doesn't fill up with one item per profile.
     private var overflowStatusItem: NSStatusItem?
     private(set) var overflowProfileIDs: [UUID] = []
 
@@ -950,7 +947,8 @@ final class StatusBarUIManager {
     }
 
     /// True when `sender` is the overflow status item's button — the "+N"
-    /// item representing every profile past `maxIndividualProfileItems`.
+    /// item representing every profile past the first `overflowThreshold - 1`
+    /// that `splitForOverflow` keeps individual.
     func isOverflowButton(_ sender: NSStatusBarButton?) -> Bool {
         guard let sender else { return false }
         return overflowStatusItem?.button === sender
