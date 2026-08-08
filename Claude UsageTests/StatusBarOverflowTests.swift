@@ -16,14 +16,14 @@ final class StatusBarOverflowTests: HostedAppTestCase {
         @objc func toggle() {}
     }
 
-    /// A `MenuBarSpaceProbing` fake that returns a fixed screen/foreign-item
-    /// measurement (or `nil`, simulating no available screen) regardless of
-    /// what `StatusBarUIManager` asks for, while still substituting the
-    /// caller-supplied item widths so tests reflect however many items are
-    /// actually in play.
+    /// A `MenuBarSpaceProbing` fake that returns a fixed app-menu/status-
+    /// region boundary measurement (or `nil`, simulating no Accessibility
+    /// grant / no measurable screen) regardless of what `StatusBarUIManager`
+    /// asks for, while still substituting the caller-supplied item widths
+    /// so tests reflect however many items are actually in play.
     private final class FakeSpaceProbe: MenuBarSpaceProbing {
         var fixedMeasurement: (
-            screenWidth: CGFloat, foreignItemsWidth: CGFloat
+            appMenuMaxX: CGFloat, statusRegionMinX: CGFloat
         )?
 
         func makeLayoutInput(
@@ -32,8 +32,8 @@ final class StatusBarOverflowTests: HostedAppTestCase {
         ) -> MenuBarLayoutInput? {
             guard let fixedMeasurement else { return nil }
             return MenuBarLayoutInput(
-                screenWidth: fixedMeasurement.screenWidth,
-                foreignItemsWidth: fixedMeasurement.foreignItemsWidth,
+                appMenuMaxX: fixedMeasurement.appMenuMaxX,
+                statusRegionMinX: fixedMeasurement.statusRegionMinX,
                 ourItemWidths: ourItemWidths,
                 overflowItemWidth: overflowItemWidth
             )
@@ -264,13 +264,12 @@ final class StatusBarOverflowTests: HostedAppTestCase {
     func testOverflowPlanAutomaticModeCollapsesWhenSpaceIsInsufficient() {
         let profiles = makeProfiles(5)
         let spaceInput = MenuBarLayoutInput(
-            screenWidth: 600,
-            foreignItemsWidth: 0,
+            appMenuMaxX: 0,
+            statusRegionMinX: 108,
             ourItemWidths: Array(repeating: CGFloat(40), count: 5),
             overflowItemWidth: 30
         )
-        // freeWidth = 600 - 0 - 500 (appMenuReserve) = 100; 5 * 40 = 200
-        // does not fit.
+        // freeWidth = 108 - 0 - 8 (gutter) = 100; 5 * 40 = 200 does not fit.
         let plan = StatusBarUIManager.overflowPlan(
             for: profiles,
             mode: .automatic,
@@ -333,11 +332,11 @@ final class StatusBarOverflowTests: HostedAppTestCase {
         defer { manager.cleanup() }
         manager.overflowMode = .automatic
         let fakeProbe = FakeSpaceProbe()
-        // freeWidth = 600 - 0 - 500 = 100pt: far too little for 5 items
-        // that report ~40pt each (the estimated default width for items
-        // that don't have a real status item window yet).
+        // freeWidth = 108 - 0 - 8 (gutter) = 100pt: far too little for 5
+        // items that report ~40pt each (the estimated default width for
+        // items that don't have a real status item window yet).
         fakeProbe.fixedMeasurement = (
-            screenWidth: 600, foreignItemsWidth: 0
+            appMenuMaxX: 0, statusRegionMinX: 108
         )
         manager.spaceProbe = fakeProbe
         let target = MenuTarget()
@@ -365,10 +364,10 @@ final class StatusBarOverflowTests: HostedAppTestCase {
         defer { manager.cleanup() }
         manager.overflowMode = .automatic
         let fakeProbe = FakeSpaceProbe()
-        // A very wide simulated screen with no other apps' status items:
-        // plenty of room for every profile.
+        // A very wide simulated gap between the app menus and the status
+        // region: plenty of room for every profile.
         fakeProbe.fixedMeasurement = (
-            screenWidth: 6000, foreignItemsWidth: 0
+            appMenuMaxX: 0, statusRegionMinX: 6008
         )
         manager.spaceProbe = fakeProbe
         let target = MenuTarget()

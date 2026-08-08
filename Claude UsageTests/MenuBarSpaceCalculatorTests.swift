@@ -14,17 +14,22 @@ import XCTest
 /// items — which is exactly the point: this is the part of the space-aware
 /// overflow feature that doesn't need a GUI to be fully exercised.
 final class MenuBarSpaceCalculatorTests: XCTestCase {
+    /// Builds an input with exactly `freeWidth` of room between the
+    /// (fictional) frontmost app's menus and the status item region,
+    /// starting from an arbitrary `appMenuMaxX` (default 0, as if the
+    /// frontmost app had no menus at all) so tests can also exercise a
+    /// nonzero app-menu boundary without hand-deriving `statusRegionMinX`.
     private func input(
         freeWidth: CGFloat,
         ourItemWidths: [CGFloat],
         overflowItemWidth: CGFloat = 20,
-        foreignItemsWidth: CGFloat = 0
+        appMenuMaxX: CGFloat = 0
     ) -> MenuBarLayoutInput {
         MenuBarLayoutInput(
-            screenWidth: freeWidth
-                + foreignItemsWidth
-                + MenuBarSpaceCalculator.appMenuReserve,
-            foreignItemsWidth: foreignItemsWidth,
+            appMenuMaxX: appMenuMaxX,
+            statusRegionMinX: appMenuMaxX
+                + freeWidth
+                + MenuBarSpaceCalculator.gutter,
             ourItemWidths: ourItemWidths,
             overflowItemWidth: overflowItemWidth
         )
