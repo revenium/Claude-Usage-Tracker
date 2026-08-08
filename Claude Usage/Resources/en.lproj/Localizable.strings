@@ -508,6 +508,11 @@
 "multiprofile.show_label_description" = "Display profile name below the icon";
 "multiprofile.use_system_color" = "Monochrome";
 "multiprofile.use_system_color_description" = "Use white color instead of status colors (green/orange/red)";
+"multiprofile.overflow.title" = "Collapse extra profiles into one item";
+"multiprofile.overflow.automatic" = "Automatically, when the menu bar is full";
+"multiprofile.overflow.never" = "Never";
+"multiprofile.overflow.after_count" = "When more than";
+"multiprofile.overflow.after_count_suffix" = "are shown";
 
 /* ==================== */
 /* MARK: - General Settings (Profile-Level) */

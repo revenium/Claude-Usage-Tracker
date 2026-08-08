@@ -496,6 +496,11 @@
 "multiprofile.show_label_description" = "在图标下方显示配置文件名称";
 "multiprofile.use_system_color" = "单色";
 "multiprofile.use_system_color_description" = "使用白色而不是状态颜色（绿色/橙色/红色）";
+"multiprofile.overflow.title" = "将多余的配置文件折叠为一个项目";
+"multiprofile.overflow.automatic" = "自动（菜单栏已满时）";
+"multiprofile.overflow.never" = "从不";
+"multiprofile.overflow.after_count" = "显示的配置文件超过";
+"multiprofile.overflow.after_count_suffix" = "个时";
 
 /* ==================== */
 /* MARK: - General Settings (Profile-Level) */

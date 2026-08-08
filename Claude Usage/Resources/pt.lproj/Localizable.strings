@@ -504,6 +504,11 @@
 "multiprofile.show_label_description" = "Exibir nome do perfil abaixo do ícone";
 "multiprofile.use_system_color" = "Usar Cor do Sistema";
 "multiprofile.use_system_color_description" = "Usar a cor de destaque do Mac em vez das cores de status";
+"multiprofile.overflow.title" = "Recolher perfis extras em um único item";
+"multiprofile.overflow.automatic" = "Automaticamente, quando a barra de menu estiver cheia";
+"multiprofile.overflow.never" = "Nunca";
+"multiprofile.overflow.after_count" = "Quando forem exibidos mais de";
+"multiprofile.overflow.after_count_suffix" = "perfis";
 
 /* ==================== */
 /* MARK: - General Settings (Profile-Level) */

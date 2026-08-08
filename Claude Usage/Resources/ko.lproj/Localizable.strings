@@ -138,6 +138,11 @@
 "multiprofile.show_label_description" = "아이콘 아래에 프로필 이름 표시";
 "multiprofile.use_system_color" = "시스템 색상 사용";
 "multiprofile.use_system_color_description" = "상태 색상 대신 Mac의 강조 색상 사용";
+"multiprofile.overflow.title" = "초과 프로필을 하나의 항목으로 축소";
+"multiprofile.overflow.automatic" = "메뉴 바가 가득 찼을 때 자동으로";
+"multiprofile.overflow.never" = "안 함";
+"multiprofile.overflow.after_count" = "표시되는 프로필이";
+"multiprofile.overflow.after_count_suffix" = "개를 초과할 때";
 
 /* ==================== */
 /* MARK: - General Settings (Profile-Level) */

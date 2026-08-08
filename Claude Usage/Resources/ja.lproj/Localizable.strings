@@ -506,6 +506,11 @@
 "multiprofile.show_label_description" = "アイコンの下にプロファイル名を表示";
 "multiprofile.use_system_color" = "システムカラーを使用";
 "multiprofile.use_system_color_description" = "ステータス色の代わりにMacのアクセントカラーを使用";
+"multiprofile.overflow.title" = "余分なプロファイルを1つの項目にまとめる";
+"multiprofile.overflow.automatic" = "メニューバーが埋まったときに自動でまとめる";
+"multiprofile.overflow.never" = "まとめない";
+"multiprofile.overflow.after_count" = "表示するプロファイルが";
+"multiprofile.overflow.after_count_suffix" = "個を超えたとき";
 
 /* ==================== */
 /* MARK: - General Settings (Profile-Level) */
