@@ -802,8 +802,12 @@ final class StatusBarUIManager {
         if case .automatic = overflowMode {
             let config = ProfileManager.shared.multiProfileConfig
             let activeProfileId = ProfileManager.shared.activeClaudeProfileID
-            let ourItemWidths = selectedProfiles.map { profile in
-                intendedItemWidth(
+            let ourItemWidths = selectedProfiles.map { profile -> CGFloat in
+                guard profile.providerID == .claude else {
+                    return itemWidth(for: multiProfileStatusItems[profile.id])
+                        ?? Self.estimatedProfileItemWidth
+                }
+                return intendedItemWidth(
                     for: profile,
                     config: config,
                     isActive: profile.id == activeProfileId
