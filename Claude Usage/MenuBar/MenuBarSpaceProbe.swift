@@ -101,12 +101,21 @@ struct MenuBarSpaceProbe: MenuBarSpaceProbing {
         Int(CGWindowLevelForKey(.statusWindow))
     }
 
+    /// The screen AppKit documents as owning the menu bar: `NSScreen
+    /// .screens[0]` is always the screen containing the menu bar and the
+    /// global coordinate space's origin, regardless of which screen is
+    /// `.main` (the one with the key window) or physically arranged where.
+    var menuBarScreen: NSScreen? {
+        NSScreen.screens.first
+    }
+
     func makeLayoutInput(
         ourItemWidths: [CGFloat],
         overflowItemWidth: CGFloat
     ) -> MenuBarLayoutInput? {
         guard MenuBarAccessibilityAccess.isTrusted(),
-              let statusRegionMinX = Self.statusRegionMinX(),
+              let screen = menuBarScreen,
+              let statusRegionMinX = Self.statusRegionMinX(on: screen),
               let appMenuMaxX = Self.frontmostAppMenuMaxX()
         else {
             return nil
@@ -119,10 +128,20 @@ struct MenuBarSpaceProbe: MenuBarSpaceProbing {
         )
     }
 
-    /// Leftmost x of any on-screen status item. See the type-level doc
-    /// comment for why this is a minimum over every item rather than a sum
-    /// of "foreign" ones.
-    static func statusRegionMinX() -> CGFloat? {
+    /// Leftmost x of any on-screen status item **on `screen`**. See the
+    /// type-level doc comment for why this is a minimum over every item on
+    /// that screen rather than a sum of "foreign" ones.
+    ///
+    /// Restricting to `screen` matters on a multi-monitor setup: with
+    /// "Displays have separate Spaces" (the default), every screen gets its
+    /// own menu bar and its own status items, and `CGWindowListCopyWindowInfo`
+    /// returns all of them regardless of which screen they're on. An
+    /// unfiltered global minimum can land on a status item belonging to a
+    /// screen positioned to the left of the menu bar screen's origin in the
+    /// global coordinate space — including a *negative* x on some physical
+    /// arrangements — which has nothing to do with how much room is free on
+    /// the screen we actually render our items on.
+    static func statusRegionMinX(on screen: NSScreen) -> CGFloat? {
         guard let windows = CGWindowListCopyWindowInfo(
             [.optionOnScreenOnly],
             kCGNullWindowID
@@ -130,13 +149,15 @@ struct MenuBarSpaceProbe: MenuBarSpaceProbing {
             return nil
         }
         let layer = statusItemLayer
+        let screenRangeX = screen.frame.minX...screen.frame.maxX
         var minX: CGFloat?
         for window in windows {
             guard let windowLayer = window[kCGWindowLayer as String] as? Int,
                   windowLayer == layer,
                   let boundsDict = window[kCGWindowBounds as String]
                     as? [String: CGFloat],
-                  let x = boundsDict["X"]
+                  let x = boundsDict["X"],
+                  screenRangeX.contains(x)
             else { continue }
             minX = minX.map { Swift.min($0, x) } ?? x
         }
