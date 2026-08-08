@@ -106,3 +106,50 @@ enum MenuBarManagerDetection {
         }
     }
 }
+
+/// Tracks the detected menu bar manager across successive process-list
+/// snapshots and reports whether the latest snapshot actually changed it.
+/// `NSWorkspace`'s `didLaunchApplicationNotification` /
+/// `didTerminateApplicationNotification` fire for every application on the
+/// system, not just menu bar managers, so a caller wired directly to those
+/// notifications needs this to avoid recomputing anything on every launch
+/// or quit — only a genuine transition (nil -> X, X -> nil, X -> Y) should
+/// do that. Isolating the decision here (plain `[String]` in, `Bool` out,
+/// no `NSWorkspace` or `MenuBarManager` involved) is what makes it testable
+/// without a real running process list. See
+/// `MenuBarManager.handleMenuBarManagerActivityChange()` for the production
+/// caller.
+///
+/// `nonisolated` is required, not stylistic: this project defaults every
+/// declaration to `@MainActor` isolation, and under that default this
+/// class's synthesized deinit crashed every test that deallocated an
+/// instance (`___BUG_IN_CLIENT_OF_LIBMALLOC_POINTER_BEING_FREED_WAS_NOT_ALLOCATED`
+/// inside `swift_task_deinitOnExecutorMainActorBackDeploy`) — a toolchain
+/// bug in MainActor-isolated deinit, not a bug in this type. It holds no
+/// actor-isolated state and needs none, so opting out is also correct on
+/// the merits.
+nonisolated final class MenuBarManagerTransitionTracker {
+    private(set) var lastDetected: MenuBarManagerDetection.KnownManager?
+
+    init(initialRunningBundleIdentifiers: [String] = []) {
+        lastDetected = MenuBarManagerDetection.detectedManager(
+            runningBundleIdentifiers: initialRunningBundleIdentifiers
+        )
+    }
+
+    /// Re-evaluates `runningBundleIdentifiers` against
+    /// `MenuBarManagerDetection.knownManagers` and returns whether the
+    /// detected manager changed since the last call (or since `init`, on
+    /// the first call). Always updates `lastDetected`, even when
+    /// unchanged, so the next call compares against this snapshot rather
+    /// than an earlier one.
+    @discardableResult
+    func update(runningBundleIdentifiers: [String]) -> Bool {
+        let detected = MenuBarManagerDetection.detectedManager(
+            runningBundleIdentifiers: runningBundleIdentifiers
+        )
+        let changed = detected != lastDetected
+        lastDetected = detected
+        return changed
+    }
+}

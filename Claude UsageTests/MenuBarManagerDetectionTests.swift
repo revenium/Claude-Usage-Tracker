@@ -78,3 +78,94 @@ final class MenuBarManagerDetectionTests: XCTestCase {
         )
     }
 }
+
+/// Tests for `MenuBarManagerTransitionTracker`, which filters
+/// `NSWorkspace`'s launch/quit notifications — fired for every application
+/// on the system — down to genuine transitions in the detected manager, so
+/// `MenuBarManager.handleMenuBarManagerActivityChange()` only replans the
+/// menu bar overflow when the answer to "which manager is running" actually
+/// changed. Everything here is `[String]` in, `Bool`/optional out — no real
+/// process list, no `NSWorkspace`, no `MenuBarManager`.
+final class MenuBarManagerTransitionTrackerTests: XCTestCase {
+    func testNoManagerRunningAtStartIsNotATransition() {
+        let tracker = MenuBarManagerTransitionTracker()
+        XCTAssertNil(tracker.lastDetected)
+    }
+
+    func testSeedingWithAnAlreadyRunningManagerIsNotATransitionOnFirstUpdate() {
+        // A manager already running when the tracker is created (i.e. when
+        // the app launches) is already accounted for by the app's initial
+        // overflow plan, so the very next update — even reporting the same
+        // manager again — must not read as a fresh transition.
+        let tracker = MenuBarManagerTransitionTracker(
+            initialRunningBundleIdentifiers: ["com.stonerl.Thaw"]
+        )
+        let changed = tracker.update(
+            runningBundleIdentifiers: ["com.stonerl.Thaw"]
+        )
+        XCTAssertFalse(changed)
+    }
+
+    func testManagerLaunchingIsATransition() {
+        let tracker = MenuBarManagerTransitionTracker()
+        let changed = tracker.update(
+            runningBundleIdentifiers: ["com.stonerl.Thaw"]
+        )
+        XCTAssertTrue(changed)
+        XCTAssertEqual(tracker.lastDetected?.displayName, "Thaw")
+    }
+
+    func testManagerQuittingIsATransition() {
+        let tracker = MenuBarManagerTransitionTracker(
+            initialRunningBundleIdentifiers: ["com.stonerl.Thaw"]
+        )
+        let changed = tracker.update(runningBundleIdentifiers: [])
+        XCTAssertTrue(changed)
+        XCTAssertNil(tracker.lastDetected)
+    }
+
+    func testSwitchingFromOneManagerToAnotherIsATransition() {
+        let tracker = MenuBarManagerTransitionTracker(
+            initialRunningBundleIdentifiers: ["com.stonerl.Thaw"]
+        )
+        let changed = tracker.update(
+            runningBundleIdentifiers: ["com.jordanbaird.Ice"]
+        )
+        XCTAssertTrue(changed)
+        XCTAssertEqual(tracker.lastDetected?.displayName, "Ice")
+    }
+
+    func testAnUnrelatedApplicationLaunchingIsNotATransition() {
+        // This is the volume `NSWorkspace.didLaunchApplicationNotification`
+        // actually fires at: any app, not just menu bar managers. Adding an
+        // unrelated bundle identifier to an otherwise-unchanged running set
+        // must not register as a transition.
+        let tracker = MenuBarManagerTransitionTracker(
+            initialRunningBundleIdentifiers: ["com.apple.finder"]
+        )
+        let changed = tracker.update(
+            runningBundleIdentifiers: ["com.apple.finder", "com.apple.Safari"]
+        )
+        XCTAssertFalse(changed)
+        XCTAssertNil(tracker.lastDetected)
+    }
+
+    func testAnUnrelatedApplicationQuittingWhileAManagerStaysRunningIsNotATransition() {
+        let tracker = MenuBarManagerTransitionTracker(
+            initialRunningBundleIdentifiers: [
+                "com.stonerl.Thaw", "com.apple.Safari"
+            ]
+        )
+        let changed = tracker.update(
+            runningBundleIdentifiers: ["com.stonerl.Thaw"]
+        )
+        XCTAssertFalse(changed)
+        XCTAssertEqual(tracker.lastDetected?.displayName, "Thaw")
+    }
+
+    func testRepeatingTheSameSnapshotIsNotATransition() {
+        let tracker = MenuBarManagerTransitionTracker()
+        XCTAssertFalse(tracker.update(runningBundleIdentifiers: []))
+        XCTAssertFalse(tracker.update(runningBundleIdentifiers: []))
+    }
+}

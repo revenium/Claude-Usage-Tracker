@@ -656,8 +656,8 @@ private struct DetectedMenuBarManagerHint: View {
 
     private static func detect() -> MenuBarManagerDetection.KnownManager? {
         MenuBarManagerDetection.detectedManager(
-            runningBundleIdentifiers: NSWorkspace.shared.runningApplications
-                .compactMap(\.bundleIdentifier)
+            runningBundleIdentifiers:
+                NSWorkspaceRunningApplications().runningBundleIdentifiers
         )
     }
 }

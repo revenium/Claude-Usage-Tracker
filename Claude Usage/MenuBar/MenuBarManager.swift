@@ -1169,9 +1169,21 @@ class MenuBarManager: NSObject, ObservableObject {
     private var frontmostAppObserver: NSObjectProtocol?
 
     // Debounces automatic-mode overflow recomputation triggered by screen
-    // configuration or frontmost-application changes (see
-    // `handleScreenChange()` / `handleFrontmostAppChange()`).
+    // configuration, frontmost-application, or menu-bar-manager changes (see
+    // `handleScreenChange()` / `handleFrontmostAppChange()` /
+    // `handleMenuBarManagerActivityChange()`).
     private var overflowRecomputeDebounceTimer: Timer?
+
+    // Observers for any application launching or quitting, so automatic-mode
+    // overflow can react to a menu bar manager (Ice, Thaw, ...) appearing or
+    // disappearing while the app is running. Two separate tokens because
+    // launch and quit are two separate `NSWorkspace` notification names.
+    private var menuBarManagerLaunchObserver: NSObjectProtocol?
+    private var menuBarManagerTerminateObserver: NSObjectProtocol?
+
+    // Filters the launch/quit flood above down to genuine transitions in
+    // the detected manager (see `handleMenuBarManagerActivityChange()`).
+    private let menuBarManagerTracker = MenuBarManagerTransitionTracker()
 
     // Observer for wake-from-sleep
     private var wakeObserver: NSObjectProtocol?
@@ -1325,6 +1337,10 @@ class MenuBarManager: NSObject, ObservableObject {
         // Setup headless mode observer if enabled (for Remote Desktop support)
         setupHeadlessModeObserver()
 
+        // Setup menu-bar-manager launch/quit observer so automatic-mode
+        // overflow reacts to Ice/Thaw/... appearing or disappearing
+        setupMenuBarManagerObserver()
+
         // Setup wake-from-sleep observer for auto-refresh
         setupWakeObserver()
 
@@ -1424,6 +1440,18 @@ class MenuBarManager: NSObject, ObservableObject {
                 frontmostAppObserver
             )
             self.frontmostAppObserver = nil
+        }
+        if let menuBarManagerLaunchObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(
+                menuBarManagerLaunchObserver
+            )
+            self.menuBarManagerLaunchObserver = nil
+        }
+        if let menuBarManagerTerminateObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(
+                menuBarManagerTerminateObserver
+            )
+            self.menuBarManagerTerminateObserver = nil
         }
         if let wakeObserver = wakeObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver)
@@ -3020,6 +3048,86 @@ class MenuBarManager: NSObject, ObservableObject {
 
     private func handleFrontmostAppChange() {
         guard profileManager.displayMode == .multi else { return }
+        scheduleOverflowRecompute()
+    }
+
+    /// Observes any application launching or quitting, so `.automatic`
+    /// overflow reacts to a menu bar manager (Ice, Thaw, Bartender, ...)
+    /// appearing or disappearing while this app keeps running, rather than
+    /// waiting for an unrelated replan trigger (frontmost-app change,
+    /// screen change, ...) to happen to fire first. Without this, launching
+    /// Thaw left profiles collapsed and quitting it left them uncollapsed
+    /// until something else nudged a recompute — while the Settings notice
+    /// (`DetectedMenuBarManagerHint`) already refreshes on
+    /// `didBecomeActiveNotification`, so the UI could say "Thaw is managing
+    /// your menu bar" while the profiles on screen were still collapsed.
+    ///
+    /// `NSWorkspace`'s launch/terminate notifications fire for every
+    /// application on the system, so `handleMenuBarManagerActivityChange()`
+    /// filters that down to genuine transitions via
+    /// `menuBarManagerTracker` before ever considering a replan.
+    ///
+    /// This cannot loop back into itself: recomputing the overflow plan
+    /// neither launches nor quits an application, so it can never
+    /// re-trigger the very notification that led to it — unlike a prior bug
+    /// in this file where a recompute trigger was wired to the *paint* path
+    /// (`updateMultiProfileDisplay()` -> `updateAllStatusBarIcons()` ->
+    /// `scheduleFreshnessDeadline`, which re-arms and calls back into
+    /// `updateAllStatusBarIcons()`), which had no data-driven stop. This
+    /// trigger is driven by real external process launches/quits the app
+    /// itself never causes, so there is no such cycle to close.
+    private func setupMenuBarManagerObserver() {
+        // Mirrors `setupHeadlessModeObserver()`'s re-entrancy guard: `setup()`
+        // can run again (e.g. the headless retry path in
+        // `handleScreenChange()`), and re-registering here would leak a
+        // duplicate observer that fires its handler once per surviving copy.
+        guard menuBarManagerLaunchObserver == nil else { return }
+
+        // Seed the tracker with the actual current process list so the
+        // first real launch/quit notification is compared against reality,
+        // not an empty default — a manager already running at setup time is
+        // already accounted for by the initial overflow plan, so it must
+        // not read as a spurious "transition" the first time this fires.
+        menuBarManagerTracker.update(
+            runningBundleIdentifiers:
+                NSWorkspaceRunningApplications().runningBundleIdentifiers
+        )
+
+        menuBarManagerLaunchObserver = NSWorkspace.shared.notificationCenter
+            .addObserver(
+                forName: NSWorkspace.didLaunchApplicationNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.handleMenuBarManagerActivityChange()
+                }
+            }
+        menuBarManagerTerminateObserver = NSWorkspace.shared
+            .notificationCenter.addObserver(
+                forName: NSWorkspace.didTerminateApplicationNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.handleMenuBarManagerActivityChange()
+                }
+            }
+    }
+
+    private func handleMenuBarManagerActivityChange() {
+        let changed = menuBarManagerTracker.update(
+            runningBundleIdentifiers:
+                NSWorkspaceRunningApplications().runningBundleIdentifiers
+        )
+        guard changed else { return }
+        // `.never` and `.afterCount` never consult the detected manager
+        // (see `overflowPlan`'s `.automatic`-only guard), so a replan on
+        // their behalf would just repeat the same manager-independent plan
+        // for no reason — skip it rather than do that pointless work.
+        guard profileManager.displayMode == .multi,
+              case .automatic = DataStore.shared.loadMenuBarOverflowMode()
+        else { return }
         scheduleOverflowRecompute()
     }
 
