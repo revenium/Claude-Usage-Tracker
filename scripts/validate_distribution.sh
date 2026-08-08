@@ -202,30 +202,36 @@ for shell_script in scripts/*.sh; do
     bash -n "$shell_script"
 done
 
-# A restricted entitlement is only honoured on a Developer ID app when an
+# `keychain-access-groups` is only honoured on a Developer ID app when an
 # embedded provisioning profile allowlists it. Signing without one does not
 # degrade to "the entitlement is ignored" — AMFI refuses to spawn the process
-# (`launchctl error 163`), so the app cannot launch at all. v3.3.0 shipped a
-# `keychain-access-groups` entitlement with no profile, passed every existing
-# gate including notarization and Gatekeeper, and was unlaunchable on every
-# machine. Gatekeeper assessment does not execute the app, which is why
-# nothing here caught it.
+# (`launchctl error 163`), so the app cannot launch at all. v3.3.0 shipped
+# exactly that, passed every existing gate including notarization and
+# Gatekeeper, and was unlaunchable on every machine. Gatekeeper assessment does
+# not execute the app, which is why nothing here caught it.
 #
-# So: if any entitlements file claims a restricted entitlement, the release
-# workflow must embed a provisioning profile. Both halves, or neither.
+# So: if an entitlements file claims that key, the release workflow must embed a
+# provisioning profile. Both halves, or neither.
+#
+# Deliberately scoped to this one key rather than "restricted entitlements" in
+# general. Other entitlements plausibly carry the same requirement, but which
+# ones do is not something to assert from memory in a gate that can block a
+# release — asserting an unverified platform rule is what produced the bug this
+# check exists to prevent. Widening it means first confirming, per key, that a
+# profile really is required.
 # Ask the plist parser whether the key is really set, rather than grepping for
 # the name: the entitlements file documents at length why the key is absent, and
 # a textual match would fire on that explanation.
-restricted_entitlement_files=()
+keychain_entitlement_files=()
 while IFS= read -r entitlements_file; do
     plutil -extract keychain-access-groups raw -o - "$entitlements_file" \
         >/dev/null 2>&1 \
-        && restricted_entitlement_files+=("$entitlements_file")
+        && keychain_entitlement_files+=("$entitlements_file")
 done < <(find . -name '*.entitlements' -not -path './build/*')
 
-if (( ${#restricted_entitlement_files[@]} > 0 )); then
+if (( ${#keychain_entitlement_files[@]} > 0 )); then
     contains_fixed 'embedded.provisionprofile' .github/workflows/release.yml \
-        || fail "restricted entitlement declared in ${restricted_entitlement_files[*]} but the release workflow never embeds a provisioning profile; the signed app will fail to launch (launchctl error 163)"
+        || fail "keychain-access-groups declared in ${keychain_entitlement_files[*]} but the release workflow never embeds a provisioning profile; the signed app will fail to launch (launchctl error 163)"
 fi
 
 rendered_cask=$(mktemp "${TMPDIR:-/tmp}/claude-usage-cask.XXXXXX.rb")
