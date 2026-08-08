@@ -206,11 +206,24 @@ nonisolated struct PerProfileAutoRefreshPolicy: Equatable, Sendable {
         let interval: TimeInterval
     }
 
+    /// Whether a profile should be fetched on this pass.
+    ///
+    /// `trigger` is part of the decision rather than being checked at the
+    /// call site so that "only the automatic timer is throttled" is a
+    /// property of this function, and therefore directly testable. Every
+    /// non-timer trigger — manual refresh, startup, profile activation,
+    /// credential or provider changes, network restored, wake, display
+    /// change, retry — bypasses the interval gate entirely. Throttling any
+    /// of those would silently stale the menu bar at the exact moments a
+    /// user is most likely to be looking at it.
     static func shouldRefreshProfile(
         now: Date,
         record: Record?,
-        interval: TimeInterval
+        interval: TimeInterval,
+        trigger: UsageRefreshTrigger
     ) -> Bool {
+        guard trigger == .timer else { return true }
+
         guard let record, record.interval == interval else {
             return true
         }
@@ -3588,11 +3601,11 @@ class MenuBarManager: NSObject, ObservableObject {
         }
 
         let selectedProfiles = eligibleProfiles.filter { profile in
-            guard isAutomaticTick else { return true }
-            return PerProfileAutoRefreshPolicy.shouldRefreshProfile(
+            PerProfileAutoRefreshPolicy.shouldRefreshProfile(
                 now: now,
                 record: lastAutomaticRefreshByProfile[profile.id],
-                interval: profile.refreshInterval
+                interval: profile.refreshInterval,
+                trigger: trigger
             )
         }
 

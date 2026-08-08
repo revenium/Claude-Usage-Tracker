@@ -268,7 +268,8 @@ final class MenuReliabilityTests: HostedAppTestCase {
             PerProfileAutoRefreshPolicy.shouldRefreshProfile(
                 now: now,
                 record: record,
-                interval: 30
+                interval: 30,
+                trigger: .timer
             )
         )
     }
@@ -283,7 +284,8 @@ final class MenuReliabilityTests: HostedAppTestCase {
             PerProfileAutoRefreshPolicy.shouldRefreshProfile(
                 now: now,
                 record: record,
-                interval: 30
+                interval: 30,
+                trigger: .timer
             )
         )
     }
@@ -293,7 +295,8 @@ final class MenuReliabilityTests: HostedAppTestCase {
             PerProfileAutoRefreshPolicy.shouldRefreshProfile(
                 now: Date(),
                 record: nil,
-                interval: 120
+                interval: 120,
+                trigger: .timer
             )
         )
     }
@@ -310,7 +313,8 @@ final class MenuReliabilityTests: HostedAppTestCase {
             PerProfileAutoRefreshPolicy.shouldRefreshProfile(
                 now: now,
                 record: record,
-                interval: 30
+                interval: 30,
+                trigger: .timer
             )
         )
     }
@@ -325,7 +329,8 @@ final class MenuReliabilityTests: HostedAppTestCase {
             PerProfileAutoRefreshPolicy.shouldRefreshProfile(
                 now: now,
                 record: zeroIntervalRecord,
-                interval: 0
+                interval: 0,
+                trigger: .timer
             )
         )
 
@@ -337,7 +342,8 @@ final class MenuReliabilityTests: HostedAppTestCase {
             PerProfileAutoRefreshPolicy.shouldRefreshProfile(
                 now: now,
                 record: negativeIntervalRecord,
-                interval: -30
+                interval: -30,
+                trigger: .timer
             )
         )
     }
@@ -355,7 +361,8 @@ final class MenuReliabilityTests: HostedAppTestCase {
             PerProfileAutoRefreshPolicy.shouldRefreshProfile(
                 now: now,
                 record: record,
-                interval: 30
+                interval: 30,
+                trigger: .timer
             )
         )
     }
@@ -396,11 +403,31 @@ final class MenuReliabilityTests: HostedAppTestCase {
         XCTAssertNil(pruned[deletedID])
     }
 
-    func testPerProfileAutoRefreshPolicyIsIgnoredForUserInitiatedTriggers() {
-        // The gate itself has no notion of triggers - callers only consult
-        // it when the trigger is `.timer`. Confirm that contract holds so a
-        // future refactor can't silently start throttling manual refreshes,
-        // profile switches, wake, or network-restored triggers.
+    /// Every non-timer trigger must bypass the interval gate, exercised
+    /// against state that would definitely throttle: a record stamped a
+    /// moment ago against a long interval. `.timer` is asserted to be
+    /// throttled by that same state, so this fails both if a non-timer
+    /// trigger starts being throttled and if the fixture ever stops being
+    /// one that throttles — which would otherwise let it pass vacuously.
+    func testPerProfileAutoRefreshPolicyIsBypassedForEveryNonTimerTrigger() {
+        let now = Date(timeIntervalSinceReferenceDate: 100_000)
+        let interval: TimeInterval = 120
+        let justRefreshed = PerProfileAutoRefreshPolicy.Record(
+            lastRefresh: now.addingTimeInterval(-1),
+            interval: interval
+        )
+
+        XCTAssertFalse(
+            PerProfileAutoRefreshPolicy.shouldRefreshProfile(
+                now: now,
+                record: justRefreshed,
+                interval: interval,
+                trigger: .timer
+            ),
+            "Fixture must actually throttle, or the bypass assertions below"
+                + " would pass for the wrong reason"
+        )
+
         let nonAutomaticTriggers: [UsageRefreshTrigger] = [
             .manual,
             .startup,
@@ -413,9 +440,13 @@ final class MenuReliabilityTests: HostedAppTestCase {
             .retry
         ]
         for trigger in nonAutomaticTriggers {
-            XCTAssertNotEqual(
-                trigger,
-                .timer,
+            XCTAssertTrue(
+                PerProfileAutoRefreshPolicy.shouldRefreshProfile(
+                    now: now,
+                    record: justRefreshed,
+                    interval: interval,
+                    trigger: trigger
+                ),
                 "\(trigger) must bypass the per-profile auto-refresh gate"
             )
         }
