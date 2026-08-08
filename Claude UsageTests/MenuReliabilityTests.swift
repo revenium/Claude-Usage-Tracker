@@ -360,6 +360,42 @@ final class MenuReliabilityTests: HostedAppTestCase {
         )
     }
 
+    func testPerProfileAutoRefreshPolicyPruneKeepsExistingButIneligibleProfiles() {
+        let stillSelectedID = UUID()
+        let deselectedButExistingID = UUID()
+        let deletedID = UUID()
+        let now = Date()
+        let records: [UUID: PerProfileAutoRefreshPolicy.Record] = [
+            stillSelectedID: PerProfileAutoRefreshPolicy.Record(
+                lastRefresh: now,
+                interval: 30
+            ),
+            deselectedButExistingID: PerProfileAutoRefreshPolicy.Record(
+                lastRefresh: now,
+                interval: 60
+            ),
+            deletedID: PerProfileAutoRefreshPolicy.Record(
+                lastRefresh: now,
+                interval: 90
+            )
+        ]
+
+        let pruned = PerProfileAutoRefreshPolicy.pruned(
+            records,
+            keeping: [stillSelectedID, deselectedButExistingID]
+        )
+
+        XCTAssertEqual(pruned.count, 2)
+        XCTAssertNotNil(pruned[stillSelectedID])
+        XCTAssertNotNil(
+            pruned[deselectedButExistingID],
+            "A profile that still exists but is merely deselected or "
+                + "temporarily ineligible must keep its record, or "
+                + "reselecting it would reset its cadence"
+        )
+        XCTAssertNil(pruned[deletedID])
+    }
+
     func testPerProfileAutoRefreshPolicyIsIgnoredForUserInitiatedTriggers() {
         // The gate itself has no notion of triggers - callers only consult
         // it when the trigger is `.timer`. Confirm that contract holds so a

@@ -220,6 +220,19 @@ nonisolated struct PerProfileAutoRefreshPolicy: Equatable, Sendable {
         let elapsed = now.timeIntervalSince(record.lastRefresh)
         return elapsed < 0 || elapsed >= interval
     }
+
+    /// Drops records for profiles that no longer exist at all, so the
+    /// per-profile store doesn't grow forever as profiles are deleted. A
+    /// profile that merely isn't currently selected/eligible (deselected,
+    /// missing credentials, provider disabled) is NOT pruned - only
+    /// `existingProfileIDs` membership matters - so reselecting it later
+    /// doesn't reset its cadence back to "never refreshed."
+    static func pruned(
+        _ records: [UUID: Record],
+        keeping existingProfileIDs: Set<UUID>
+    ) -> [UUID: Record] {
+        records.filter { existingProfileIDs.contains($0.key) }
+    }
 }
 
 @MainActor
@@ -3558,6 +3571,16 @@ class MenuBarManager: NSObject, ObservableObject {
             $0.isSelectedForDisplay && canAttemptUsageRefresh($0)
         }
 
+        // Drop records for profiles that no longer exist at all (deleted),
+        // so this store doesn't grow forever. Pruned against every profile
+        // still known to the manager, not just `eligibleProfiles` - a
+        // deselected or momentarily credential-less profile must keep its
+        // record.
+        lastAutomaticRefreshByProfile = PerProfileAutoRefreshPolicy.pruned(
+            lastAutomaticRefreshByProfile,
+            keeping: Set(profileManager.profiles.map(\.id))
+        )
+
         guard !eligibleProfiles.isEmpty else {
             LoggingService.shared.log("MenuBarManager: No selected profiles with usage credentials to refresh")
             updateAllStatusBarIcons()
@@ -3575,6 +3598,7 @@ class MenuBarManager: NSObject, ObservableObject {
 
         guard !selectedProfiles.isEmpty else {
             LoggingService.shared.log("MenuBarManager: All \(eligibleProfiles.count) eligible profiles are within their own refresh interval; skipping this automatic tick")
+            updateAllStatusBarIcons()
             return
         }
 
