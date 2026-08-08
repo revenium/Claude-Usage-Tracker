@@ -93,6 +93,10 @@ nonisolated struct RefreshTimingPolicy: Equatable, Sendable {
     static let wakeDebounce: TimeInterval = 10
     static let wakeDelay: TimeInterval = 3
     static let timerToleranceFraction = 0.1
+    /// Multiplier applied to the refresh interval while Low Power Mode is
+    /// on. Doubling the cadence roughly halves the wake-up/network-radio
+    /// cost of automatic refresh without the user noticing a stale menu bar.
+    static let lowPowerModeIntervalMultiplier: TimeInterval = 2
 
     let interval: TimeInterval
     let tolerance: TimeInterval
@@ -100,6 +104,25 @@ nonisolated struct RefreshTimingPolicy: Equatable, Sendable {
     init(interval: TimeInterval) {
         self.interval = interval
         tolerance = interval * Self.timerToleranceFraction
+    }
+
+    /// Decides whether the auto-refresh timer should run at all, and at
+    /// what interval, given display and power state. Kept pure so the
+    /// decision is directly testable without a real display sleep or a
+    /// live Low Power Mode toggle.
+    ///
+    /// Returns `nil` while the display is asleep — there is no menu bar to
+    /// update, so the timer should not run until the display wakes.
+    static func autoRefreshTiming(
+        baseInterval: TimeInterval,
+        isDisplayAsleep: Bool,
+        isLowPowerModeEnabled: Bool
+    ) -> RefreshTimingPolicy? {
+        guard !isDisplayAsleep else { return nil }
+        let interval = isLowPowerModeEnabled
+            ? baseInterval * lowPowerModeIntervalMultiplier
+            : baseInterval
+        return RefreshTimingPolicy(interval: interval)
     }
 
     static func shouldRefreshForNetworkAvailability(
@@ -1189,6 +1212,19 @@ class MenuBarManager: NSObject, ObservableObject {
     private var wakeObserver: NSObjectProtocol?
     private var lastAutoRefreshTime: Date = .distantPast
 
+    // Observers for display sleep/wake. There is no menu bar to update
+    // while the display is off, so auto-refresh is fully paused rather than
+    // just debounced the way system wake is above.
+    private var screenSleepObserver: NSObjectProtocol?
+    private var screenWakeObserver: NSObjectProtocol?
+    private var isDisplayAsleep = false
+
+    // Observer for Low Power Mode transitions, backing off the refresh
+    // cadence while it's on (see `RefreshTimingPolicy.autoRefreshTiming`).
+    private var lowPowerModeObserver: NSObjectProtocol?
+    private var isLowPowerModeEnabled =
+        ProcessInfo.processInfo.isLowPowerModeEnabled
+
     // MARK: - Image Caching (CPU Optimization)
     private var cachedImage: NSImage?
     private var cachedImageKey: String = ""
@@ -1344,6 +1380,13 @@ class MenuBarManager: NSObject, ObservableObject {
         // Setup wake-from-sleep observer for auto-refresh
         setupWakeObserver()
 
+        // Setup display sleep/wake observer to pause auto-refresh while
+        // there is no menu bar to update
+        setupScreenSleepObserver()
+
+        // Setup Low Power Mode observer to back off the refresh cadence
+        setupLowPowerModeObserver()
+
         // Setup global keyboard shortcuts
         setupShortcuts()
     }
@@ -1456,6 +1499,22 @@ class MenuBarManager: NSObject, ObservableObject {
         if let wakeObserver = wakeObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver)
             self.wakeObserver = nil
+        }
+        if let screenSleepObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(
+                screenSleepObserver
+            )
+            self.screenSleepObserver = nil
+        }
+        if let screenWakeObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(
+                screenWakeObserver
+            )
+            self.screenWakeObserver = nil
+        }
+        if let lowPowerModeObserver {
+            NotificationCenter.default.removeObserver(lowPowerModeObserver)
+            self.lowPowerModeObserver = nil
         }
         if let monitor = eventMonitor {
             NSEvent.removeMonitor(monitor)
@@ -1737,19 +1796,7 @@ class MenuBarManager: NSObject, ObservableObject {
     private func restartAutoRefreshWithInterval(_ interval: TimeInterval) {
         refreshTimer?.invalidate()
         refreshTimer = nil
-
-        let timing = RefreshTimingPolicy(interval: interval)
-        refreshTimer = Timer.scheduledTimer(
-            withTimeInterval: timing.interval,
-            repeats: true
-        ) { [weak self] _ in
-            MainActor.assumeIsolated {
-                self?.handleAutomaticTimerFire()
-            }
-        }
-        refreshTimer?.tolerance = timing.tolerance
-
-        LoggingService.shared.log("Updated refresh interval to \(interval)s")
+        scheduleAutoRefreshTimer(baseInterval: interval)
     }
 
     private func setupPopover() {
@@ -2545,8 +2592,25 @@ class MenuBarManager: NSObject, ObservableObject {
     // MARK: - Icon Style: Battery (Classic)
 
     private func startAutoRefresh() {
-        let interval = profileManager.activeProfile?.refreshInterval ?? 30.0
-        let timing = RefreshTimingPolicy(interval: interval)
+        let baseInterval = profileManager.activeProfile?.refreshInterval ?? 30.0
+        scheduleAutoRefreshTimer(baseInterval: baseInterval)
+    }
+
+    /// Builds and installs the auto-refresh timer for `baseInterval`,
+    /// honoring the current display-sleep/Low-Power-Mode state. Shared by
+    /// `startAutoRefresh()` and `restartAutoRefreshWithInterval(_:)` so both
+    /// paths apply the same adaptation instead of drifting apart.
+    private func scheduleAutoRefreshTimer(baseInterval: TimeInterval) {
+        guard let timing = RefreshTimingPolicy.autoRefreshTiming(
+            baseInterval: baseInterval,
+            isDisplayAsleep: isDisplayAsleep,
+            isLowPowerModeEnabled: isLowPowerModeEnabled
+        ) else {
+            LoggingService.shared.log(
+                "MenuBarManager: Withholding auto-refresh timer while display is asleep"
+            )
+            return
+        }
         refreshTimer = Timer.scheduledTimer(
             withTimeInterval: timing.interval,
             repeats: true
@@ -2556,7 +2620,9 @@ class MenuBarManager: NSObject, ObservableObject {
             }
         }
         refreshTimer?.tolerance = timing.tolerance
-        LoggingService.shared.log("Started auto-refresh with interval: \(interval)s")
+        LoggingService.shared.log(
+            "Started auto-refresh with interval: \(timing.interval)s (base \(baseInterval)s)"
+        )
     }
 
     private func handleAutomaticTimerFire(at date: Date = Date()) {
@@ -2596,6 +2662,81 @@ class MenuBarManager: NSObject, ObservableObject {
                     self?.lastAutoRefreshTime = Date()
                     self?.refreshUsage(trigger: .wake)
                 }
+            }
+        }
+    }
+
+    /// Pauses auto-refresh while the display is asleep and resumes it (with
+    /// an immediate catch-up fetch) on wake. Mirrors `setupWakeObserver()`'s
+    /// structure and teardown discipline, but the display going dark — not
+    /// the whole system sleeping — doesn't touch networking, so there's no
+    /// need for `wakeDelay`'s reconnect grace period: the catch-up fetch
+    /// fires right away rather than after a delay.
+    private func setupScreenSleepObserver() {
+        screenSleepObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.screensDidSleepNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.isDisplayAsleep = true
+                self.refreshTimer?.invalidate()
+                self.refreshTimer = nil
+                LoggingService.shared.log(
+                    "MenuBarManager: Display slept, pausing auto-refresh"
+                )
+            }
+        }
+        screenWakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.screensDidWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.isDisplayAsleep = false
+                LoggingService.shared.log(
+                    "MenuBarManager: Display woke, resuming auto-refresh"
+                )
+                self.restartAutoRefresh()
+
+                let timeSinceLastRefresh = Date().timeIntervalSince(
+                    self.lastAutoRefreshTime
+                )
+                guard RefreshTimingPolicy.shouldRefreshAfterWake(
+                    elapsedSinceLastAutomaticRefresh: timeSinceLastRefresh
+                ) else {
+                    LoggingService.shared.log(
+                        "MenuBarManager: Skipping display-wake catch-up refresh (debounce)"
+                    )
+                    return
+                }
+                self.lastAutoRefreshTime = Date()
+                self.refreshUsage(trigger: .wake)
+            }
+        }
+    }
+
+    /// Observes Low Power Mode transitions and reschedules the auto-refresh
+    /// timer so it immediately picks up the doubled interval from
+    /// `RefreshTimingPolicy.autoRefreshTiming`, restoring the normal
+    /// cadence just as immediately when Low Power Mode turns back off.
+    private func setupLowPowerModeObserver() {
+        lowPowerModeObserver = NotificationCenter.default.addObserver(
+            forName: .NSProcessInfoPowerStateDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let isEnabled = ProcessInfo.processInfo.isLowPowerModeEnabled
+                guard isEnabled != self.isLowPowerModeEnabled else { return }
+                self.isLowPowerModeEnabled = isEnabled
+                LoggingService.shared.log(
+                    "MenuBarManager: Low Power Mode \(isEnabled ? "enabled" : "disabled"), adjusting auto-refresh cadence"
+                )
+                self.restartAutoRefresh()
             }
         }
     }

@@ -70,6 +70,78 @@ final class MenuReliabilityTests: HostedAppTestCase {
         XCTAssertEqual(fire.trigger, .timer)
     }
 
+    /// Pure decision logic backing the display-sleep/Low-Power-Mode
+    /// adaptations. Exercised directly here so the behavior is asserted
+    /// without depending on a real display sleep or a live power-state
+    /// toggle — `MenuBarManager`'s observers just feed this function.
+    func testAutoRefreshTimingWithholdsTimerWhileDisplayIsAsleep() {
+        XCTAssertNil(
+            RefreshTimingPolicy.autoRefreshTiming(
+                baseInterval: 30,
+                isDisplayAsleep: true,
+                isLowPowerModeEnabled: false
+            )
+        )
+        // Low Power Mode being on at the same time changes nothing — a
+        // sleeping display always wins, there is nothing to redraw either way.
+        XCTAssertNil(
+            RefreshTimingPolicy.autoRefreshTiming(
+                baseInterval: 30,
+                isDisplayAsleep: true,
+                isLowPowerModeEnabled: true
+            )
+        )
+    }
+
+    func testAutoRefreshTimingUsesBaseIntervalWhenAwakeAndNotThrottled() {
+        guard let timing = RefreshTimingPolicy.autoRefreshTiming(
+            baseInterval: 30,
+            isDisplayAsleep: false,
+            isLowPowerModeEnabled: false
+        ) else {
+            return XCTFail("Expected a timing policy while awake")
+        }
+        XCTAssertEqual(timing.interval, 30)
+        XCTAssertEqual(timing.tolerance, 3, accuracy: 0.000_001)
+    }
+
+    func testAutoRefreshTimingDoublesIntervalInLowPowerMode() {
+        guard let timing = RefreshTimingPolicy.autoRefreshTiming(
+            baseInterval: 30,
+            isDisplayAsleep: false,
+            isLowPowerModeEnabled: true
+        ) else {
+            return XCTFail("Expected a timing policy while awake")
+        }
+        XCTAssertEqual(
+            timing.interval,
+            30 * RefreshTimingPolicy.lowPowerModeIntervalMultiplier
+        )
+        XCTAssertEqual(timing.interval, 60)
+        // Tolerance is still the same fraction of the (now longer) interval.
+        XCTAssertEqual(timing.tolerance, 6, accuracy: 0.000_001)
+
+        // Restoring Low Power Mode to off with the same base interval
+        // restores the original cadence immediately — no lingering state.
+        let restored = RefreshTimingPolicy.autoRefreshTiming(
+            baseInterval: 30,
+            isDisplayAsleep: false,
+            isLowPowerModeEnabled: false
+        )
+        XCTAssertEqual(restored?.interval, 30)
+    }
+
+    func testAutoRefreshTimingScalesWithDifferentProfileIntervals() {
+        // A profile configured with a longer per-profile interval still
+        // gets doubled under Low Power Mode, same as the default 30s case.
+        let timing = RefreshTimingPolicy.autoRefreshTiming(
+            baseInterval: 120,
+            isDisplayAsleep: false,
+            isLowPowerModeEnabled: true
+        )
+        XCTAssertEqual(timing?.interval, 240)
+    }
+
     func testAutomaticRefreshTriggersRemainTypedAndNonInteractive() {
         let triggers: [(UsageRefreshTrigger, String)] = [
             (.startup, "startup"),
