@@ -28,9 +28,15 @@ protocol MenuBarSpaceProbing {
     ///     already tracks each profile's `NSStatusItem`.
     ///   - overflowItemWidth: Width of the "+N" overflow item, if one is
     ///     currently rendered.
+    ///   - currentlyOnScreenWidth: Total width of our own items already on
+    ///     the menu bar, which the measured status region therefore already
+    ///     accounts for. Zero on a first layout. See
+    ///     `MenuBarLayoutInput.currentlyOnScreenWidth` for why omitting this
+    ///     double-counts our own width.
     func makeLayoutInput(
         ourItemWidths: [CGFloat],
-        overflowItemWidth: CGFloat
+        overflowItemWidth: CGFloat,
+        currentlyOnScreenWidth: CGFloat
     ) -> MenuBarLayoutInput?
 }
 
@@ -115,13 +121,27 @@ enum MenuBarAccessibilityAccess {
 /// "foreignItemsWidth". Do not reintroduce PID-based attribution for
 /// status items.
 struct MenuBarSpaceProbe: MenuBarSpaceProbing {
-    /// Bounds every Accessibility round-trip to a fraction of a second, so
-    /// an unresponsive frontmost application can never hang our main
-    /// thread waiting on its menu bar. Set once on the application element;
-    /// per Apple's documentation it is inherited by every accessibility
-    /// object subsequently obtained through it (its menu bar, that menu
-    /// bar's children, ...).
+    /// Bounds each individual Accessibility round-trip. Set once on the
+    /// application element; per Apple's documentation it is inherited by
+    /// every accessibility object subsequently obtained through it (its
+    /// menu bar, that menu bar's children, ...).
+    ///
+    /// This bounds each MESSAGE, not the total work: reading N menu titles
+    /// costs 2N round-trips, so a slow-but-not-hung application with many
+    /// menus could still stall the main thread for seconds. See
+    /// `axTotalBudgetSeconds`, which bounds the loop itself.
     private static let axMessagingTimeoutSeconds: Float = 0.25
+
+    /// Wall-clock ceiling on reading the whole menu bar, enforced across
+    /// the child loop. Without it the per-message timeout above multiplies
+    /// by the number of menu titles — and this runs synchronously on the
+    /// main thread from a debounced recompute that fires on every
+    /// application switch, so an unbounded loop is a visible hang.
+    ///
+    /// Exceeding the budget yields a partial measurement rather than a
+    /// wrong one: the caller treats a `nil` result as "unmeasurable" and
+    /// shows every profile its own item.
+    private static let axTotalBudgetSeconds: Double = 0.5
 
     private static var statusItemLayer: Int {
         Int(CGWindowLevelForKey(.statusWindow))
@@ -129,7 +149,8 @@ struct MenuBarSpaceProbe: MenuBarSpaceProbing {
 
     func makeLayoutInput(
         ourItemWidths: [CGFloat],
-        overflowItemWidth: CGFloat
+        overflowItemWidth: CGFloat,
+        currentlyOnScreenWidth: CGFloat
     ) -> MenuBarLayoutInput? {
         guard MenuBarAccessibilityAccess.isTrusted(),
               let appMenuMaxX = Self.frontmostAppMenuMaxX(),
@@ -147,7 +168,8 @@ struct MenuBarSpaceProbe: MenuBarSpaceProbing {
             appMenuMaxX: appMenuMaxX,
             statusRegionMinX: statusRegionMinX,
             ourItemWidths: ourItemWidths,
-            overflowItemWidth: overflowItemWidth
+            overflowItemWidth: overflowItemWidth,
+            currentlyOnScreenWidth: currentlyOnScreenWidth
         )
     }
 
@@ -164,11 +186,25 @@ struct MenuBarSpaceProbe: MenuBarSpaceProbing {
     /// Returns `nil` if no screen's frame contains `x` — deliberately no
     /// fallback to a default screen, since a fallback here is exactly the
     /// screen-mismatch bug this function exists to eliminate.
+    ///
+    /// Also returns `nil` when MORE than one screen contains `x`, which
+    /// happens on vertically stacked or overlapping display arrangements
+    /// where two screens share an x-range. Matching on x alone cannot
+    /// distinguish them, and picking either one would resurrect the
+    /// cross-display mismatch above. Disambiguating on y is deliberately
+    /// NOT attempted: Accessibility reports a top-left origin with y
+    /// increasing downward while `NSScreen.frame` uses a bottom-left origin
+    /// with y increasing upward, so the conversion is easy to get subtly
+    /// wrong and impossible to verify without stacked hardware. Declining
+    /// to measure is the safe outcome — the caller shows every profile its
+    /// own item rather than acting on a number that may describe the wrong
+    /// display.
     static func screenFrame(
         containing x: CGFloat,
         screenFrames: [CGRect]
     ) -> CGRect? {
-        screenFrames.first { $0.minX <= x && x < $0.maxX }
+        let matches = screenFrames.filter { $0.minX <= x && x < $0.maxX }
+        return matches.count == 1 ? matches[0] : nil
     }
 
     /// Leftmost x of any on-screen status item whose x falls within
@@ -201,8 +237,16 @@ struct MenuBarSpaceProbe: MenuBarSpaceProbing {
     /// extracted so the exact regression this fixed (a status item at a
     /// screen's own negative-x copy of the set being mistaken for a
     /// same-screen item) is unit-testable with plain numbers.
+    ///
+    /// Half-open on the upper bound, matching `screenFrame(containing:)`.
+    /// Both functions answer the same question — "which screen owns this
+    /// x?" — so they must agree on which side owns a shared boundary. A
+    /// closed upper bound here let a status item sitting exactly on the
+    /// seam between two contiguous displays be claimed by both, which is a
+    /// narrower form of the cross-screen contamination this file exists to
+    /// prevent.
     static func isWithinScreen(x: CGFloat, screenFrame: CGRect) -> Bool {
-        screenFrame.minX <= x && x <= screenFrame.maxX
+        screenFrame.minX <= x && x < screenFrame.maxX
     }
 
     /// Right edge of the frontmost application's menu bar menus (File,
@@ -234,8 +278,19 @@ struct MenuBarSpaceProbe: MenuBarSpaceProbing {
             return nil
         }
 
+        // Bound the whole loop, not just each message — see
+        // `axTotalBudgetSeconds`. A slow frontmost application must degrade
+        // to "unmeasurable", never to a multi-second main-thread stall.
+        let deadline = DispatchTime.now().uptimeNanoseconds
+            + UInt64(axTotalBudgetSeconds * 1_000_000_000)
         var maxX: CGFloat?
         for child in children {
+            guard DispatchTime.now().uptimeNanoseconds < deadline else {
+                // Out of budget with menus left unread. Any maxX gathered so
+                // far is an UNDER-estimate of the true right edge, which
+                // would overstate free space and under-collapse. Discard it.
+                return nil
+            }
             guard let frame = frame(of: child) else { continue }
             let rightEdge = frame.origin.x + frame.size.width
             maxX = maxX.map { Swift.max($0, rightEdge) } ?? rightEdge

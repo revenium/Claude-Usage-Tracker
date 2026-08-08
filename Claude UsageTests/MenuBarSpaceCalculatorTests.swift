@@ -23,15 +23,21 @@ final class MenuBarSpaceCalculatorTests: XCTestCase {
         freeWidth: CGFloat,
         ourItemWidths: [CGFloat],
         overflowItemWidth: CGFloat = 20,
-        appMenuMaxX: CGFloat = 0
+        appMenuMaxX: CGFloat = 0,
+        currentlyOnScreenWidth: CGFloat = 0
     ) -> MenuBarLayoutInput {
+        // `freeWidth` names the space genuinely free of OUR items, so the
+        // status region is placed as the window server would report it —
+        // pushed left by whatever we already occupy.
         MenuBarLayoutInput(
             appMenuMaxX: appMenuMaxX,
             statusRegionMinX: appMenuMaxX
                 + freeWidth
-                + MenuBarSpaceCalculator.gutter,
+                + MenuBarSpaceCalculator.gutter
+                - currentlyOnScreenWidth,
             ourItemWidths: ourItemWidths,
-            overflowItemWidth: overflowItemWidth
+            overflowItemWidth: overflowItemWidth,
+            currentlyOnScreenWidth: currentlyOnScreenWidth
         )
     }
 
@@ -246,5 +252,90 @@ final class MenuBarSpaceCalculatorTests: XCTestCase {
                     + "margin and must not change the collapsed count"
             )
         }
+    }
+
+    // MARK: - Self-inclusion of our own items (regression)
+
+    /// The status region's left edge is the leftmost status item on the
+    /// screen — and once we have rendered, that is one of OURS. Measuring
+    /// the gap after we are placed and then comparing our full width
+    /// against it subtracts our width twice.
+    ///
+    /// Measured on real hardware: the region's edge moved 1566 -> 1342
+    /// purely because this app rendered six items totalling ~224pt.
+    func testFreeWidthIsUnchangedByWhetherOurItemsAreAlreadyOnScreen() {
+        let widths: [CGFloat] = [100, 100, 100, 100, 100]
+
+        // Same physical situation, measured at two different moments:
+        // before we have rendered anything, and after all 500pt of us is up.
+        let beforeRendering = input(
+            freeWidth: 534,
+            ourItemWidths: widths,
+            currentlyOnScreenWidth: 0
+        )
+        let afterRendering = input(
+            freeWidth: 534,
+            ourItemWidths: widths,
+            currentlyOnScreenWidth: 500
+        )
+
+        let collapsedBefore = MenuBarSpaceCalculator.collapsedCount(
+            for: beforeRendering,
+            currentCollapsedCount: 0
+        )
+        let collapsedAfter = MenuBarSpaceCalculator.collapsedCount(
+            for: afterRendering,
+            currentCollapsedCount: 0
+        )
+
+        XCTAssertEqual(
+            collapsedBefore, 0,
+            "500pt of items fit in 534pt of genuinely free space"
+        )
+        XCTAssertEqual(
+            collapsedAfter, collapsedBefore,
+            """
+            The verdict must not depend on whether our items happened to be \
+            on screen when the measurement was taken. Without adding \
+            currentlyOnScreenWidth back, the region reads 500pt further \
+            left, the apparent free width collapses to 34pt, and 500pt of \
+            items 'no longer fit' — the double-count.
+            """
+        )
+    }
+
+    /// The feedback loop the invariant above forecloses: collapsing frees
+    /// space, which invites expanding, which consumes it again. Driving the
+    /// calculator from its own previous verdict must reach a fixed point.
+    func testRepeatedRecomputesFromOwnOutputReachAFixedPoint() {
+        let widths: [CGFloat] = [100, 100, 100, 100, 100]
+        var collapsed = 0
+
+        var seen: [Int] = []
+        for _ in 0..<8 {
+            // Only the items still individual are on screen; a collapsed
+            // group is one overflow item instead.
+            let individualCount = widths.count - collapsed
+            let onScreen = widths.prefix(individualCount).reduce(0, +)
+                + (collapsed > 0 ? 20 : 0)
+            collapsed = MenuBarSpaceCalculator.collapsedCount(
+                for: input(
+                    freeWidth: 534,
+                    ourItemWidths: widths,
+                    currentlyOnScreenWidth: onScreen
+                ),
+                currentCollapsedCount: collapsed
+            )
+            seen.append(collapsed)
+        }
+
+        XCTAssertEqual(
+            Set(seen.suffix(4)).count, 1,
+            "layout must settle, not oscillate; saw \(seen)"
+        )
+        XCTAssertEqual(
+            seen.last, 0,
+            "500pt fits in 534pt, so the fixed point is 'nothing collapsed'"
+        )
     }
 }

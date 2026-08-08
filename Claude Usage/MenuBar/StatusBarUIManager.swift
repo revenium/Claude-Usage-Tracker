@@ -798,9 +798,21 @@ final class StatusBarUIManager {
             }
             let overflowWidth = itemWidth(for: overflowStatusItem)
                 ?? Self.estimatedProfileItemWidth
+            // Only items ALREADY on the menu bar are baked into the status
+            // region the probe is about to measure, so only those are added
+            // back. `itemWidth(for:)` returning nil means "not rendered
+            // yet" — an estimate must NOT be substituted here, or we would
+            // credit ourselves space we do not occupy. See
+            // `MenuBarLayoutInput.currentlyOnScreenWidth`.
+            let currentlyOnScreenWidth =
+                multiProfileStatusItems.values
+                    .compactMap { itemWidth(for: $0) }
+                    .reduce(0, +)
+                + (itemWidth(for: overflowStatusItem) ?? 0)
             spaceInput = spaceProbe.makeLayoutInput(
                 ourItemWidths: ourItemWidths,
-                overflowItemWidth: overflowWidth
+                overflowItemWidth: overflowWidth,
+                currentlyOnScreenWidth: currentlyOnScreenWidth
             )
         } else {
             spaceInput = nil

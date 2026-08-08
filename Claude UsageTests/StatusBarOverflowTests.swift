@@ -26,16 +26,23 @@ final class StatusBarOverflowTests: HostedAppTestCase {
             appMenuMaxX: CGFloat, statusRegionMinX: CGFloat
         )?
 
+        /// The last `currentlyOnScreenWidth` the manager passed in, so tests
+        /// can assert it only ever credits us for items actually rendered.
+        private(set) var lastCurrentlyOnScreenWidth: CGFloat?
+
         func makeLayoutInput(
             ourItemWidths: [CGFloat],
-            overflowItemWidth: CGFloat
+            overflowItemWidth: CGFloat,
+            currentlyOnScreenWidth: CGFloat
         ) -> MenuBarLayoutInput? {
+            lastCurrentlyOnScreenWidth = currentlyOnScreenWidth
             guard let fixedMeasurement else { return nil }
             return MenuBarLayoutInput(
                 appMenuMaxX: fixedMeasurement.appMenuMaxX,
                 statusRegionMinX: fixedMeasurement.statusRegionMinX,
                 ourItemWidths: ourItemWidths,
-                overflowItemWidth: overflowItemWidth
+                overflowItemWidth: overflowItemWidth,
+                currentlyOnScreenWidth: currentlyOnScreenWidth
             )
         }
     }
@@ -267,7 +274,8 @@ final class StatusBarOverflowTests: HostedAppTestCase {
             appMenuMaxX: 0,
             statusRegionMinX: 108,
             ourItemWidths: Array(repeating: CGFloat(40), count: 5),
-            overflowItemWidth: 30
+            overflowItemWidth: 30,
+            currentlyOnScreenWidth: 0
         )
         // freeWidth = 108 - 0 - 8 (gutter) = 100; 5 * 40 = 200 does not fit.
         let plan = StatusBarUIManager.overflowPlan(

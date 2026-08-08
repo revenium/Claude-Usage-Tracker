@@ -26,30 +26,34 @@ import CoreGraphics
 ///   to its owning app, since macOS proxies every app's item through
 ///   Control Center, so this is a MINIMUM over all of them, not a sum of
 ///   "foreign" ones).
+///
+/// Critically, `statusRegionMinX` is measured AFTER our own items (if any
+/// already exist) are already on screen, so it already reflects their
+/// width having pushed the boundary left. `currentlyOnScreenWidth` is what
+/// lets `MenuBarSpaceCalculator` undo that: it's added back before
+/// `ourItemWidths`' full total is compared against the gap, so our own
+/// current footprint isn't subtracted from capacity twice — once by
+/// already being baked into the measured boundary, and again by being
+/// compared as if the boundary had never moved. See
+/// `MenuBarSpaceCalculator.freeWidth(for:)`.
 struct MenuBarLayoutInput: Equatable {
     /// Right edge (in the global menu-bar coordinate space) of the
     /// frontmost application's menu bar menus.
     let appMenuMaxX: CGFloat
     /// Left edge of the status item region on the screen that owns the
-    /// menu bar.
+    /// menu bar, as currently measured (i.e. with our own items, if any
+    /// are already on screen, already occupying part of that region).
     let statusRegionMinX: CGFloat
     /// Measured/estimated width of each of our own profile items, in the
     /// order they would be displayed.
     let ourItemWidths: [CGFloat]
     /// Width of the single "+N" overflow item, if one is rendered.
     let overflowItemWidth: CGFloat
-
-    init(
-        appMenuMaxX: CGFloat,
-        statusRegionMinX: CGFloat,
-        ourItemWidths: [CGFloat],
-        overflowItemWidth: CGFloat
-    ) {
-        self.appMenuMaxX = appMenuMaxX
-        self.statusRegionMinX = statusRegionMinX
-        self.ourItemWidths = ourItemWidths
-        self.overflowItemWidth = overflowItemWidth
-    }
+    /// Total width of our own items (profile items plus the overflow item,
+    /// whichever currently exist) that are ALREADY on screen right now,
+    /// and therefore already reflected in `statusRegionMinX`. Zero the
+    /// first time layout ever runs, when nothing of ours exists yet.
+    let currentlyOnScreenWidth: CGFloat
 }
 
 /// Pure decision logic for automatic (space-aware) menu bar overflow.
@@ -126,7 +130,15 @@ enum MenuBarSpaceCalculator {
     /// The exact gap available for our own items: everything between the
     /// frontmost app's menus and the status item region, minus the gutter.
     private static func freeWidth(for input: MenuBarLayoutInput) -> CGFloat {
-        input.statusRegionMinX - input.appMenuMaxX - gutter
+        // Adding our own on-screen width back reconstructs where the status
+        // region would start if we weren't there — the boundary that is
+        // actually foreign to us. Without it the gap is measured AFTER our
+        // items are placed, and then compared against their full width, so
+        // our width is subtracted twice: free space is understated by
+        // exactly `currentlyOnScreenWidth`, and collapsing frees space that
+        // invites expanding, which consumes it again.
+        input.statusRegionMinX + input.currentlyOnScreenWidth
+            - input.appMenuMaxX - gutter
     }
 
     private static func averageItemWidth(_ widths: [CGFloat]) -> CGFloat {

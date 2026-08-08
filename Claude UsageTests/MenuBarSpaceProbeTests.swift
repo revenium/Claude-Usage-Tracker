@@ -82,12 +82,22 @@ final class MenuBarSpaceProbeTests: XCTestCase {
         )
     }
 
-    func testIsWithinScreenAcceptsBothInclusiveBoundaries() {
+    /// Half-open, matching `screenFrame(containing:)`: a screen owns its
+    /// own `minX` but NOT its `maxX`, because that value is the adjacent
+    /// display's `minX`. This test previously asserted a closed upper bound,
+    /// which let an item on a shared seam be claimed by both screens — the
+    /// same cross-screen contamination this file exists to prevent, encoded
+    /// as an expectation.
+    func testIsWithinScreenOwnsItsMinXButNotItsMaxX() {
         XCTAssertTrue(
             MenuBarSpaceProbe.isWithinScreen(x: 0, screenFrame: origin)
         )
+        XCTAssertFalse(
+            MenuBarSpaceProbe.isWithinScreen(x: 2560, screenFrame: origin),
+            "2560 is the right-hand display's minX, not this screen's"
+        )
         XCTAssertTrue(
-            MenuBarSpaceProbe.isWithinScreen(x: 2560, screenFrame: origin)
+            MenuBarSpaceProbe.isWithinScreen(x: 2559, screenFrame: origin)
         )
     }
 
@@ -233,5 +243,112 @@ final class MenuBarSpaceProbeTests: XCTestCase {
             originStatusItemsAnchorX - appMenuMaxX
                 - MenuBarSpaceCalculator.gutter
         XCTAssertEqual(freeWidth, 1372)
+    }
+
+    // MARK: - Shared-boundary ownership (regression)
+
+    /// `screenFrame(containing:)` and `isWithinScreen` answer the same
+    /// question — "which screen owns this x?" — so they must agree on which
+    /// side owns a seam. `isWithinScreen` used a closed upper bound while
+    /// `screenFrame(containing:)` used a half-open one, so an item sitting
+    /// exactly on the boundary between two contiguous displays was claimed
+    /// by both, contaminating the adjacent screen's minimum.
+    func testStatusItemOnAScreenSeamIsOwnedByExactlyOneScreen() {
+        let left = CGRect(x: 0, y: 0, width: 1440, height: 900)
+        let right = CGRect(x: 1440, y: 0, width: 1440, height: 900)
+        let seam: CGFloat = 1440
+
+        let ownedByLeft = MenuBarSpaceProbe.isWithinScreen(
+            x: seam, screenFrame: left
+        )
+        let ownedByRight = MenuBarSpaceProbe.isWithinScreen(
+            x: seam, screenFrame: right
+        )
+
+        XCTAssertFalse(
+            ownedByLeft && ownedByRight,
+            "a status item at x=\(seam) must not belong to both displays"
+        )
+        XCTAssertTrue(
+            ownedByRight,
+            "half-open bounds give the seam to the screen that starts there"
+        )
+    }
+
+    /// The two screen-membership tests must use the same convention, or the
+    /// screen chosen for the AX measurement and the screen scanned for
+    /// status items can disagree at the boundary.
+    func testBothScreenMembershipTestsAgreeAtEveryBoundary() {
+        let frames = [
+            CGRect(x: 0, y: 0, width: 1440, height: 900),
+            CGRect(x: 1440, y: 0, width: 1440, height: 900)
+        ]
+        for x in [CGFloat(0), 1439, 1440, 2879, 2880] {
+            let chosen = MenuBarSpaceProbe.screenFrame(
+                containing: x, screenFrames: frames
+            )
+            let matching = frames.filter {
+                MenuBarSpaceProbe.isWithinScreen(x: x, screenFrame: $0)
+            }
+            XCTAssertEqual(
+                matching.count, chosen == nil ? 0 : 1,
+                "x=\(x): screenFrame(containing:) and isWithinScreen "
+                    + "disagree on how many screens own this coordinate"
+            )
+            if let chosen {
+                XCTAssertEqual(matching.first, chosen, "x=\(x)")
+            }
+        }
+    }
+
+    // MARK: - Ambiguous (stacked/overlapping) arrangements
+
+    /// Vertically stacked displays share an x-range, so x alone cannot say
+    /// which one the menu bar is on. Picking either would resurrect the
+    /// cross-display mismatch; declining to measure makes the caller show
+    /// every profile its own item instead of acting on a wrong number.
+    func testOverlappingScreensYieldNoMeasurementRatherThanAGuess() {
+        let bottom = CGRect(x: 0, y: 0, width: 2560, height: 1440)
+        let stackedAbove = CGRect(x: 0, y: 1440, width: 2560, height: 1440)
+
+        XCTAssertNil(
+            MenuBarSpaceProbe.screenFrame(
+                containing: 234,
+                screenFrames: [bottom, stackedAbove]
+            ),
+            """
+            Two screens share this x-range, so the measurement is \
+            ambiguous and must be refused rather than resolved by \
+            picking whichever came first.
+            """
+        )
+    }
+
+    /// The side-by-side case must keep working — refusing ambiguity must not
+    /// refuse ordinary arrangements. These are this machine's real frames.
+    func testSideBySideScreensStillResolveUnambiguously() {
+        let frames = [
+            CGRect(x: 0, y: 0, width: 2560, height: 1440),
+            CGRect(x: 2560, y: 0, width: 2560, height: 1440),
+            CGRect(x: -2560, y: 0, width: 2560, height: 1440)
+        ]
+        XCTAssertEqual(
+            MenuBarSpaceProbe.screenFrame(
+                containing: 234, screenFrames: frames
+            ),
+            frames[0]
+        )
+        XCTAssertEqual(
+            MenuBarSpaceProbe.screenFrame(
+                containing: 2984, screenFrames: frames
+            ),
+            frames[1]
+        )
+        XCTAssertEqual(
+            MenuBarSpaceProbe.screenFrame(
+                containing: -1932, screenFrames: frames
+            ),
+            frames[2]
+        )
     }
 }
