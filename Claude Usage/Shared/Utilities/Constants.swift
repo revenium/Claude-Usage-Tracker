@@ -33,6 +33,11 @@ enum Constants {
         static let menuBarIconStyle = "menuBarIconStyle"
         static let monochromeMode = "monochromeMode"
 
+        // Menu bar overflow ("+N" item) behavior
+        static let menuBarOverflowMode = "menuBarOverflowMode"
+        static let menuBarOverflowAfterCountThreshold =
+            "menuBarOverflowAfterCountThreshold"
+
         // Menu bar icon configuration (new multi-metric system)
         static let menuBarIconConfiguration = "menuBarIconConfiguration"
         static let showIconNames = "showIconNames"

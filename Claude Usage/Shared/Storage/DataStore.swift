@@ -151,6 +151,67 @@ class DataStore: StorageProvider {
         )
     }
 
+    /// Saves the menu bar overflow ("+N" item) mode.
+    func saveMenuBarOverflowMode(_ mode: MenuBarOverflowMode) {
+        defaults.set(
+            mode.storageKind.rawValue,
+            forKey: Constants.UserDefaultsKeys.menuBarOverflowMode
+        )
+        if case .afterCount(let count) = mode {
+            defaults.set(
+                count,
+                forKey: Constants.UserDefaultsKeys
+                    .menuBarOverflowAfterCountThreshold
+            )
+        }
+    }
+
+    /// Loads the menu bar overflow mode, the single source of truth for
+    /// "how do excess profiles collapse into an overflow item".
+    func loadMenuBarOverflowMode() -> MenuBarOverflowMode {
+        Self.menuBarOverflowMode(in: defaults)
+    }
+
+    /// Shared overflow-mode read, parameterized by `UserDefaults` so callers
+    /// that inject a test suite (rather than reaching for the singleton) get
+    /// identical semantics.
+    ///
+    /// Absence means `.automatic`, not the fixed-threshold behavior this app
+    /// shipped with before this setting existed. No installation predating
+    /// this feature has ever written `menuBarOverflowMode`, and
+    /// `UserDefaults.string(forKey:)` already returns `nil` (rather than
+    /// some ambiguous zero value) for a missing key, so a plain
+    /// `String`-keyed lookup is naturally safe here — unlike the
+    /// `Bool`/`Int` case `masterSwitchEnabled(in:)` guards against, a
+    /// missing string key can't be confused with a stored one.
+    static func menuBarOverflowMode(
+        in defaults: UserDefaults
+    ) -> MenuBarOverflowMode {
+        guard let rawKind = defaults.string(
+                forKey: Constants.UserDefaultsKeys.menuBarOverflowMode
+              ),
+              let kind = MenuBarOverflowMode.StorageKind(rawValue: rawKind)
+        else {
+            return .automatic
+        }
+        switch kind {
+        case .automatic:
+            return .automatic
+        case .never:
+            return .never
+        case .afterCount:
+            let stored = defaults.integer(
+                forKey: Constants.UserDefaultsKeys
+                    .menuBarOverflowAfterCountThreshold
+            )
+            return .afterCount(
+                stored > 0
+                    ? stored
+                    : MenuBarOverflowMode.defaultAfterCountThreshold
+            )
+        }
+    }
+
     /// Saves refresh interval
     func saveRefreshInterval(_ interval: TimeInterval) {
         defaults.set(interval, forKey: Constants.UserDefaultsKeys.refreshInterval)
