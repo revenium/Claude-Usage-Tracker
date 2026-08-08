@@ -1467,7 +1467,13 @@ class MenuBarManager: NSObject, ObservableObject {
         settingsController = nil
         settingsWindow = nil
         statusItem = nil
-        statusBarUIManager?.cleanup()
+        // `cleanupResources()` only ever runs on the application-termination
+        // path (from `cleanup()`/`cleanupAndWaitForTermination()`, called
+        // from `applicationShouldTerminate`/`applicationWillTerminate`), so
+        // this is the one call site that must NOT discard AppKit's
+        // persisted menu bar positions — see the doc comment on
+        // `StatusBarUIManager.cleanup(isApplicationTerminating:)`.
+        statusBarUIManager?.cleanup(isApplicationTerminating: true)
         statusBarUIManager = nil
         contextMenuTarget = nil
         currentPopoverTarget = nil

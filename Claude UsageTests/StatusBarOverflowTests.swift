@@ -605,4 +605,252 @@ final class StatusBarOverflowTests: HostedAppTestCase {
             XCTAssertNotNil(manager.button(for: profile.id))
         }
     }
+
+    // MARK: - Preserving menu bar positions (not destroying items that may
+    // come back)
+    //
+    // `StatusBarUIManager.cleanup()` used to call `removeStatusItem` on
+    // every item unconditionally, including on the application-termination
+    // path — which discards AppKit's persisted
+    // `"NSStatusItem Preferred Position <autosaveName>"` entry for that item
+    // and is why every menu bar manager (Bartender/Ice/Thaw) arrangement was
+    // lost on every app restart. AppKit's actual persistence behavior can't
+    // be exercised from a unit test (see the doc comment on
+    // `cleanup(isApplicationTerminating:)`), so these tests instead cover
+    // the decisions the fix is built from: which items get
+    // `removeStatusItem` at all, and — since keeping a collapsed-into-
+    // overflow item alive-but-hidden only pays off if it doesn't silently
+    // reappear in width or lookup calculations — that a hidden item behaves
+    // exactly like a removed one everywhere except AppKit's own bookkeeping.
+
+    func testShouldRemoveStatusItemIsFalseOnlyWhenApplicationIsTerminating() {
+        XCTAssertFalse(
+            StatusBarUIManager.shouldRemoveStatusItem(
+                isApplicationTerminating: true
+            ),
+            "the app-quit path must never call removeStatusItem — doing so "
+                + "discards AppKit's persisted menu bar position"
+        )
+        XCTAssertTrue(
+            StatusBarUIManager.shouldRemoveStatusItem(
+                isApplicationTerminating: false
+            ),
+            "every other teardown (config reload, display-mode switch, "
+                + "multi-profile setup) is a genuine removal and must keep "
+                + "removing items as before"
+        )
+    }
+
+    func testReconcileMultiProfileItemsRemovesOnlyDeselectedProfiles() {
+        let stillHere = UUID()
+        let collapsedIntoOverflow = UUID()
+        let deselected = UUID()
+        let brandNew = UUID()
+
+        let result = StatusBarUIManager.reconcileMultiProfileItems(
+            currentIDs: [stillHere, collapsedIntoOverflow, deselected],
+            stillSelectedIDs: [stillHere, collapsedIntoOverflow, brandNew]
+        )
+
+        XCTAssertEqual(
+            result.idsToRemove,
+            [deselected],
+            "only a profile absent from stillSelectedIDs — genuinely "
+                + "deselected or deleted — may be removed; a profile that "
+                + "merely crossed into overflow is still selected and must "
+                + "not be marked for removal"
+        )
+        XCTAssertEqual(result.idsToAdd, [brandNew])
+    }
+
+    func testReconcileMultiProfileItemsRemovesNothingWhenEveryProfileStaysSelected() {
+        let a = UUID()
+        let b = UUID()
+        let result = StatusBarUIManager.reconcileMultiProfileItems(
+            currentIDs: [a, b],
+            stillSelectedIDs: [a, b]
+        )
+        XCTAssertTrue(result.idsToRemove.isEmpty)
+        XCTAssertTrue(result.idsToAdd.isEmpty)
+    }
+
+    func testUpdateMultiProfileConfigurationHidesRatherThanRemovesAProfileThatCollapsesIntoOverflow() {
+        let manager = retain(StatusBarUIManager())
+        defer { manager.cleanup() }
+        manager.overflowMode = .afterCount(4)
+        let target = MenuTarget()
+        let action = #selector(MenuTarget.toggle)
+
+        let individual = makeProfiles(3)
+        manager.setupMultiProfile(
+            profiles: individual,
+            target: target,
+            action: action
+        )
+        for profile in individual {
+            XCTAssertNotNil(manager.button(for: profile.id))
+        }
+        let originalIdentities = individual.map {
+            manager.multiProfileItemIdentityForTesting($0.id)
+        }
+        XCTAssertTrue(originalIdentities.allSatisfy { $0 != nil })
+
+        // Add 4 more profiles. With threshold 4, only the first 3 (the
+        // original set, unchanged) stay individual; the 4 new ones collapse
+        // into overflow.
+        let overflowed = makeProfiles(4)
+        manager.updateMultiProfileConfiguration(
+            profiles: individual + overflowed,
+            target: target,
+            action: action
+        )
+
+        for profile in individual {
+            XCTAssertNotNil(
+                manager.button(for: profile.id),
+                "\(profile.name) must remain individually visible"
+            )
+        }
+        XCTAssertEqual(
+            individual.map { manager.multiProfileItemIdentityForTesting($0.id) },
+            originalIdentities,
+            "profiles that stay individual must keep their original "
+                + "NSStatusItem — not be torn down and recreated"
+        )
+        for profile in overflowed {
+            XCTAssertNil(
+                manager.button(for: profile.id),
+                "\(profile.name) collapsed into overflow has no visible "
+                    + "button"
+            )
+            XCTAssertNotNil(
+                manager.multiProfileItemIdentityForTesting(profile.id),
+                "\(profile.name)'s item must still exist, hidden, rather "
+                    + "than being removed — it may become individual again"
+            )
+        }
+
+        // Switch to `.never` so every profile — including the 4 that were
+        // overflowed — becomes individual again, and must reuse the SAME
+        // item it was hidden behind rather than a freshly created one.
+        let hiddenIdentitiesBeforeReturn = overflowed.map {
+            manager.multiProfileItemIdentityForTesting($0.id)
+        }
+        manager.overflowMode = .never
+        manager.updateMultiProfileConfiguration(
+            profiles: individual + overflowed,
+            target: target,
+            action: action
+        )
+        for profile in overflowed {
+            XCTAssertNotNil(
+                manager.button(for: profile.id),
+                "\(profile.name) must become visible again once it's no "
+                    + "longer overflowed"
+            )
+        }
+        XCTAssertEqual(
+            overflowed.map { manager.multiProfileItemIdentityForTesting($0.id) },
+            hiddenIdentitiesBeforeReturn,
+            "a profile returning from overflow must reuse the item it was "
+                + "hidden behind, not a new one with a new window ID"
+        )
+    }
+
+    func testUpdateOverflowItemReusesTheSameItemAcrossEmptyAndNonEmptyCycles() {
+        let manager = retain(StatusBarUIManager())
+        defer { manager.cleanup() }
+        let target = MenuTarget()
+        let action = #selector(MenuTarget.toggle)
+
+        manager.setupMultiProfile(
+            profiles: makeProfiles(7),
+            target: target,
+            action: action
+        )
+        let originalIdentity = manager.overflowItemIdentityForTesting
+        XCTAssertNotNil(originalIdentity)
+        XCTAssertNotNil(manager.overflowButton)
+
+        // Shrink under the threshold: overflow empties out.
+        manager.updateMultiProfileConfiguration(
+            profiles: makeProfiles(2),
+            target: target,
+            action: action
+        )
+        XCTAssertNil(
+            manager.overflowButton,
+            "no overflow currently needed must look identical to callers, "
+                + "whether or not the item survives underneath"
+        )
+        XCTAssertEqual(
+            manager.overflowItemIdentityForTesting,
+            originalIdentity,
+            "the overflow item must be hidden, not removed, when it "
+                + "empties out — it routinely refills again"
+        )
+
+        // Grow back past the threshold: overflow reappears and must be the
+        // same item, not a freshly created one.
+        manager.updateMultiProfileConfiguration(
+            profiles: makeProfiles(7),
+            target: target,
+            action: action
+        )
+        XCTAssertNotNil(manager.overflowButton)
+        XCTAssertEqual(
+            manager.overflowItemIdentityForTesting,
+            originalIdentity,
+            "reappearing overflow must reuse the original item, preserving "
+                + "its AppKit-persisted menu bar position"
+        )
+    }
+
+    func testMultiProfileItemHiddenBehindOverflowContributesNoWidth() {
+        let manager = retain(StatusBarUIManager())
+        defer { manager.cleanup() }
+        manager.overflowMode = .afterCount(4)
+        let target = MenuTarget()
+        let action = #selector(MenuTarget.toggle)
+        let config = MultiProfileDisplayConfig()
+
+        let individual = makeProfiles(3)
+        manager.setupMultiProfile(
+            profiles: individual,
+            target: target,
+            action: action
+        )
+        // Paint real images so `itemWidth(for:)` has non-zero content to
+        // fall back to even without a laid-out AppKit window (this test
+        // process's status items are not necessarily on screen).
+        manager.updateMultiProfileButtons(profiles: individual, config: config)
+        let widthWithThreeVisible =
+            manager.multiProfileItemsOnScreenWidthForTesting
+        XCTAssertGreaterThan(
+            widthWithThreeVisible,
+            0,
+            "3 rendered, visible individual items must contribute non-zero "
+                + "width"
+        )
+
+        let overflowed = makeProfiles(4)
+        let grown = individual + overflowed
+        manager.updateMultiProfileConfiguration(
+            profiles: grown,
+            target: target,
+            action: action
+        )
+        // Render the newly-added (hidden) items too, so a bug that credits
+        // them width can't hide behind "well, they were never painted".
+        manager.updateMultiProfileButtons(profiles: grown, config: config)
+
+        XCTAssertEqual(
+            manager.multiProfileItemsOnScreenWidthForTesting,
+            widthWithThreeVisible,
+            accuracy: 0.01,
+            "profiles collapsed into overflow are kept alive but hidden; "
+                + "they must contribute exactly zero width, the same as if "
+                + "they had been removed outright"
+        )
+    }
 }

@@ -596,11 +596,66 @@ final class StatusBarUIManager {
         }
     }
 
-    func cleanup() {
+    /// The overflow item's own identity, independent of its current
+    /// visibility (unlike `overflowButton`, which is `nil` while hidden).
+    /// Exposed so a test can confirm an empty-then-non-empty overflow cycle
+    /// reuses the SAME `NSStatusItem` (see `updateOverflowItem`) rather than
+    /// emptying it out and recreating a new one with a fresh AppKit window
+    /// ID — the exact churn `MenuBarManager.swift:1579` warns defeats a menu
+    /// bar manager's tracking.
+    var overflowItemIdentityForTesting: ObjectIdentifier? {
+        overflowStatusItem.map(ObjectIdentifier.init)
+    }
+
+    /// A tracked multi-profile item's identity, independent of whether it is
+    /// currently individual or collapsed into overflow (unlike
+    /// `button(for:)`, which is `nil` while hidden). Exposed for the same
+    /// reason as `overflowItemIdentityForTesting`: confirming a profile that
+    /// crosses the overflow boundary and back keeps its original item.
+    func multiProfileItemIdentityForTesting(
+        _ profileID: UUID
+    ) -> ObjectIdentifier? {
+        multiProfileStatusItems[profileID].map(ObjectIdentifier.init)
+    }
+
+    /// Whether `cleanup(isApplicationTerminating:)` should hand a given item
+    /// to `NSStatusBar.removeStatusItem(_:)` during teardown. Pulled out as
+    /// its own pure function — rather than three duplicated
+    /// `if !isApplicationTerminating` checks — so the one decision that
+    /// actually matters here (termination teardown vs. a genuine removal)
+    /// has a single, directly testable source of truth.
+    static func shouldRemoveStatusItem(isApplicationTerminating: Bool) -> Bool {
+        !isApplicationTerminating
+    }
+
+    /// Tears down every status item this manager owns.
+    ///
+    /// - Parameter isApplicationTerminating: When `true` (the app-quit
+    ///   path), every item's button wiring is released and our own
+    ///   bookkeeping is cleared, but `NSStatusBar.removeStatusItem(_:)` is
+    ///   deliberately NOT called. Removing an item discards AppKit's
+    ///   persisted `"NSStatusItem Preferred Position <autosaveName>"` entry
+    ///   for it — proven experimentally: injecting that key and relaunching
+    ///   survives untouched, but injecting it and then quitting cleanly
+    ///   deletes it. Every other menu bar app on the same machine (Alfred,
+    ///   VLC, Claude Desktop, Notion, Duplicacy) has exactly one such key and
+    ///   never calls `removeStatusItem` on quit — the item simply vanishes
+    ///   when the process exits, and AppKit still has the position on next
+    ///   launch. Calling `removeStatusItem` here was silently wiping every
+    ///   user's menu bar arrangement (as tracked by Bartender/Ice/Thaw) on
+    ///   every restart. Defaults to `false` so every other caller (config
+    ///   reload, display-mode switch, multi-profile setup) keeps today's
+    ///   full teardown-and-rebuild behavior — those are genuine removals,
+    ///   not a process exit.
+    func cleanup(isApplicationTerminating: Bool = false) {
         appearanceObservers.forEach { $0.invalidate() }
         appearanceObservers.removeAll()
         appearanceDebounceTimer?.invalidate()
         appearanceDebounceTimer = nil
+
+        let shouldRemove = Self.shouldRemoveStatusItem(
+            isApplicationTerminating: isApplicationTerminating
+        )
 
         // Clean up single profile status items
         for (_, statusItem) in statusItems {
@@ -610,8 +665,11 @@ final class StatusBarUIManager {
                 button.action = nil
                 button.target = nil
             }
-            // Then remove from status bar
-            NSStatusBar.system.removeStatusItem(statusItem)
+            // Then remove from status bar — unless the app is quitting; see
+            // the doc comment above.
+            if shouldRemove {
+                NSStatusBar.system.removeStatusItem(statusItem)
+            }
         }
         statusItems.removeAll()
         singleMetricOrder.removeAll()
@@ -624,7 +682,9 @@ final class StatusBarUIManager {
                 button.action = nil
                 button.target = nil
             }
-            NSStatusBar.system.removeStatusItem(statusItem)
+            if shouldRemove {
+                NSStatusBar.system.removeStatusItem(statusItem)
+            }
         }
         multiProfileStatusItems.removeAll()
 
@@ -636,14 +696,21 @@ final class StatusBarUIManager {
                 button.action = nil
                 button.target = nil
             }
-            NSStatusBar.system.removeStatusItem(overflowItem)
+            if shouldRemove {
+                NSStatusBar.system.removeStatusItem(overflowItem)
+            }
         }
         overflowStatusItem = nil
         overflowProfileIDs.removeAll()
 
         isMultiProfileMode = false
 
-        LoggingService.shared.logUIEvent("Status bar cleaned up")
+        LoggingService.shared.logUIEvent(
+            isApplicationTerminating
+                ? "Status bar torn down for app termination "
+                    + "(menu bar positions preserved)"
+                : "Status bar cleaned up"
+        )
     }
 
     // MARK: - Multi-Profile Mode
@@ -731,6 +798,36 @@ final class StatusBarUIManager {
         observeAppearanceChanges()
     }
 
+    /// Pure reconciliation decision behind `updateMultiProfileConfiguration`:
+    /// which profile IDs' status items must be fully removed vs. created,
+    /// given which profiles are still selected for display at all versus
+    /// which currently land in the individual (non-overflow) half of the
+    /// plan. Isolated from any `NSStatusItem`/`NSStatusBar` call so the
+    /// removal-vs-keep-alive decision — the crux of not destroying a saved
+    /// menu bar position — can be unit tested without a real status bar.
+    ///
+    /// A profile ID present in `currentIDs` but absent from
+    /// `stillSelectedIDs` is a genuine removal (the user deselected or
+    /// deleted that profile) and gets `removeStatusItem`. A profile ID that
+    /// remains in `stillSelectedIDs` but crosses into or out of
+    /// `individualIDs` (the overflow boundary moving as counts or available
+    /// space change) is NOT a removal at all — its existing item is kept and
+    /// only hidden/shown, exactly like the overflow item itself.
+    struct MultiProfileItemReconciliation: Equatable {
+        let idsToRemove: Set<UUID>
+        let idsToAdd: Set<UUID>
+    }
+
+    static func reconcileMultiProfileItems(
+        currentIDs: Set<UUID>,
+        stillSelectedIDs: Set<UUID>
+    ) -> MultiProfileItemReconciliation {
+        MultiProfileItemReconciliation(
+            idsToRemove: currentIDs.subtracting(stillSelectedIDs),
+            idsToAdd: stillSelectedIDs.subtracting(currentIDs)
+        )
+    }
+
     /// Updates the selected multi-profile status items without recreating retained items.
     /// This preserves macOS item identity and the ordering remembered by menu-bar tools.
     func updateMultiProfileConfiguration(profiles: [Profile], target: AnyObject, action: Selector) {
@@ -743,13 +840,26 @@ final class StatusBarUIManager {
             $0.isSelectedForDisplay && !$0.deletionInProgress
         }
         let plan = currentOverflowPlan(for: selectedProfiles)
-        let desiredIDs: Set<UUID> = selectedProfiles.isEmpty
+        let individualIDs = Set(plan.individual.map(\.id))
+        // Every still-selected profile keeps an item alive — visible or
+        // hidden behind the overflow badge — across this update; only a
+        // profile no longer selected at all loses its item. A profile
+        // crosses between individual and overflow on almost every
+        // recompute as counts or available space change, and recreating the
+        // item on every crossing would both discard its AppKit-persisted
+        // position (see `cleanup()`) and mint a new window ID that defeats
+        // a menu bar manager's tracking of it (see the note at
+        // `MenuBarManager.swift:1579`).
+        let stillSelectedIDs: Set<UUID> = selectedProfiles.isEmpty
             ? [Self.multiProfileDefaultPlaceholderID]
-            : Set(plan.individual.map(\.id))
+            : Set(selectedProfiles.map(\.id))
         let currentIDs = Set(multiProfileStatusItems.keys)
+        let reconciliation = Self.reconcileMultiProfileItems(
+            currentIDs: currentIDs,
+            stillSelectedIDs: stillSelectedIDs
+        )
 
-        let idsToRemove = currentIDs.subtracting(desiredIDs)
-        for profileID in idsToRemove {
+        for profileID in reconciliation.idsToRemove {
             if let statusItem = multiProfileStatusItems.removeValue(forKey: profileID) {
                 if let button = statusItem.button {
                     lastImageData.removeValue(forKey: ObjectIdentifier(button))
@@ -765,8 +875,8 @@ final class StatusBarUIManager {
             }
         }
 
-        let idsToAdd = desiredIDs.subtracting(currentIDs)
-        if selectedProfiles.isEmpty, idsToAdd.contains(Self.multiProfileDefaultPlaceholderID) {
+        if selectedProfiles.isEmpty,
+           reconciliation.idsToAdd.contains(Self.multiProfileDefaultPlaceholderID) {
             let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
             statusItem.autosaveName = "claude-usage-tracker.multi.default"
             statusItem.isVisible = true
@@ -782,10 +892,14 @@ final class StatusBarUIManager {
             LoggingService.shared.logUIEvent("Multi-profile: Added default logo status item")
         } else {
             // Preserve profile order for first-time additions while retaining existing item identity.
-            for profile in plan.individual where idsToAdd.contains(profile.id) {
+            for profile in selectedProfiles
+            where reconciliation.idsToAdd.contains(profile.id) {
                 let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
                 statusItem.autosaveName = "claude-usage-tracker.profile.\(profile.id.uuidString)"
-                statusItem.isVisible = true
+                // Start in the correct visibility immediately rather than
+                // visible-then-hidden, in case this brand-new profile lands
+                // straight in overflow (e.g. several profiles added at once).
+                statusItem.isVisible = individualIDs.contains(profile.id)
                 if let button = statusItem.button {
                     Self.configureActionButton(
                         button,
@@ -807,6 +921,16 @@ final class StatusBarUIManager {
             }
         }
 
+        // A profile already tracked here may have crossed between the
+        // individual and overflow halves of the plan since the last
+        // update; toggle visibility rather than recreate the item. The
+        // placeholder item has no overflow concept at all and must stay
+        // visible.
+        for (profileID, item) in multiProfileStatusItems
+        where profileID != Self.multiProfileDefaultPlaceholderID {
+            item.isVisible = individualIDs.contains(profileID)
+        }
+
         updateOverflowItem(
             for: plan.overflow,
             target: target,
@@ -814,7 +938,9 @@ final class StatusBarUIManager {
         )
 
         LoggingService.shared.logUIEvent(
-            "Multi-profile config updated: removed=\(idsToRemove.count), added=\(idsToAdd.count), kept=\(currentIDs.intersection(desiredIDs).count)"
+            "Multi-profile config updated: removed=\(reconciliation.idsToRemove.count), "
+                + "added=\(reconciliation.idsToAdd.count), "
+                + "kept=\(currentIDs.intersection(stillSelectedIDs).count)"
         )
     }
 
@@ -913,9 +1039,19 @@ final class StatusBarUIManager {
     /// image's width as a fallback for the brief window before AppKit
     /// finishes laying the button's own window out. `nil` when neither is
     /// available (most commonly: `item` is `nil`, because no status item
-    /// has been created yet for that profile).
+    /// has been created yet for that profile) — or when `item` exists but
+    /// is hidden (`isVisible == false`), which now happens when a profile
+    /// has collapsed into the overflow item, or the overflow item itself
+    /// currently has nothing to show: such an item is kept alive (rather
+    /// than removed) so its AppKit-persisted menu bar position survives the
+    /// round trip, but it occupies zero menu bar space, so it must not be
+    /// credited any width here. This is checked explicitly rather than
+    /// assumed from `window.frame.width` collapsing to zero on hide, since
+    /// that AppKit behavior isn't something a unit test can verify.
     private func itemWidth(for item: NSStatusItem?) -> CGFloat? {
-        guard let button = item?.button else { return nil }
+        guard let item, item.isVisible, let button = item.button else {
+            return nil
+        }
         if let window = button.window, window.frame.width > 0 {
             return window.frame.width
         }
@@ -923,6 +1059,18 @@ final class StatusBarUIManager {
             return image.size.width
         }
         return nil
+    }
+
+    /// Sum of `itemWidth(for:)` over every tracked multi-profile item,
+    /// including ones currently hidden behind the overflow item. Exposed
+    /// only for testing the invariant `currentOverflowPlan` depends on: a
+    /// profile that has collapsed into overflow keeps its `NSStatusItem`
+    /// alive (see `updateMultiProfileConfiguration`) but must contribute
+    /// exactly zero width here, the same as if it had been removed outright.
+    var multiProfileItemsOnScreenWidthForTesting: CGFloat {
+        multiProfileStatusItems.values
+            .compactMap { itemWidth(for: $0) }
+            .reduce(0, +)
     }
 
     /// Difference between a status item button's window width and the width
@@ -987,28 +1135,31 @@ final class StatusBarUIManager {
         action: Selector
     ) {
         guard !overflowProfiles.isEmpty else {
-            guard let item = overflowStatusItem else {
-                overflowProfileIDs = []
+            overflowProfileIDs = []
+            // Hide rather than remove: the overflow item routinely empties
+            // out and refills again (a profile gets deselected, an
+            // automatic-mode space measurement changes, ...), and
+            // `removeStatusItem` would both discard its AppKit-persisted
+            // menu bar position (see `cleanup()`) and force a new window ID
+            // on the next recreation, defeating a menu bar manager's
+            // tracking of it exactly like the case described at
+            // `MenuBarManager.swift:1579`. A hidden item occupies no menu
+            // bar space, so leaving it in place costs nothing.
+            guard let item = overflowStatusItem, item.isVisible else {
                 return
             }
-            if let button = item.button {
-                lastImageData.removeValue(forKey: ObjectIdentifier(button))
-                button.image = nil
-                button.action = nil
-                button.target = nil
-            }
-            NSStatusBar.system.removeStatusItem(item)
-            overflowStatusItem = nil
-            overflowProfileIDs = []
+            item.isVisible = false
             LoggingService.shared.logUIEvent(
-                "Multi-profile: Removed overflow status item"
+                "Multi-profile: Hid overflow status item (nothing to show)"
             )
             return
         }
 
         overflowProfileIDs = overflowProfiles.map(\.id)
 
-        if overflowStatusItem == nil {
+        if let item = overflowStatusItem {
+            item.isVisible = true
+        } else {
             let item = NSStatusBar.system.statusItem(
                 withLength: NSStatusItem.variableLength
             )
@@ -1091,10 +1242,18 @@ final class StatusBarUIManager {
         return overflowStatusItem?.button === sender
     }
 
-    /// The overflow status item's button, if it currently exists (used to
-    /// position the overflow profile list popover).
+    /// The overflow status item's button, if it currently has anything to
+    /// show (used to position the overflow profile list popover). The item
+    /// itself may still exist hidden behind the scenes — see
+    /// `updateOverflowItem(for:target:action:)` — so this checks `isVisible`
+    /// rather than nilness to keep "no overflow right now" indistinguishable
+    /// from callers' perspective, whether or not the underlying item was
+    /// kept alive to preserve its menu bar position.
     var overflowButton: NSStatusBarButton? {
-        overflowStatusItem?.button
+        guard let overflowStatusItem, overflowStatusItem.isVisible else {
+            return nil
+        }
+        return overflowStatusItem.button
     }
 
     /// Adds a thin green underline to an image to indicate the active profile.
@@ -1626,9 +1785,17 @@ final class StatusBarUIManager {
         return false
     }
 
-    /// Get button for a specific profile (multi-profile mode)
+    /// Get button for a specific profile (multi-profile mode). `nil` both
+    /// when no item exists for this profile and when one exists but is
+    /// currently hidden behind the overflow item (see
+    /// `updateMultiProfileConfiguration`) — either way, there's no button on
+    /// screen right now to anchor a click or a popover to.
     func button(for profileId: UUID) -> NSStatusBarButton? {
-        return multiProfileStatusItems[profileId]?.button
+        guard let item = multiProfileStatusItems[profileId], item.isVisible
+        else {
+            return nil
+        }
+        return item.button
     }
 
     /// Find which profile ID owns the given button (multi-profile mode)
