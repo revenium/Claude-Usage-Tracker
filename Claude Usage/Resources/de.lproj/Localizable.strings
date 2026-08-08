@@ -512,6 +512,7 @@
 "multiprofile.overflow.after_count" = "Wenn mehr als";
 "multiprofile.overflow.after_count_suffix" = "angezeigt werden";
 "multiprofile.overflow.accessibility_hint" = "Der automatische Modus misst den freien Platz in der Menüleiste und benötigt dafür Bedienungshilfen-Zugriff.";
+"multiprofile.overflow.manager_detected_hint" = "%@ verwaltet deine Menüleiste bereits, daher fasst der automatische Modus keine Profile zusammen.";
 "multiprofile.overflow.accessibility_grant_button" = "Bedienungshilfen-Zugriff erteilen …";
 
 /* ==================== */

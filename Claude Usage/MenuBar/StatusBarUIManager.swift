@@ -65,11 +65,22 @@ final class StatusBarUIManager {
     /// other two modes. A `nil` `spaceInput` in `.automatic` mode (no screen
     /// available to measure against) falls back to never collapsing, rather
     /// than guessing — the manual modes exist for exactly this situation.
+    ///
+    /// `runningBundleIdentifiers` guards `.automatic` the same way: when it
+    /// contains a known menu bar manager (Ice, Thaw, Bartender, ...) per
+    /// `MenuBarManagerDetection`, every profile keeps its own item
+    /// regardless of `spaceInput`. A manager already reserves an expandable
+    /// region for exactly this overflow problem — the free-space
+    /// measurement being near zero is correct, not a bug, and collapsing on
+    /// top of it would consume the space the manager set aside. Defaults to
+    /// empty so every existing call site (and the `never`/`afterCount`
+    /// modes that never touch it) is unaffected.
     static func overflowPlan(
         for profiles: [Profile],
         mode: MenuBarOverflowMode,
         currentCollapsedCount: Int,
-        spaceInput: MenuBarLayoutInput?
+        spaceInput: MenuBarLayoutInput?,
+        runningBundleIdentifiers: [String] = []
     ) -> (individual: [Profile], overflow: [Profile]) {
         switch mode {
         case .never:
@@ -77,6 +88,13 @@ final class StatusBarUIManager {
         case .afterCount(let threshold):
             return splitForOverflow(profiles, threshold: threshold)
         case .automatic:
+            guard
+                MenuBarManagerDetection.detectedManager(
+                    runningBundleIdentifiers: runningBundleIdentifiers
+                ) == nil
+            else {
+                return (profiles, [])
+            }
             guard let spaceInput else {
                 return (profiles, [])
             }
@@ -128,6 +146,15 @@ final class StatusBarUIManager {
     /// mode. Injectable so tests can supply a fake without touching real
     /// AppKit or window-server state.
     var spaceProbe: MenuBarSpaceProbing = MenuBarSpaceProbe()
+
+    /// Supplies the running-application bundle identifiers `.automatic`
+    /// mode checks against `MenuBarManagerDetection.knownManagers`.
+    /// Injectable for the same reason as `spaceProbe`: a test must be able
+    /// to simulate "Ice is running" without any real process actually
+    /// running.
+    var runningApplicationsProvider:
+        RunningApplicationBundleIdentifiersProviding =
+            NSWorkspaceRunningApplications()
 
     /// Estimated width for a profile item that has no `NSStatusItem` yet
     /// (e.g. a profile just added to the selection), so `.automatic` mode
@@ -793,12 +820,14 @@ final class StatusBarUIManager {
 
     /// Computes the individual/overflow split for `selectedProfiles`
     /// according to `overflowMode`, measuring current item widths via
-    /// `spaceProbe` when `.automatic` is in effect. `.never` and
-    /// `.afterCount` never touch the probe at all.
+    /// `spaceProbe` and the running-application list via
+    /// `runningApplicationsProvider` when `.automatic` is in effect.
+    /// `.never` and `.afterCount` never touch either at all.
     private func currentOverflowPlan(
         for selectedProfiles: [Profile]
     ) -> (individual: [Profile], overflow: [Profile]) {
         let spaceInput: MenuBarLayoutInput?
+        let runningBundleIdentifiers: [String]
         if case .automatic = overflowMode {
             let config = ProfileManager.shared.multiProfileConfig
             let activeProfileId = ProfileManager.shared.activeClaudeProfileID
@@ -831,14 +860,18 @@ final class StatusBarUIManager {
                 overflowItemWidth: overflowWidth,
                 currentlyOnScreenWidth: currentlyOnScreenWidth
             )
+            runningBundleIdentifiers =
+                runningApplicationsProvider.runningBundleIdentifiers
         } else {
             spaceInput = nil
+            runningBundleIdentifiers = []
         }
         return Self.overflowPlan(
             for: selectedProfiles,
             mode: overflowMode,
             currentCollapsedCount: overflowProfileIDs.count,
-            spaceInput: spaceInput
+            spaceInput: spaceInput,
+            runningBundleIdentifiers: runningBundleIdentifiers
         )
     }
 

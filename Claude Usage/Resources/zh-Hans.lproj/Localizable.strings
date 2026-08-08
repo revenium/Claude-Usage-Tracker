@@ -502,6 +502,7 @@
 "multiprofile.overflow.after_count" = "显示的配置文件超过";
 "multiprofile.overflow.after_count_suffix" = "个时";
 "multiprofile.overflow.accessibility_hint" = "自动模式会测量菜单栏的可用空间，这需要辅助功能权限。";
+"multiprofile.overflow.manager_detected_hint" = "%@ 已经在管理你的菜单栏，因此自动模式不会折叠任何配置文件。";
 "multiprofile.overflow.accessibility_grant_button" = "授予辅助功能权限…";
 
 /* ==================== */

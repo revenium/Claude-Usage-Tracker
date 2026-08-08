@@ -53,6 +53,16 @@ final class StatusBarOverflowTests: HostedAppTestCase {
         }
     }
 
+    /// A `RunningApplicationBundleIdentifiersProviding` fake so tests can
+    /// simulate "a menu bar manager is running" without any real process
+    /// actually running. Mirrors `FakeSpaceProbe` immediately above.
+    private final class FakeRunningApplications:
+        RunningApplicationBundleIdentifiersProviding
+    {
+        var bundleIdentifiers: [String] = []
+        var runningBundleIdentifiers: [String] { bundleIdentifiers }
+    }
+
     // MARK: - splitForOverflow (pure logic)
 
     func testUpToFourProfilesNeverOverflow() {
@@ -293,6 +303,58 @@ final class StatusBarOverflowTests: HostedAppTestCase {
         )
     }
 
+    func testOverflowPlanAutomaticModeDoesNotCollapseWhenAKnownManagerIsRunning() {
+        // Identical to
+        // testOverflowPlanAutomaticModeCollapsesWhenSpaceIsInsufficient
+        // above (freeWidth = 100, five 40pt items do not fit), except a
+        // known menu bar manager is also running. The measurement is
+        // exactly as insufficient as before, but the guard must still keep
+        // every profile individual — a manager already reserved an
+        // expandable region for this, so collapsing would be wrong even
+        // though the free-space arithmetic is unchanged.
+        let profiles = makeProfiles(5)
+        let spaceInput = MenuBarLayoutInput(
+            appMenuMaxX: 0,
+            statusRegionMinX: 108,
+            ourItemWidths: Array(repeating: CGFloat(40), count: 5),
+            overflowItemWidth: 30,
+            currentlyOnScreenWidth: 0
+        )
+        let plan = StatusBarUIManager.overflowPlan(
+            for: profiles,
+            mode: .automatic,
+            currentCollapsedCount: 0,
+            spaceInput: spaceInput,
+            runningBundleIdentifiers: ["com.jordanbaird.Ice"]
+        )
+        XCTAssertEqual(plan.individual.count, 5)
+        XCTAssertTrue(plan.overflow.isEmpty)
+    }
+
+    func testOverflowPlanAutomaticModeCollapsesWhenNoKnownManagerIsRunning() {
+        // The fail-safe direction of the same guard: an app that is NOT on
+        // `MenuBarManagerDetection.knownManagers` must not suppress
+        // collapsing, even alongside other unrelated running applications.
+        let profiles = makeProfiles(5)
+        let spaceInput = MenuBarLayoutInput(
+            appMenuMaxX: 0,
+            statusRegionMinX: 108,
+            ourItemWidths: Array(repeating: CGFloat(40), count: 5),
+            overflowItemWidth: 30,
+            currentlyOnScreenWidth: 0
+        )
+        let plan = StatusBarUIManager.overflowPlan(
+            for: profiles,
+            mode: .automatic,
+            currentCollapsedCount: 0,
+            spaceInput: spaceInput,
+            runningBundleIdentifiers: [
+                "com.apple.finder", "com.apple.Safari"
+            ]
+        )
+        XCTAssertFalse(plan.overflow.isEmpty)
+    }
+
     // MARK: - StatusBarUIManager.overflowMode integration
 
     func testNeverModeCreatesNoOverflowItemForManyProfiles() {
@@ -347,6 +409,13 @@ final class StatusBarOverflowTests: HostedAppTestCase {
             appMenuMaxX: 0, statusRegionMinX: 108
         )
         manager.spaceProbe = fakeProbe
+        // Isolate this test from whatever menu bar managers actually happen
+        // to be running on the machine executing it — the default
+        // `NSWorkspaceRunningApplications()` would otherwise make this test
+        // pass or fail depending on real, un-mocked machine state (this is
+        // exactly what caught the manager-detection guard suppressing
+        // collapse on a developer machine running Thaw).
+        manager.runningApplicationsProvider = FakeRunningApplications()
         let target = MenuTarget()
         let profiles = makeProfiles(5)
         manager.setupMultiProfile(
@@ -381,6 +450,40 @@ final class StatusBarOverflowTests: HostedAppTestCase {
         )
     }
 
+    func testAutomaticModeDoesNotCollapseWhenRunningApplicationsProviderReportsAKnownManager() {
+        let manager = retain(StatusBarUIManager())
+        defer { manager.cleanup() }
+        manager.overflowMode = .automatic
+        let fakeProbe = FakeSpaceProbe()
+        // Same narrow simulated space as
+        // testAutomaticModeCollapsesUsingInjectedSpaceProbe, which collapses
+        // without a manager present.
+        fakeProbe.fixedMeasurement = (
+            appMenuMaxX: 0, statusRegionMinX: 108
+        )
+        manager.spaceProbe = fakeProbe
+        let fakeRunningApplications = FakeRunningApplications()
+        fakeRunningApplications.bundleIdentifiers = ["com.stonerl.Thaw"]
+        manager.runningApplicationsProvider = fakeRunningApplications
+        let target = MenuTarget()
+        let profiles = makeProfiles(5)
+        manager.setupMultiProfile(
+            profiles: profiles,
+            target: target,
+            action: #selector(MenuTarget.toggle)
+        )
+
+        XCTAssertNil(
+            manager.overflowButton,
+            "a detected menu bar manager must suppress collapsing even "
+                + "when the measured space is the same narrow width that "
+                + "collapses without one"
+        )
+        for profile in profiles {
+            XCTAssertNotNil(manager.button(for: profile.id))
+        }
+    }
+
     func testAutomaticModeNeverCollapsesWhenSpaceIsAmple() {
         let manager = retain(StatusBarUIManager())
         defer { manager.cleanup() }
@@ -392,6 +495,10 @@ final class StatusBarOverflowTests: HostedAppTestCase {
             appMenuMaxX: 0, statusRegionMinX: 6008
         )
         manager.spaceProbe = fakeProbe
+        // See testAutomaticModeCollapsesUsingInjectedSpaceProbe: keep this
+        // test's outcome independent of whatever is actually running on the
+        // machine executing it.
+        manager.runningApplicationsProvider = FakeRunningApplications()
         let target = MenuTarget()
         let profiles = makeProfiles(7)
         manager.setupMultiProfile(

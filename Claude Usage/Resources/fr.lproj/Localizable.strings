@@ -492,6 +492,7 @@
 "multiprofile.overflow.after_count" = "Lorsque plus de";
 "multiprofile.overflow.after_count_suffix" = "profils sont affichés";
 "multiprofile.overflow.accessibility_hint" = "Le mode automatique mesure l'espace libre dans la barre de menus, ce qui nécessite l'accès Accessibilité.";
+"multiprofile.overflow.manager_detected_hint" = "%@ gère déjà votre barre de menus, donc le mode automatique ne regroupe aucun profil.";
 "multiprofile.overflow.accessibility_grant_button" = "Accorder l'accès Accessibilité…";
 
 /* ==================== */

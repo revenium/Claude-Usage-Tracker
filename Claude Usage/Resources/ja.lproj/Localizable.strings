@@ -512,6 +512,7 @@
 "multiprofile.overflow.after_count" = "表示するプロファイルが";
 "multiprofile.overflow.after_count_suffix" = "個を超えたとき";
 "multiprofile.overflow.accessibility_hint" = "自動モードはメニューバーの空き容量を測定するため、アクセシビリティへのアクセスが必要です。";
+"multiprofile.overflow.manager_detected_hint" = "%@ がすでにメニューバーを管理しているため、自動モードはプロファイルをまとめません。";
 "multiprofile.overflow.accessibility_grant_button" = "アクセシビリティへのアクセスを許可…";
 
 /* ==================== */

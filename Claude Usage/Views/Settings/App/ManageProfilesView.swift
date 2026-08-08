@@ -317,6 +317,8 @@ struct ManageProfilesView: View {
                                     )
                                     AccessibilityGrantHint()
                                         .padding(.leading, 22)
+                                    DetectedMenuBarManagerHint()
+                                        .padding(.leading, 22)
                                     overflowModeRow(
                                         title:
                                             "multiprofile.overflow.never"
@@ -599,6 +601,64 @@ private struct AccessibilityGrantHint: View {
             // there is no direct notification for an AX trust flip.
             isTrusted = MenuBarAccessibilityAccess.isTrusted()
         }
+    }
+}
+
+/// Inline notice shown under the "Automatic" overflow option when a known
+/// menu bar manager (Ice, Thaw, Bartender, ...) is currently running — see
+/// `MenuBarManagerDetection` and the guard in
+/// `StatusBarUIManager.overflowPlan(for:mode:currentCollapsedCount:spaceInput:runningBundleIdentifiers:)`
+/// that this notice exists to explain. Without it, a user who wanted
+/// collapsing would just see automatic mode silently stop collapsing and
+/// conclude it's broken, rather than that it correctly deferred to the
+/// manager they're already running.
+private struct DetectedMenuBarManagerHint: View {
+    @State private var detectedManager:
+        MenuBarManagerDetection.KnownManager? = Self.detect()
+
+    var body: some View {
+        Group {
+            if let detectedManager {
+                HStack(
+                    alignment: .top,
+                    spacing: DesignTokens.Spacing.small
+                ) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 11))
+                        .foregroundColor(.blue)
+                    Text(
+                        String(
+                            format:
+                                "multiprofile.overflow.manager_detected_hint"
+                                    .localized,
+                            detectedManager.displayName
+                        )
+                    )
+                    .font(DesignTokens.Typography.caption)
+                    .foregroundColor(.secondary)
+                }
+            }
+        }
+        .onAppear {
+            detectedManager = Self.detect()
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: NSApplication.didBecomeActiveNotification
+            )
+        ) { _ in
+            // A manager launched or quit while this window was in the
+            // background is the moment we can next observe it, mirroring
+            // `AccessibilityGrantHint` immediately above.
+            detectedManager = Self.detect()
+        }
+    }
+
+    private static func detect() -> MenuBarManagerDetection.KnownManager? {
+        MenuBarManagerDetection.detectedManager(
+            runningBundleIdentifiers: NSWorkspace.shared.runningApplications
+                .compactMap(\.bundleIdentifier)
+        )
     }
 }
 

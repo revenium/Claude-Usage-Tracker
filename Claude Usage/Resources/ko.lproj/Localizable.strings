@@ -144,6 +144,7 @@
 "multiprofile.overflow.after_count" = "표시되는 프로필이";
 "multiprofile.overflow.after_count_suffix" = "개를 초과할 때";
 "multiprofile.overflow.accessibility_hint" = "자동 모드는 메뉴 바의 여유 공간을 측정하며, 이를 위해 손쉬운 사용 접근 권한이 필요합니다.";
+"multiprofile.overflow.manager_detected_hint" = "%@ 이(가) 이미 메뉴 막대를 관리하고 있으므로 자동 모드는 프로필을 축소하지 않습니다.";
 "multiprofile.overflow.accessibility_grant_button" = "손쉬운 사용 접근 권한 부여…";
 
 /* ==================== */

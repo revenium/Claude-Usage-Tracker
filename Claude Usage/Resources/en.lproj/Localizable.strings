@@ -515,6 +515,7 @@
 "multiprofile.overflow.after_count_suffix" = "are shown";
 "multiprofile.overflow.accessibility_hint" = "Automatic mode measures how much menu bar space is free, which needs Accessibility access.";
 "multiprofile.overflow.accessibility_grant_button" = "Grant Accessibility Access…";
+"multiprofile.overflow.manager_detected_hint" = "%@ is already managing your menu bar, so Automatic mode isn't collapsing any profiles.";
 
 /* ==================== */
 /* MARK: - General Settings (Profile-Level) */

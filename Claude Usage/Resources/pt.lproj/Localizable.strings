@@ -510,6 +510,7 @@
 "multiprofile.overflow.after_count" = "Quando forem exibidos mais de";
 "multiprofile.overflow.after_count_suffix" = "perfis";
 "multiprofile.overflow.accessibility_hint" = "O modo automático mede o espaço livre na barra de menu, o que exige acesso de Acessibilidade.";
+"multiprofile.overflow.manager_detected_hint" = "%@ já está gerenciando sua barra de menu, portanto o modo automático não recolhe nenhum perfil.";
 "multiprofile.overflow.accessibility_grant_button" = "Conceder acesso de Acessibilidade…";
 
 /* ==================== */
