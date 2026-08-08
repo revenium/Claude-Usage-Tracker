@@ -18,18 +18,22 @@ struct AppSettingsView: View {
                     subtitle: "section.app_settings_desc".localized
                 )
 
-                SettingsSectionCard(
+                Divider()
+
+                // Rendered as a bare labelled row rather than wrapped in a
+                // `SettingsSectionCard`, matching `APISettingsView`. A card
+                // header names a *group* and the rows inside name the
+                // individual settings (see `general.autostart_title` vs
+                // `general.autostart_toggle`), which needs four strings.
+                // Launch-at-login has only its own title and description, so
+                // wrapping it in a card forced the same two strings to be
+                // used as both the group header and the row — which is
+                // exactly how it came to render twice.
+                SettingToggle(
                     title: "general.launch_at_login".localized,
-                    subtitle: "general.launch_at_login.description".localized
-                ) {
-                    HStack {
-                        Spacer()
-                        Toggle("", isOn: $launchAtLogin)
-                            .labelsHidden()
-                            .toggleStyle(.switch)
-                            .accessibilityLabel("general.launch_at_login".localized)
-                    }
-                }
+                    description: "general.launch_at_login.description".localized,
+                    isOn: $launchAtLogin
+                )
             }
             .padding()
         }
