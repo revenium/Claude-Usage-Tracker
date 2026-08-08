@@ -63,31 +63,57 @@ enum MenuBarAccessibilityAccess {
 
 /// Production `MenuBarSpaceProbing`.
 ///
-/// Two independent measurements, both exact:
+/// Two independent measurements, both exact — and, critically, both taken
+/// on the SAME physical screen:
 ///
-/// 1. `statusRegionMinX` — the leftmost x of any on-screen status item,
-///    via `CGWindowListCopyWindowInfo` filtered to the status-item window
-///    layer. This needs no permission (verified empirically: layer, owner,
-///    and bounds are unrestricted; only `kCGWindowName`, which this probe
-///    never reads, is gated behind Screen Recording). It is deliberately a
-///    MINIMUM over every status item on screen, not a sum of "foreign"
-///    ones — a status item's `kCGWindowOwnerPID` cannot be used to isolate
-///    other apps' items from ours, because macOS proxies every
-///    application's status item through Control Center: on this
-///    developer's real machine, all on-screen status items (Claude Usage's
-///    own included) report the same owning PID, Control Center's. An
-///    earlier version of this probe filtered by owner PID on the mistaken
-///    assumption that it isolated other apps' items; that filter was a
-///    no-op that summed our own items into what it called
-///    "foreignItemsWidth", which would have collapsed our own layout more
-///    aggressively than actually needed. Do not reintroduce PID-based
-///    attribution for status items.
-///
-/// 2. `frontmostAppMenuMaxX` — the right edge of the frontmost
+/// 1. `frontmostAppMenuMaxX` — the right edge of the frontmost
 ///    application's menu bar menus, via its Accessibility tree
 ///    (`kAXMenuBarAttribute`). This DOES need the user's explicit
 ///    Accessibility grant (see `MenuBarAccessibilityAccess`), and is the
 ///    only reason this feature asks for one.
+///
+/// 2. `statusRegionMinX` — the leftmost x of any status item **on the same
+///    screen `frontmostAppMenuMaxX` was measured on**, via
+///    `CGWindowListCopyWindowInfo` filtered to the status-item window
+///    layer. This needs no permission (verified empirically: layer, owner,
+///    and bounds are unrestricted; only `kCGWindowName`, which this probe
+///    never reads, is gated behind Screen Recording).
+///
+/// Both the "which screen" step and the "minimum over that screen's items"
+/// step matter, and both were bugs found only by running this live on
+/// multi-monitor hardware — no unit test with fabricated numbers could
+/// have caught either:
+///
+/// - With "Displays have separate Spaces" (the default), macOS gives every
+///   screen its own menu bar AND its own full copy of every status item —
+///   on this developer's 3-monitor machine, `CGWindowListCopyWindowInfo`
+///   returns the identical set of status items three times, once per
+///   screen, each shifted into that screen's x-range. A naive global
+///   minimum can land on a different screen's copy entirely, including a
+///   *negative* x on some physical arrangements.
+/// - Separately, the frontmost app's active menu bar follows whichever
+///   screen has focus under that same "separate Spaces" setting — it is
+///   NOT always `NSScreen.screens.first` (documented as the screen with
+///   the global coordinate origin, which is a different fact). Filtering
+///   `statusRegionMinX` to a fixed screen while `frontmostAppMenuMaxX`
+///   follows the focused one lets the two numbers describe two different
+///   displays, producing a wildly wrong (in either direction) `freeWidth`
+///   that is silently wrong rather than crashing.
+///
+/// The fix for both: derive which screen to use FROM the AX measurement
+/// (`screenFrame(containing:screenFrames:)`), and use that same screen for
+/// the status-item scan (`statusRegionMinX(in:)`) — never `screens.first`
+/// as a fallback, which is exactly the mismatch this eliminates.
+///
+/// A status item's `kCGWindowOwnerPID` cannot be used to isolate other
+/// apps' items from ours, because macOS proxies every application's status
+/// item through Control Center: on this developer's machine, all on-screen
+/// status items (Claude Usage's own included) report the same owning PID,
+/// Control Center's. An earlier version of this probe filtered by owner
+/// PID on the mistaken assumption that it isolated other apps' items; that
+/// filter was a no-op that summed our own items into what it called
+/// "foreignItemsWidth". Do not reintroduce PID-based attribution for
+/// status items.
 struct MenuBarSpaceProbe: MenuBarSpaceProbing {
     /// Bounds every Accessibility round-trip to a fraction of a second, so
     /// an unresponsive frontmost application can never hang our main
@@ -101,22 +127,19 @@ struct MenuBarSpaceProbe: MenuBarSpaceProbing {
         Int(CGWindowLevelForKey(.statusWindow))
     }
 
-    /// The screen AppKit documents as owning the menu bar: `NSScreen
-    /// .screens[0]` is always the screen containing the menu bar and the
-    /// global coordinate space's origin, regardless of which screen is
-    /// `.main` (the one with the key window) or physically arranged where.
-    var menuBarScreen: NSScreen? {
-        NSScreen.screens.first
-    }
-
     func makeLayoutInput(
         ourItemWidths: [CGFloat],
         overflowItemWidth: CGFloat
     ) -> MenuBarLayoutInput? {
         guard MenuBarAccessibilityAccess.isTrusted(),
-              let screen = menuBarScreen,
-              let statusRegionMinX = Self.statusRegionMinX(on: screen),
-              let appMenuMaxX = Self.frontmostAppMenuMaxX()
+              let appMenuMaxX = Self.frontmostAppMenuMaxX(),
+              let activeScreenFrame = Self.screenFrame(
+                  containing: appMenuMaxX,
+                  screenFrames: NSScreen.screens.map(\.frame)
+              ),
+              let statusRegionMinX = Self.statusRegionMinX(
+                  in: activeScreenFrame
+              )
         else {
             return nil
         }
@@ -128,20 +151,31 @@ struct MenuBarSpaceProbe: MenuBarSpaceProbing {
         )
     }
 
-    /// Leftmost x of any on-screen status item **on `screen`**. See the
-    /// type-level doc comment for why this is a minimum over every item on
-    /// that screen rather than a sum of "foreign" ones.
+    /// Pure decision logic, independent of `NSScreen`, for which physical
+    /// display's frame contains a given global x-coordinate — modeled on
+    /// `StatusItemPositionSanitizer.staleKeys(in:screenFrames:)` for the
+    /// same reason: screen geometry is exactly the kind of real-hardware-
+    /// only fact that must be testable with plain `CGRect` values, not
+    /// real `NSScreen` instances (which cannot be fabricated in a test).
     ///
-    /// Restricting to `screen` matters on a multi-monitor setup: with
-    /// "Displays have separate Spaces" (the default), every screen gets its
-    /// own menu bar and its own status items, and `CGWindowListCopyWindowInfo`
-    /// returns all of them regardless of which screen they're on. An
-    /// unfiltered global minimum can land on a status item belonging to a
-    /// screen positioned to the left of the menu bar screen's origin in the
-    /// global coordinate space — including a *negative* x on some physical
-    /// arrangements — which has nothing to do with how much room is free on
-    /// the screen we actually render our items on.
-    static func statusRegionMinX(on screen: NSScreen) -> CGFloat? {
+    /// Half-open on the upper bound so two contiguous screens sharing a
+    /// boundary x-value are never both considered a match.
+    ///
+    /// Returns `nil` if no screen's frame contains `x` — deliberately no
+    /// fallback to a default screen, since a fallback here is exactly the
+    /// screen-mismatch bug this function exists to eliminate.
+    static func screenFrame(
+        containing x: CGFloat,
+        screenFrames: [CGRect]
+    ) -> CGRect? {
+        screenFrames.first { $0.minX <= x && x < $0.maxX }
+    }
+
+    /// Leftmost x of any on-screen status item whose x falls within
+    /// `screenFrame`. See the type-level doc comment for why this must be
+    /// restricted to one screen, and why that screen must be the same one
+    /// `frontmostAppMenuMaxX` was measured on.
+    static func statusRegionMinX(in screenFrame: CGRect) -> CGFloat? {
         guard let windows = CGWindowListCopyWindowInfo(
             [.optionOnScreenOnly],
             kCGNullWindowID
@@ -149,7 +183,6 @@ struct MenuBarSpaceProbe: MenuBarSpaceProbing {
             return nil
         }
         let layer = statusItemLayer
-        let screenRangeX = screen.frame.minX...screen.frame.maxX
         var minX: CGFloat?
         for window in windows {
             guard let windowLayer = window[kCGWindowLayer as String] as? Int,
@@ -157,11 +190,19 @@ struct MenuBarSpaceProbe: MenuBarSpaceProbing {
                   let boundsDict = window[kCGWindowBounds as String]
                     as? [String: CGFloat],
                   let x = boundsDict["X"],
-                  screenRangeX.contains(x)
+                  isWithinScreen(x: x, screenFrame: screenFrame)
             else { continue }
             minX = minX.map { Swift.min($0, x) } ?? x
         }
         return minX
+    }
+
+    /// Pure decision logic behind `statusRegionMinX(in:)`'s screen filter,
+    /// extracted so the exact regression this fixed (a status item at a
+    /// screen's own negative-x copy of the set being mistaken for a
+    /// same-screen item) is unit-testable with plain numbers.
+    static func isWithinScreen(x: CGFloat, screenFrame: CGRect) -> Bool {
+        screenFrame.minX <= x && x <= screenFrame.maxX
     }
 
     /// Right edge of the frontmost application's menu bar menus (File,
