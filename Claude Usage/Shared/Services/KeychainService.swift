@@ -72,6 +72,22 @@ nonisolated enum ProfileKeychainDomain: String {
     case file
 }
 
+/// Appended to every hard-coded Keychain service identifier below, so a UAT
+/// build variant (its own `PRODUCT_BUNDLE_IDENTIFIER`, ending in `.uat` —
+/// see RELEASING.md) can never read or write a live user's real
+/// credentials by sharing a service string with the real release build.
+///
+/// Derived from the running bundle identifier rather than a compile-time
+/// flag, so it needs no build-setting plumbing beyond the UAT
+/// configuration's own bundle ID suffix, and it is an empty no-op — the
+/// original behavior, byte for byte — for every real Debug/Release/
+/// UITesting build. A build identity collision has already cost this
+/// project real user credentials once; this is the fix for the specific
+/// mechanism that let it happen.
+nonisolated enum KeychainBuildVariant {
+    static let suffix: String = AppBuildVariant.isUAT ? ".uat" : ""
+}
+
 /// Decides once per process which Keychain the profile credentials belong in.
 ///
 /// Resolution is a real probe rather than an entitlement inspection: it writes
@@ -82,7 +98,9 @@ nonisolated final class ProfileKeychainDomainResolver: @unchecked Sendable {
     static let shared = ProfileKeychainDomainResolver()
 
     /// Namespace for the availability sentinel. Never holds credential data.
-    static let probeService = "com.claudeusagetracker.keychain-probe.v1"
+    static let probeService =
+        "com.claudeusagetracker.keychain-probe.v1"
+            + KeychainBuildVariant.suffix
     static let probeAccount = "availability"
 
     private let probe: () -> OSStatus
@@ -543,7 +561,9 @@ nonisolated final class KeychainService {
 
     /// Stable versioned namespace for this fork's profile credentials.
     /// Changing it would strand credentials saved by compatible releases.
-    static let profileSecretsService = "com.claudeusagetracker.profile-credentials.v1"
+    static let profileSecretsService =
+        "com.claudeusagetracker.profile-credentials.v1"
+            + KeychainBuildVariant.suffix
 
     private let profileBackend: ProfileKeychainBackend
 
@@ -562,7 +582,7 @@ nonisolated final class KeychainService {
         case claudeSessionKey = "com.claudeusagetracker.claude-session-key"
 
         var service: String {
-            return rawValue
+            return rawValue + KeychainBuildVariant.suffix
         }
 
         var account: String {

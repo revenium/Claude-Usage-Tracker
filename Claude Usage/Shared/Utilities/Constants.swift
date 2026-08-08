@@ -1,5 +1,28 @@
 import Foundation
 
+/// Identifies whether this process is a UAT build variant — a build with
+/// its own `PRODUCT_BUNDLE_IDENTIFIER` (ending in `.uat`, see
+/// RELEASING.md) that must never share on-disk storage or Keychain
+/// credentials with the real release app, so it can be run and watched
+/// against a running Mac's real menu bar without any risk to that user's
+/// real profiles.
+///
+/// Derived from the running bundle identifier rather than a compile-time
+/// flag, so it needs no build-setting plumbing beyond the UAT
+/// configuration's own bundle ID suffix, and every check here is a no-op
+/// — the original behavior, byte for byte — for every real Debug/Release/
+/// UITesting build.
+enum AppBuildVariant {
+    static let isUAT: Bool = {
+        Bundle.main.bundleIdentifier?.hasSuffix(".uat") == true
+    }()
+
+    /// Appended to a literal on-disk storage folder name (e.g. "Claude
+    /// Usage" Application Support directories) so the UAT variant never
+    /// reads or writes the real app's files.
+    static let pathSuffix: String = isUAT ? " UAT" : ""
+}
+
 /// Application-wide constants
 enum Constants {
     // App Group identifier for sharing data between app and widgets
