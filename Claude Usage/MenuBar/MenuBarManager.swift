@@ -181,6 +181,47 @@ nonisolated struct RefreshTimingPolicy: Equatable, Sendable {
     }
 }
 
+/// Gates the automatic timer's per-profile fan-out so a profile configured
+/// with a longer `refreshInterval` than its neighbors isn't polled at the
+/// shared timer's (shorter) cadence just because they're shown together in
+/// multi-profile mode. This is a filter applied on top of the existing
+/// timer, never a replacement for it: the timer still ticks at the active
+/// profile's interval, and a profile whose own interval is shorter than the
+/// timer's still can't refresh more often than the timer fires. Applies
+/// only to `UsageRefreshTrigger.timer`; every other trigger (manual,
+/// startup, wake, network-restored, profile activation, credential change,
+/// display change) bypasses this policy entirely and always refreshes.
+///
+/// Every branch is deliberately biased toward refreshing rather than
+/// skipping: no prior record, a non-positive/non-finite interval, a clock
+/// that moved backwards, or an interval that no longer matches what was
+/// last recorded (the user just changed it) all refresh immediately. The
+/// only way to skip is the ordinary case — already refreshed this profile
+/// at its current interval, and not enough time has passed yet — so a
+/// profile can never be silently stuck: the worst case is one extra
+/// refresh, never one fewer.
+nonisolated struct PerProfileAutoRefreshPolicy: Equatable, Sendable {
+    struct Record: Equatable, Sendable {
+        let lastRefresh: Date
+        let interval: TimeInterval
+    }
+
+    static func shouldRefreshProfile(
+        now: Date,
+        record: Record?,
+        interval: TimeInterval
+    ) -> Bool {
+        guard let record, record.interval == interval else {
+            return true
+        }
+        guard interval.isFinite, interval > 0 else {
+            return true
+        }
+        let elapsed = now.timeIntervalSince(record.lastRefresh)
+        return elapsed < 0 || elapsed >= interval
+    }
+}
+
 @MainActor
 class MenuBarManager: NSObject, ObservableObject {
     enum UsageProjectionTarget: Equatable {
@@ -1261,6 +1302,16 @@ class MenuBarManager: NSObject, ObservableObject {
     private var lowPowerModeObserver: NSObjectProtocol?
     private var isLowPowerModeEnabled =
         ProcessInfo.processInfo.isLowPowerModeEnabled
+
+    // Per-profile record of the last automatic (timer-triggered) refresh
+    // attempt, keyed by profile ID. Used only to gate the automatic
+    // periodic fan-out in `refreshAllSelectedProfiles` via
+    // `PerProfileAutoRefreshPolicy` — never consulted for manual or other
+    // non-timer triggers. Recorded at attempt time (not success), so a
+    // profile whose fetch keeps failing is retried at its own interval
+    // rather than hammered on every shared-timer tick.
+    private var lastAutomaticRefreshByProfile:
+        [UUID: PerProfileAutoRefreshPolicy.Record] = [:]
 
     // MARK: - Image Caching (CPU Optimization)
     private var cachedImage: NSImage?
@@ -3501,14 +3552,40 @@ class MenuBarManager: NSObject, ObservableObject {
     private func refreshAllSelectedProfiles(
         trigger: UsageRefreshTrigger
     ) {
-        let selectedProfiles = profileManager.profiles.filter {
+        let now = Date()
+        let isAutomaticTick = trigger == .timer
+        let eligibleProfiles = profileManager.profiles.filter {
             $0.isSelectedForDisplay && canAttemptUsageRefresh($0)
         }
 
-        guard !selectedProfiles.isEmpty else {
+        guard !eligibleProfiles.isEmpty else {
             LoggingService.shared.log("MenuBarManager: No selected profiles with usage credentials to refresh")
             updateAllStatusBarIcons()
             return
+        }
+
+        let selectedProfiles = eligibleProfiles.filter { profile in
+            guard isAutomaticTick else { return true }
+            return PerProfileAutoRefreshPolicy.shouldRefreshProfile(
+                now: now,
+                record: lastAutomaticRefreshByProfile[profile.id],
+                interval: profile.refreshInterval
+            )
+        }
+
+        guard !selectedProfiles.isEmpty else {
+            LoggingService.shared.log("MenuBarManager: All \(eligibleProfiles.count) eligible profiles are within their own refresh interval; skipping this automatic tick")
+            return
+        }
+
+        if isAutomaticTick {
+            for profile in selectedProfiles {
+                lastAutomaticRefreshByProfile[profile.id] =
+                    PerProfileAutoRefreshPolicy.Record(
+                        lastRefresh: now,
+                        interval: profile.refreshInterval
+                    )
+            }
         }
 
         LoggingService.shared.log("MenuBarManager: Refreshing \(selectedProfiles.count) selected profiles for multi-profile mode")

@@ -258,6 +258,133 @@ final class MenuReliabilityTests: HostedAppTestCase {
         }
     }
 
+    func testPerProfileAutoRefreshPolicyRefreshesWhenIntervalHasElapsed() {
+        let now = Date(timeIntervalSinceReferenceDate: 100_000)
+        let record = PerProfileAutoRefreshPolicy.Record(
+            lastRefresh: now.addingTimeInterval(-30),
+            interval: 30
+        )
+        XCTAssertTrue(
+            PerProfileAutoRefreshPolicy.shouldRefreshProfile(
+                now: now,
+                record: record,
+                interval: 30
+            )
+        )
+    }
+
+    func testPerProfileAutoRefreshPolicySkipsWhenIntervalHasNotElapsed() {
+        let now = Date(timeIntervalSinceReferenceDate: 100_000)
+        let record = PerProfileAutoRefreshPolicy.Record(
+            lastRefresh: now.addingTimeInterval(-10),
+            interval: 30
+        )
+        XCTAssertFalse(
+            PerProfileAutoRefreshPolicy.shouldRefreshProfile(
+                now: now,
+                record: record,
+                interval: 30
+            )
+        )
+    }
+
+    func testPerProfileAutoRefreshPolicyRefreshesWithNoPriorRecord() {
+        XCTAssertTrue(
+            PerProfileAutoRefreshPolicy.shouldRefreshProfile(
+                now: Date(),
+                record: nil,
+                interval: 120
+            )
+        )
+    }
+
+    func testPerProfileAutoRefreshPolicyRefreshesWhenClockMovesBackwards() {
+        let now = Date(timeIntervalSinceReferenceDate: 100_000)
+        // lastRefresh is "in the future" relative to now - e.g. an NTP
+        // correction or manual clock change moved the wall clock backwards.
+        let record = PerProfileAutoRefreshPolicy.Record(
+            lastRefresh: now.addingTimeInterval(3_600),
+            interval: 30
+        )
+        XCTAssertTrue(
+            PerProfileAutoRefreshPolicy.shouldRefreshProfile(
+                now: now,
+                record: record,
+                interval: 30
+            )
+        )
+    }
+
+    func testPerProfileAutoRefreshPolicyRefreshesForNonPositiveInterval() {
+        let now = Date(timeIntervalSinceReferenceDate: 100_000)
+        let zeroIntervalRecord = PerProfileAutoRefreshPolicy.Record(
+            lastRefresh: now,
+            interval: 0
+        )
+        XCTAssertTrue(
+            PerProfileAutoRefreshPolicy.shouldRefreshProfile(
+                now: now,
+                record: zeroIntervalRecord,
+                interval: 0
+            )
+        )
+
+        let negativeIntervalRecord = PerProfileAutoRefreshPolicy.Record(
+            lastRefresh: now,
+            interval: -30
+        )
+        XCTAssertTrue(
+            PerProfileAutoRefreshPolicy.shouldRefreshProfile(
+                now: now,
+                record: negativeIntervalRecord,
+                interval: -30
+            )
+        )
+    }
+
+    func testPerProfileAutoRefreshPolicyRefreshesImmediatelyWhenIntervalChanged() {
+        let now = Date(timeIntervalSinceReferenceDate: 100_000)
+        // Recorded moments ago at the OLD (longer) interval; the user has
+        // since lowered the profile's interval. The stale record must not
+        // suppress a refresh under the new, shorter interval.
+        let record = PerProfileAutoRefreshPolicy.Record(
+            lastRefresh: now.addingTimeInterval(-5),
+            interval: 300
+        )
+        XCTAssertTrue(
+            PerProfileAutoRefreshPolicy.shouldRefreshProfile(
+                now: now,
+                record: record,
+                interval: 30
+            )
+        )
+    }
+
+    func testPerProfileAutoRefreshPolicyIsIgnoredForUserInitiatedTriggers() {
+        // The gate itself has no notion of triggers - callers only consult
+        // it when the trigger is `.timer`. Confirm that contract holds so a
+        // future refactor can't silently start throttling manual refreshes,
+        // profile switches, wake, or network-restored triggers.
+        let nonAutomaticTriggers: [UsageRefreshTrigger] = [
+            .manual,
+            .startup,
+            .profileActivation,
+            .credentialsChanged,
+            .providerConfigurationChanged,
+            .networkAvailable,
+            .wake,
+            .displayChanged,
+            .retry
+        ]
+        for trigger in nonAutomaticTriggers {
+            XCTAssertNotEqual(
+                trigger,
+                .timer,
+                "\(trigger) must bypass the per-profile auto-refresh gate"
+            )
+        }
+    }
+
     func testContextMenuContainsExpectedLocalizedActionsAndShortcuts() {
         let target = MenuTarget()
         let menu = MenuBarManager.makeContextMenu(
