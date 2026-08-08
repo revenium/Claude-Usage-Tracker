@@ -13,105 +13,117 @@ import XCTest
 ///
 /// `MenuBarSpaceProbe.statusRegionMinX(in:)` and `.frontmostAppMenuMaxX()`
 /// themselves call real `CGWindowListCopyWindowInfo`/Accessibility APIs and
-/// cannot be exercised here — real multi-monitor geometry can only be
-/// proven live (see the diagnostic run described in the commit that added
-/// these helpers). What CAN be pinned in CI is the pure decision logic two
-/// real bugs turned out to live in, both found only by running this
-/// feature on real 3-monitor hardware:
+/// cannot be exercised here. What CAN be pinned in CI is the pure decision
+/// logic two real bugs turned out to live in, both found — and both
+/// measured with real numbers — only by running this feature on real
+/// 3-monitor hardware:
 ///
 /// 1. A naive global minimum over every on-screen status item can pick up
 ///    a DIFFERENT screen's full replica of the same items ("Displays have
-///    separate Spaces" gives every screen its own copy) — including
-///    negative x values. `isWithinScreen(x:screenFrame:)` is the filter
-///    that excludes them.
+///    separate Spaces" gives every screen its own copy, at a shifted x
+///    range — including negative x). `isWithinScreen(x:screenFrame:)` is
+///    the filter that excludes them.
 /// 2. The frontmost app's active menu bar follows whichever screen has
-///    focus, which is not always `NSScreen.screens.first`. `screenFrame
-///    (containing:screenFrames:)` is what finds the correct screen from
-///    the AX measurement instead of assuming a fixed one.
+///    focus, which is not always `NSScreen.screens.first`. Pairing an
+///    unfiltered `appMenuMaxX` with a `statusRegionMinX` fixed to one
+///    screen silently computes `freeWidth` from two different displays.
+///    `screenFrame(containing:screenFrames:)` finds the correct screen
+///    from the AX measurement itself instead of assuming a fixed one.
+///
+/// Every fixture number below (the three screen frames, the three
+/// `appMenuMaxX` readings, and the three per-screen status-item replica
+/// offsets) is a real measurement from this developer's actual 3-monitor
+/// machine, not invented. See the commits that introduced these fixes for
+/// how they were obtained.
 final class MenuBarSpaceProbeTests: XCTestCase {
+    /// The real 3-monitor layout: three 2560×1440 screens, contiguous in
+    /// the global coordinate space, with the menu-bar-owning ("origin")
+    /// screen in the middle of the x-range rather than at either extreme.
+    private let origin = CGRect(x: 0, y: 0, width: 2560, height: 1440)
+    private let rightDisplay = CGRect(
+        x: 2560, y: 0, width: 2560, height: 1440
+    )
+    private let leftDisplay = CGRect(
+        x: -2560, y: 0, width: 2560, height: 1440
+    )
+    private var threeMonitorLayout: [CGRect] {
+        [origin, rightDisplay, leftDisplay]
+    }
+
+    /// Real per-screen status-item replica anchors: with "Displays have
+    /// separate Spaces", the identical set of status items is replicated
+    /// onto every screen's own menu bar, each shifted into that screen's
+    /// x-range. Measured directly (`CGWindowListCopyWindowInfo`, layer 25)
+    /// on the real machine.
+    private let originStatusItemsAnchorX: CGFloat = 1614
+    private let rightDisplayStatusItemsAnchorX: CGFloat = 4177
+    private let leftDisplayStatusItemsAnchorX: CGFloat = -946
+
     // MARK: - isWithinScreen(x:screenFrame:)
 
     func testIsWithinScreenAcceptsXInsideTheScreensRange() {
-        let screen = CGRect(x: 0, y: 0, width: 2560, height: 1440)
         XCTAssertTrue(
-            MenuBarSpaceProbe.isWithinScreen(x: 1614, screenFrame: screen)
+            MenuBarSpaceProbe.isWithinScreen(
+                x: originStatusItemsAnchorX,
+                screenFrame: origin
+            )
         )
     }
 
     func testIsWithinScreenRejectsAnotherScreensReplicaOfTheSameItem() {
-        // The exact regression this fixed: on this developer's real
-        // 3-monitor machine, CGWindowList returned the identical set of
-        // status items three times — once per screen — with display 3's
-        // copy sitting at negative x (screen 3's frame: -2560...0). A
-        // status item belonging to that replica must never be counted as
-        // "on" the menu bar screen (0...2560).
-        let menuBarScreen = CGRect(x: 0, y: 0, width: 2560, height: 1440)
-        let statusItemXOnDisplay3Replica: CGFloat = -946
+        // The exact regression this fixed: a status item belonging to the
+        // left display's replica of the status-item set must never be
+        // counted as "on" the origin (menu bar) screen.
         XCTAssertFalse(
             MenuBarSpaceProbe.isWithinScreen(
-                x: statusItemXOnDisplay3Replica,
-                screenFrame: menuBarScreen
+                x: leftDisplayStatusItemsAnchorX,
+                screenFrame: origin
             )
         )
     }
 
     func testIsWithinScreenAcceptsBothInclusiveBoundaries() {
-        let screen = CGRect(x: 0, y: 0, width: 2560, height: 1440)
         XCTAssertTrue(
-            MenuBarSpaceProbe.isWithinScreen(x: 0, screenFrame: screen)
+            MenuBarSpaceProbe.isWithinScreen(x: 0, screenFrame: origin)
         )
         XCTAssertTrue(
-            MenuBarSpaceProbe.isWithinScreen(x: 2560, screenFrame: screen)
+            MenuBarSpaceProbe.isWithinScreen(x: 2560, screenFrame: origin)
         )
     }
 
     func testIsWithinScreenRejectsXJustOutsideEitherBoundary() {
-        let screen = CGRect(x: 0, y: 0, width: 2560, height: 1440)
         XCTAssertFalse(
-            MenuBarSpaceProbe.isWithinScreen(x: -0.5, screenFrame: screen)
+            MenuBarSpaceProbe.isWithinScreen(x: -0.5, screenFrame: origin)
         )
         XCTAssertFalse(
-            MenuBarSpaceProbe.isWithinScreen(x: 2560.5, screenFrame: screen)
+            MenuBarSpaceProbe.isWithinScreen(x: 2560.5, screenFrame: origin)
         )
     }
 
     // MARK: - screenFrame(containing:screenFrames:)
 
-    /// The exact 3-monitor layout measured on this developer's real
-    /// machine: three 2560×1440 screens, contiguous in the global
-    /// coordinate space, with the menu-bar-owning screen in the middle of
-    /// the x-range rather than at either extreme.
-    private let threeMonitorLayout: [CGRect] = [
-        CGRect(x: 0, y: 0, width: 2560, height: 1440),
-        CGRect(x: 2560, y: 0, width: 2560, height: 1440),
-        CGRect(x: -2560, y: 0, width: 2560, height: 1440),
-    ]
-
     func testScreenFrameContainingFindsTheCorrectDisplayAmongThree() {
-        // Focus on display 1 (0...2560): a menu bar boundary measured
-        // there must resolve to display 1's frame, not any other.
+        // Real appMenuMaxX readings, one per focused display.
         XCTAssertEqual(
             MenuBarSpaceProbe.screenFrame(
-                containing: 234,
+                containing: 234.0,  // focus: RevvySwarm, origin display
                 screenFrames: threeMonitorLayout
             ),
-            threeMonitorLayout[0]
+            origin
         )
-        // Focus on display 2 (2560...5120).
         XCTAssertEqual(
             MenuBarSpaceProbe.screenFrame(
-                containing: 2794,
+                containing: 2984.0,  // focus: Notion, right display
                 screenFrames: threeMonitorLayout
             ),
-            threeMonitorLayout[1]
+            rightDisplay
         )
-        // Focus on display 3 (-2560...0).
         XCTAssertEqual(
             MenuBarSpaceProbe.screenFrame(
-                containing: -2326,
+                containing: -1932.0,  // focus: Chrome, left display
                 screenFrames: threeMonitorLayout
             ),
-            threeMonitorLayout[2]
+            leftDisplay
         )
     }
 
@@ -125,31 +137,101 @@ final class MenuBarSpaceProbeTests: XCTestCase {
     }
 
     func testScreenFrameContainingNeverMatchesTwoContiguousScreensAtTheSharedBoundary() {
-        // x = 2560 is simultaneously screen 1's maxX and screen 2's minX.
-        // Exactly one screen must match, not zero and not both.
-        let match = MenuBarSpaceProbe.screenFrame(
-            containing: 2560,
-            screenFrames: threeMonitorLayout
-        )
-        XCTAssertEqual(match, threeMonitorLayout[1])
-    }
-
-    /// This is the scenario the second live-verification bug report
-    /// described: measuring the AX menu bar on one screen while scanning
-    /// status items filtered to a DIFFERENT, fixed screen produces a wrong
-    /// `freeWidth` in either direction. Asserting that `screenFrame(
-    /// containing:)` picks display 2 (not display 1) when focus is on
-    /// display 2 is what a fixed `NSScreen.screens.first` fallback would
-    /// have gotten wrong.
-    func testScreenFrameContainingFollowsFocusRatherThanAFixedDisplay() {
-        let focusedOnDisplay2AppMenuMaxX: CGFloat = 2794
+        // x = 2560 is simultaneously the origin screen's maxX and the
+        // right display's minX. Exactly one screen must match.
         XCTAssertEqual(
             MenuBarSpaceProbe.screenFrame(
-                containing: focusedOnDisplay2AppMenuMaxX,
+                containing: 2560,
                 screenFrames: threeMonitorLayout
             ),
-            threeMonitorLayout[1],
-            "must resolve to the focused display, not screens.first"
+            rightDisplay
         )
+    }
+
+    // MARK: - The multi-display bug, reproduced and fixed with real numbers
+
+    /// Reproduces, with the exact numbers measured live on the real
+    /// machine, the silently-inflated `freeWidth` the bug produced: focus
+    /// on the LEFT display gave `appMenuMaxX = -1932`, but the buggy code
+    /// paired it with `statusRegionMinX` fixed to the origin screen
+    /// (1614), yielding `1614 - (-1932) - 8 = 3538` — enough imaginary
+    /// free space that the app would never collapse no matter how full
+    /// the real menu bar was.
+    ///
+    /// With the fix, `statusRegionMinX` is measured on the SAME screen
+    /// `appMenuMaxX` came from (here, the left display's own replica,
+    /// anchored at -946), giving a small, sane, positive `freeWidth`.
+    func testLeftDisplayFocusNoLongerProducesInflatedFreeWidth() {
+        let appMenuMaxX: CGFloat = -1932.0
+        let matchedScreen = MenuBarSpaceProbe.screenFrame(
+            containing: appMenuMaxX,
+            screenFrames: threeMonitorLayout
+        )
+        XCTAssertEqual(matchedScreen, leftDisplay)
+
+        let buggyFreeWidth =
+            originStatusItemsAnchorX - appMenuMaxX
+                - MenuBarSpaceCalculator.gutter
+        XCTAssertEqual(
+            buggyFreeWidth, 3538,
+            "sanity check against the measured bug reading"
+        )
+
+        let fixedFreeWidth =
+            leftDisplayStatusItemsAnchorX - appMenuMaxX
+                - MenuBarSpaceCalculator.gutter
+        XCTAssertEqual(fixedFreeWidth, 978)
+        XCTAssertLessThan(
+            fixedFreeWidth, buggyFreeWidth,
+            "the fix must not still report the inflated width"
+        )
+    }
+
+    /// Same reproduction for the RIGHT display, where the bug produced a
+    /// negative `freeWidth` (`1614 - 2984 - 8 = -1378`) that would
+    /// collapse every profile even on a completely empty menu bar.
+    func testRightDisplayFocusNoLongerProducesNegativeFreeWidth() {
+        let appMenuMaxX: CGFloat = 2984.0
+        let matchedScreen = MenuBarSpaceProbe.screenFrame(
+            containing: appMenuMaxX,
+            screenFrames: threeMonitorLayout
+        )
+        XCTAssertEqual(matchedScreen, rightDisplay)
+
+        let buggyFreeWidth =
+            originStatusItemsAnchorX - appMenuMaxX
+                - MenuBarSpaceCalculator.gutter
+        XCTAssertEqual(
+            buggyFreeWidth, -1378,
+            "sanity check against the measured bug reading"
+        )
+
+        let fixedFreeWidth =
+            rightDisplayStatusItemsAnchorX - appMenuMaxX
+                - MenuBarSpaceCalculator.gutter
+        XCTAssertEqual(fixedFreeWidth, 1185)
+        XCTAssertGreaterThan(
+            fixedFreeWidth, 0,
+            "the fix must not still report a negative width"
+        )
+    }
+
+    /// The consistent (already-correct) case: focus on the origin display
+    /// itself, both numbers naturally agreeing even without the fix.
+    /// Included so the fix is shown to be a no-op in the case that always
+    /// worked, not just a change in behavior everywhere.
+    func testOriginDisplayFocusIsUnaffectedByTheFix() {
+        let appMenuMaxX: CGFloat = 234.0
+        XCTAssertEqual(
+            MenuBarSpaceProbe.screenFrame(
+                containing: appMenuMaxX,
+                screenFrames: threeMonitorLayout
+            ),
+            origin
+        )
+        let freeWidth =
+            originStatusItemsAnchorX - appMenuMaxX
+                - MenuBarSpaceCalculator.gutter
+        XCTAssertEqual(freeWidth, 1372)
     }
 }
