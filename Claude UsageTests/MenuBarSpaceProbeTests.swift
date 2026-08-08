@@ -301,6 +301,62 @@ final class MenuBarSpaceProbeTests: XCTestCase {
         }
     }
 
+    // MARK: - menuMaxX(fromChildFrames:)
+
+    func testMenuMaxXReturnsTheMaximumRightEdgeWhenAllFramesAreReadable() {
+        let frames: [CGRect?] = [
+            CGRect(x: 0, y: 0, width: 50, height: 22),
+            CGRect(x: 50, y: 0, width: 40, height: 22),
+            CGRect(x: 90, y: 0, width: 60, height: 22)
+        ]
+        XCTAssertEqual(
+            MenuBarSpaceProbe.menuMaxX(fromChildFrames: frames), 150
+        )
+    }
+
+    func testMenuMaxXReturnsNilWhenOneMiddleFrameIsUnreadable() {
+        // The regression this fixed: an unreadable child used to be
+        // skipped, silently under-estimating maxX from the readable
+        // remainder instead of invalidating the whole measurement.
+        let frames: [CGRect?] = [
+            CGRect(x: 0, y: 0, width: 50, height: 22),
+            nil,
+            CGRect(x: 90, y: 0, width: 60, height: 22)
+        ]
+        XCTAssertNil(MenuBarSpaceProbe.menuMaxX(fromChildFrames: frames))
+    }
+
+    func testMenuMaxXReturnsNilWhenTheLastFrameIsUnreadable() {
+        let frames: [CGRect?] = [
+            CGRect(x: 0, y: 0, width: 50, height: 22),
+            CGRect(x: 50, y: 0, width: 40, height: 22),
+            nil
+        ]
+        XCTAssertNil(MenuBarSpaceProbe.menuMaxX(fromChildFrames: frames))
+    }
+
+    func testMenuMaxXReturnsNilWhenTheFirstFrameIsUnreadable() {
+        let frames: [CGRect?] = [
+            nil,
+            CGRect(x: 50, y: 0, width: 40, height: 22),
+            CGRect(x: 90, y: 0, width: 60, height: 22)
+        ]
+        XCTAssertNil(MenuBarSpaceProbe.menuMaxX(fromChildFrames: frames))
+    }
+
+    func testMenuMaxXReturnsNilForAnEmptyArray() {
+        XCTAssertNil(MenuBarSpaceProbe.menuMaxX(fromChildFrames: []))
+    }
+
+    func testMenuMaxXReturnsItsRightEdgeForASingleReadableFrame() {
+        let frames: [CGRect?] = [
+            CGRect(x: 10, y: 0, width: 30, height: 22)
+        ]
+        XCTAssertEqual(
+            MenuBarSpaceProbe.menuMaxX(fromChildFrames: frames), 40
+        )
+    }
+
     // MARK: - Ambiguous (stacked/overlapping) arrangements
 
     /// Vertically stacked displays share an x-range, so x alone cannot say

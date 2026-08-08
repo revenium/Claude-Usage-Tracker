@@ -283,7 +283,7 @@ struct MenuBarSpaceProbe: MenuBarSpaceProbing {
         // to "unmeasurable", never to a multi-second main-thread stall.
         let deadline = DispatchTime.now().uptimeNanoseconds
             + UInt64(axTotalBudgetSeconds * 1_000_000_000)
-        var maxX: CGFloat?
+        var frames: [CGRect?] = []
         for child in children {
             guard DispatchTime.now().uptimeNanoseconds < deadline else {
                 // Out of budget with menus left unread. Any maxX gathered so
@@ -291,7 +291,30 @@ struct MenuBarSpaceProbe: MenuBarSpaceProbing {
                 // would overstate free space and under-collapse. Discard it.
                 return nil
             }
-            guard let frame = frame(of: child) else { continue }
+            frames.append(frame(of: child))
+        }
+        return menuMaxX(fromChildFrames: frames)
+    }
+
+    /// Pure decision logic behind `frontmostAppMenuMaxX()`'s "reject a
+    /// partial reading" rule, extracted so it is unit-testable with plain
+    /// `CGRect` values rather than real `AXUIElement`s.
+    ///
+    /// A `nil` anywhere in `frames` means one menu bar child's position/size
+    /// could not be read (routine — Accessibility reads fail for all sorts
+    /// of reasons). Skipping it and taking the max of the rest would
+    /// UNDER-estimate the true right edge, which overstates free menu bar
+    /// space and under-collapses our own items — the exact failure mode the
+    /// budget-expiry path above already refuses to accept. So a single
+    /// unreadable child invalidates the whole measurement, mirroring that
+    /// budget-expiry path: both return `nil` rather than a partial `maxX`.
+    ///
+    /// Also `nil` on an empty array — there is no right edge to report.
+    static func menuMaxX(fromChildFrames frames: [CGRect?]) -> CGFloat? {
+        guard !frames.isEmpty else { return nil }
+        var maxX: CGFloat?
+        for frame in frames {
+            guard let frame else { return nil }
             let rightEdge = frame.origin.x + frame.size.width
             maxX = maxX.map { Swift.max($0, rightEdge) } ?? rightEdge
         }
