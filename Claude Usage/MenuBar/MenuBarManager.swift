@@ -3076,6 +3076,14 @@ class MenuBarManager: NSObject, ObservableObject {
     /// `updateAllStatusBarIcons()`), which had no data-driven stop. This
     /// trigger is driven by real external process launches/quits the app
     /// itself never causes, so there is no such cycle to close.
+    ///
+    /// Each notification also carries the launched/quit app's own
+    /// `NSRunningApplication` under `NSWorkspace.applicationUserInfoKey`.
+    /// That bundle identifier is threaded down to
+    /// `handleMenuBarManagerActivityChange(launched:terminated:)`, which
+    /// reconciles it against the resampled process list — see
+    /// `MenuBarManagerActivityReconciler` for why a resample alone isn't
+    /// enough.
     private func setupMenuBarManagerObserver() {
         // Mirrors `setupHeadlessModeObserver()`'s re-entrancy guard: `setup()`
         // can run again (e.g. the headless retry path in
@@ -3098,9 +3106,15 @@ class MenuBarManager: NSObject, ObservableObject {
                 forName: NSWorkspace.didLaunchApplicationNotification,
                 object: nil,
                 queue: .main
-            ) { [weak self] _ in
+            ) { [weak self] notification in
                 MainActor.assumeIsolated {
-                    self?.handleMenuBarManagerActivityChange()
+                    let launched = (notification.userInfo?[
+                        NSWorkspace.applicationUserInfoKey
+                    ] as? NSRunningApplication)?.bundleIdentifier
+                    self?.handleMenuBarManagerActivityChange(
+                        launched: launched,
+                        terminated: nil
+                    )
                 }
             }
         menuBarManagerTerminateObserver = NSWorkspace.shared
@@ -3108,17 +3122,46 @@ class MenuBarManager: NSObject, ObservableObject {
                 forName: NSWorkspace.didTerminateApplicationNotification,
                 object: nil,
                 queue: .main
-            ) { [weak self] _ in
+            ) { [weak self] notification in
                 MainActor.assumeIsolated {
-                    self?.handleMenuBarManagerActivityChange()
+                    let terminated = (notification.userInfo?[
+                        NSWorkspace.applicationUserInfoKey
+                    ] as? NSRunningApplication)?.bundleIdentifier
+                    self?.handleMenuBarManagerActivityChange(
+                        launched: nil,
+                        terminated: terminated
+                    )
                 }
             }
     }
 
-    private func handleMenuBarManagerActivityChange() {
+    /// - Parameters:
+    ///   - launched: The bundle identifier of the app that just launched,
+    ///     from the triggering `didLaunchApplicationNotification`'s
+    ///     payload, or `nil` when this call originates from a termination.
+    ///   - terminated: The mirror of `launched`, from a
+    ///     `didTerminateApplicationNotification`.
+    ///
+    /// Reconciles those against a fresh process-list sample via
+    /// `MenuBarManagerActivityReconciler` before handing the result to
+    /// `menuBarManagerTracker` — a plain resample can lag the notification
+    /// that triggered it (the just-launched app not yet listed, or the
+    /// just-quit app not yet removed), which would otherwise leave menu bar
+    /// profiles stuck in the wrong state until an unrelated event happened
+    /// to trigger a later recompute.
+    private func handleMenuBarManagerActivityChange(
+        launched: String?,
+        terminated: String?
+    ) {
+        let reconciledBundleIdentifiers = MenuBarManagerActivityReconciler
+            .reconciled(
+                sample: NSWorkspaceRunningApplications()
+                    .runningBundleIdentifiers,
+                launched: launched,
+                terminated: terminated
+            )
         let changed = menuBarManagerTracker.update(
-            runningBundleIdentifiers:
-                NSWorkspaceRunningApplications().runningBundleIdentifiers
+            runningBundleIdentifiers: reconciledBundleIdentifiers
         )
         guard changed else { return }
         // `.never` and `.afterCount` never consult the detected manager

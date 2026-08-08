@@ -82,10 +82,11 @@ final class MenuBarManagerDetectionTests: XCTestCase {
 /// Tests for `MenuBarManagerTransitionTracker`, which filters
 /// `NSWorkspace`'s launch/quit notifications — fired for every application
 /// on the system — down to genuine transitions in the detected manager, so
-/// `MenuBarManager.handleMenuBarManagerActivityChange()` only replans the
-/// menu bar overflow when the answer to "which manager is running" actually
-/// changed. Everything here is `[String]` in, `Bool`/optional out — no real
-/// process list, no `NSWorkspace`, no `MenuBarManager`.
+/// `MenuBarManager.handleMenuBarManagerActivityChange(launched:terminated:)`
+/// only replans the menu bar overflow when the answer to "which manager is
+/// running" actually changed. Everything here is `[String]` in,
+/// `Bool`/optional out — no real process list, no `NSWorkspace`, no
+/// `MenuBarManager`.
 final class MenuBarManagerTransitionTrackerTests: XCTestCase {
     func testNoManagerRunningAtStartIsNotATransition() {
         let tracker = MenuBarManagerTransitionTracker()
@@ -167,5 +168,129 @@ final class MenuBarManagerTransitionTrackerTests: XCTestCase {
         let tracker = MenuBarManagerTransitionTracker()
         XCTAssertFalse(tracker.update(runningBundleIdentifiers: []))
         XCTAssertFalse(tracker.update(runningBundleIdentifiers: []))
+    }
+}
+
+/// Tests for `MenuBarManagerActivityReconciler`, the pure helper that folds
+/// a launch/quit notification's own bundle identifier into a freshly
+/// sampled process list — see its doc comment in
+/// `MenuBarManagerDetection.swift` for why the resample alone can lag the
+/// notification that triggered it. Every test injects its own bundle
+/// identifier list; none reads real `NSWorkspace` state, which matters
+/// because this machine genuinely runs Thaw (`com.stonerl.Thaw`).
+final class MenuBarManagerActivityReconcilerTests: XCTestCase {
+    func testAppendsALaunchedIdentifierMissingFromTheSample() {
+        let reconciled = MenuBarManagerActivityReconciler.reconciled(
+            sample: ["com.apple.finder"],
+            launched: "com.stonerl.Thaw",
+            terminated: nil
+        )
+        XCTAssertEqual(
+            Set(reconciled),
+            ["com.apple.finder", "com.stonerl.Thaw"]
+        )
+    }
+
+    func testDoesNotDuplicateALaunchedIdentifierAlreadyInTheSample() {
+        let reconciled = MenuBarManagerActivityReconciler.reconciled(
+            sample: ["com.apple.finder", "com.stonerl.Thaw"],
+            launched: "com.stonerl.Thaw",
+            terminated: nil
+        )
+        XCTAssertEqual(
+            reconciled.filter { $0 == "com.stonerl.Thaw" }.count,
+            1
+        )
+    }
+
+    func testRemovesATerminatedIdentifierStillPresentInTheSample() {
+        let reconciled = MenuBarManagerActivityReconciler.reconciled(
+            sample: ["com.apple.finder", "com.stonerl.Thaw"],
+            launched: nil,
+            terminated: "com.stonerl.Thaw"
+        )
+        XCTAssertEqual(reconciled, ["com.apple.finder"])
+    }
+
+    func testATerminatedIdentifierAlreadyAbsentFromTheSampleIsANoOp() {
+        let reconciled = MenuBarManagerActivityReconciler.reconciled(
+            sample: ["com.apple.finder"],
+            launched: nil,
+            terminated: "com.stonerl.Thaw"
+        )
+        XCTAssertEqual(reconciled, ["com.apple.finder"])
+    }
+
+    func testNilLaunchedAndTerminatedReturnsTheSampleUnchanged() {
+        let sample = ["com.apple.finder", "com.apple.Safari"]
+        let reconciled = MenuBarManagerActivityReconciler.reconciled(
+            sample: sample,
+            launched: nil,
+            terminated: nil
+        )
+        XCTAssertEqual(reconciled, sample)
+    }
+}
+
+/// End-to-end tests proving the reconciler actually closes the launch/quit
+/// races described in `MenuBarManagerActivityReconciler`'s doc comment: a
+/// notification's payload reconciled against a stale resample must still
+/// produce a transition the tracker reports, and an unrelated app must
+/// still be a no-op even after going through reconciliation. These mirror
+/// what `MenuBarManager.handleMenuBarManagerActivityChange(launched:terminated:)`
+/// actually does — reconcile, then feed the result to the tracker — without
+/// touching real `NSWorkspace` state.
+final class MenuBarManagerActivityReconciliationTransitionTests: XCTestCase {
+    func testALaunchedManagerMissingFromTheResampleIsStillDetectedAsATransition() {
+        // Simulates the launch race: Thaw just launched, but the resampled
+        // process list hasn't caught up yet and still doesn't list it.
+        let tracker = MenuBarManagerTransitionTracker()
+        let staleSample = ["com.apple.finder"]
+
+        let reconciled = MenuBarManagerActivityReconciler.reconciled(
+            sample: staleSample,
+            launched: "com.stonerl.Thaw",
+            terminated: nil
+        )
+        let changed = tracker.update(runningBundleIdentifiers: reconciled)
+
+        XCTAssertTrue(changed)
+        XCTAssertEqual(tracker.lastDetected?.displayName, "Thaw")
+    }
+
+    func testATerminatedManagerStillInTheResampleIsStillDetectedAsATransition() {
+        // Simulates the terminate race: Thaw just quit, but the resampled
+        // process list hasn't caught up yet and still lists it.
+        let tracker = MenuBarManagerTransitionTracker(
+            initialRunningBundleIdentifiers: ["com.stonerl.Thaw"]
+        )
+        let staleSample = ["com.stonerl.Thaw", "com.apple.finder"]
+
+        let reconciled = MenuBarManagerActivityReconciler.reconciled(
+            sample: staleSample,
+            launched: nil,
+            terminated: "com.stonerl.Thaw"
+        )
+        let changed = tracker.update(runningBundleIdentifiers: reconciled)
+
+        XCTAssertTrue(changed)
+        XCTAssertNil(tracker.lastDetected)
+    }
+
+    func testAnUnrelatedAppLaunchingIsStillNotATransitionAfterReconciliation() {
+        let tracker = MenuBarManagerTransitionTracker(
+            initialRunningBundleIdentifiers: ["com.apple.finder"]
+        )
+        let staleSample = ["com.apple.finder"]
+
+        let reconciled = MenuBarManagerActivityReconciler.reconciled(
+            sample: staleSample,
+            launched: "com.apple.Safari",
+            terminated: nil
+        )
+        let changed = tracker.update(runningBundleIdentifiers: reconciled)
+
+        XCTAssertFalse(changed)
+        XCTAssertNil(tracker.lastDetected)
     }
 }

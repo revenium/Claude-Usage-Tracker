@@ -107,6 +107,54 @@ enum MenuBarManagerDetection {
     }
 }
 
+/// Reconciles a freshly-sampled process list against the bundle identifier
+/// carried by the `NSWorkspace` notification that triggered the sample, so
+/// a genuine launch or quit is never missed to a resample race.
+///
+/// `NSWorkspace.didLaunchApplicationNotification` /
+/// `didTerminateApplicationNotification` fire *at* the moment an app
+/// launches or quits, but `NSWorkspace.shared.runningApplications` is a
+/// separate, independently-timed snapshot: resampling it in the handler can
+/// still miss the app that just launched (not yet reflected) or still
+/// include the app that just quit (not yet removed). Either miss means
+/// `MenuBarManagerTransitionTracker.update(runningBundleIdentifiers:)` sees
+/// no change and skips the replan the notification exists to trigger — the
+/// menu bar profiles stay stuck (collapsed or uncollapsed) until some
+/// unrelated event happens to fire a recompute. Folding the notification's
+/// own payload into the sample before it reaches the tracker makes
+/// correctness independent of that timing. See
+/// `MenuBarManager.handleMenuBarManagerActivityChange(launched:terminated:)`
+/// for the production caller.
+enum MenuBarManagerActivityReconciler {
+    /// - Parameters:
+    ///   - sample: A freshly-sampled running-application bundle identifier
+    ///     list (typically `NSWorkspaceRunningApplications().runningBundleIdentifiers`).
+    ///   - launched: The bundle identifier from a
+    ///     `didLaunchApplicationNotification`'s
+    ///     `NSWorkspace.applicationUserInfoKey` payload, or `nil` if this
+    ///     call originates from a termination (or the identifier was
+    ///     unavailable — some processes have none).
+    ///   - terminated: The mirror of `launched`, from a
+    ///     `didTerminateApplicationNotification`.
+    /// - Returns: `sample` with `launched` appended if it was missing, and
+    ///   every occurrence of `terminated` removed. A `nil` argument leaves
+    ///   that side of the reconciliation untouched.
+    static func reconciled(
+        sample: [String],
+        launched: String?,
+        terminated: String?
+    ) -> [String] {
+        var reconciled = sample
+        if let terminated {
+            reconciled.removeAll { $0 == terminated }
+        }
+        if let launched, !reconciled.contains(launched) {
+            reconciled.append(launched)
+        }
+        return reconciled
+    }
+}
+
 /// Tracks the detected menu bar manager across successive process-list
 /// snapshots and reports whether the latest snapshot actually changed it.
 /// `NSWorkspace`'s `didLaunchApplicationNotification` /
@@ -117,8 +165,8 @@ enum MenuBarManagerDetection {
 /// do that. Isolating the decision here (plain `[String]` in, `Bool` out,
 /// no `NSWorkspace` or `MenuBarManager` involved) is what makes it testable
 /// without a real running process list. See
-/// `MenuBarManager.handleMenuBarManagerActivityChange()` for the production
-/// caller.
+/// `MenuBarManager.handleMenuBarManagerActivityChange(launched:terminated:)`
+/// for the production caller.
 ///
 /// `nonisolated` is required, not stylistic: this project defaults every
 /// declaration to `@MainActor` isolation, and under that default this
