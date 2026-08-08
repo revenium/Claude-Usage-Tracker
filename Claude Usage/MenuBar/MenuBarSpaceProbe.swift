@@ -217,6 +217,11 @@ struct MenuBarSpaceProbe: MenuBarSpaceProbing {
     /// `screenFrame`. See the type-level doc comment for why this must be
     /// restricted to one screen, and why that screen must be the same one
     /// `frontmostAppMenuMaxX` was measured on.
+    ///
+    /// Untested for the same reason as `frontmostAppMenuMaxX()` — see the
+    /// warning there. This needs a live window server, so only the pure
+    /// `isWithinScreen(x:screenFrame:)` it delegates to is actually
+    /// covered; the window enumeration and filtering around it are not.
     static func statusRegionMinX(in screenFrame: CGRect) -> CGFloat? {
         guard let windows = CGWindowListCopyWindowInfo(
             [.optionOnScreenOnly],
@@ -257,6 +262,22 @@ struct MenuBarSpaceProbe: MenuBarSpaceProbing {
 
     /// Right edge of the frontmost application's menu bar menus (File,
     /// Edit, View, ...), read from its Accessibility tree.
+    ///
+    /// NOTHING BELOW THIS LINE IS COVERED BY TESTS. Everything from here
+    /// down needs a live `AXUIElement` from a real running application, so
+    /// no unit test reaches it and a green suite says nothing about it.
+    /// This is not theoretical: a change to the budget guard here once made
+    /// this function return `nil` unconditionally — every menu bar reported
+    /// as unmeasurable, automatic mode silently dead — and the full suite
+    /// still passed, because the only thing it exercises is the pure
+    /// helpers. Reviewing a diff here and seeing CI green is not evidence
+    /// that it works.
+    ///
+    /// So changes here must be verified by running the app and watching
+    /// real menu bars, and the decision logic must keep being hoisted into
+    /// pure functions (`menuMaxX(fromChildFrames:)`,
+    /// `isWithinScreen(x:screenFrame:)`) where tests can actually reach it.
+    /// Anything left inline here is, by construction, unverified.
     static func frontmostAppMenuMaxX() -> CGFloat? {
         guard let frontApp = NSWorkspace.shared.frontmostApplication else {
             return nil
