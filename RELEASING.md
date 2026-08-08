@@ -45,6 +45,30 @@ rather than through an Xcode build phase, so it resolves the placeholder
 explicitly from the `APPLE_TEAM_ID` Actions variable into a runner-local copy
 of the entitlements immediately before signing.
 
+The same rule applies to the `UAT` build configuration (bundle ID
+`HamedElfayome.Claude-Usage.uat`, used to run this app's own feature work
+against a real menu bar without touching a real installation's Keychain
+items or preferences — see `KeychainBuildVariant`/`AppBuildVariant` in
+`Claude Usage/Shared/Services/KeychainService.swift` and
+`Claude Usage/Shared/Utilities/Constants.swift`). Its committed build
+settings specify `CODE_SIGN_IDENTITY = "Developer ID Application"` (the
+generic form, so it resolves against whatever matching certificate exists
+in the local keychain) but deliberately carry **no** `DEVELOPMENT_TEAM` —
+Xcode requires one to resolve Developer ID signing regardless of
+`CODE_SIGN_STYLE`, and baking a specific person's team ID into this shared
+project file is exactly what this section exists to prevent. Supply it at
+build time instead:
+
+```bash
+xcodebuild build -scheme "Claude Usage" -configuration UAT \
+  DEVELOPMENT_TEAM=<your 10-character team ID>
+```
+
+Verify with `codesign -dv --verbose=2` on the built app: it must show your
+team's `TeamIdentifier` and no `adhoc` flag. An ad-hoc-signed UAT build
+cannot hold an Accessibility (or any other TCC) grant stably — ad-hoc
+signatures change on every rebuild, so macOS re-prompts on every launch.
+
 ## One-time owner setup
 
 **Status: complete as of August 3, 2026.** All variables, secrets, and the
