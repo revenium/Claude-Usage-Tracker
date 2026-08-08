@@ -1164,6 +1164,10 @@ class MenuBarManager: NSObject, ObservableObject {
     // Observer for screen/display changes (headless mode support)
     private var screenObserver: NSObjectProtocol?
 
+    // Debounces automatic-mode overflow recomputation triggered by screen
+    // configuration changes (see `handleScreenChange()`).
+    private var overflowRecomputeDebounceTimer: Timer?
+
     // Observer for wake-from-sleep
     private var wakeObserver: NSObjectProtocol?
     private var lastAutoRefreshTime: Date = .distantPast
@@ -1360,6 +1364,8 @@ class MenuBarManager: NSObject, ObservableObject {
         refreshTimer = nil
         freshnessDeadlineTimer?.invalidate()
         freshnessDeadlineTimer = nil
+        overflowRecomputeDebounceTimer?.invalidate()
+        overflowRecomputeDebounceTimer = nil
         networkMonitor.stopMonitoring()
         autoStartService.stop()
         profileUsagePresentations.removeAll()
@@ -2985,6 +2991,28 @@ class MenuBarManager: NSObject, ObservableObject {
         if !uiManager.hasValidStatusBar {
             LoggingService.shared.log("MenuBarManager: Headless mode - display connected, retrying status bar setup (screens: \(NSScreen.screens.count))")
             setup()
+            return
+        }
+
+        // A display reconfiguration (monitor added/removed/resized) can
+        // change how much menu bar space is actually free, which only
+        // matters to automatic-mode overflow. Debounced: a single physical
+        // reconfiguration can fire this notification several times in
+        // quick succession, and recomputing on every one of them would
+        // thrash status items in and out.
+        guard profileManager.displayMode == .multi else { return }
+        scheduleOverflowRecompute()
+    }
+
+    /// Debounces automatic-mode overflow recomputation triggered by screen
+    /// configuration changes. See `handleScreenChange()`.
+    private func scheduleOverflowRecompute() {
+        overflowRecomputeDebounceTimer?.invalidate()
+        overflowRecomputeDebounceTimer = Timer.scheduledTimer(
+            withTimeInterval: 0.3,
+            repeats: false
+        ) { [weak self] _ in
+            self?.updateMultiProfileDisplay()
         }
     }
 
@@ -2998,6 +3026,8 @@ class MenuBarManager: NSObject, ObservableObject {
     ) {
         let selectedProfiles = profileManager.getSelectedProfiles()
         let config = profileManager.multiProfileConfig
+        statusBarUIManager?.overflowMode =
+            DataStore.shared.loadMenuBarOverflowMode()
         statusBarUIManager?.setupMultiProfile(
             profiles: selectedProfiles,
             target: self,
@@ -3019,6 +3049,8 @@ class MenuBarManager: NSObject, ObservableObject {
     /// Applies multi-profile selection and visual changes without recreating
     /// retained NSStatusItems, preserving their macOS and third-party ordering.
     private func updateMultiProfileDisplay() {
+        statusBarUIManager?.overflowMode =
+            DataStore.shared.loadMenuBarOverflowMode()
         statusBarUIManager?.updateMultiProfileConfiguration(
             profiles: profileManager.profiles,
             target: self,

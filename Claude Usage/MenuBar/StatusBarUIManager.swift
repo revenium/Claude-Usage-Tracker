@@ -30,17 +30,73 @@ final class StatusBarUIManager {
 
     /// Splits `profiles` (already filtered to those selected for display)
     /// into the ones that get their own status item and the ones that
-    /// collapse into the single overflow item.
+    /// collapse into the single overflow item, using the app's original
+    /// fixed threshold. Equivalent to
+    /// `splitForOverflow(profiles, threshold: overflowThreshold)`; kept as
+    /// its own overload because it's still the shape most call sites and
+    /// tests want.
     static func splitForOverflow(
         _ profiles: [Profile]
     ) -> (individual: [Profile], overflow: [Profile]) {
-        guard profiles.count > overflowThreshold else {
+        splitForOverflow(profiles, threshold: overflowThreshold)
+    }
+
+    /// Splits `profiles` using an arbitrary threshold — the pure logic
+    /// behind `MenuBarOverflowMode.afterCount(_:)`. Above `threshold`
+    /// selected profiles, individual status items collapse into one
+    /// overflow item; the number that keep their own item scales with the
+    /// threshold the same way the original fixed `4`/`3` pair did (one
+    /// fewer than the threshold), so a user-configured threshold behaves
+    /// exactly like the built-in default did at `4`.
+    static func splitForOverflow(
+        _ profiles: [Profile],
+        threshold: Int
+    ) -> (individual: [Profile], overflow: [Profile]) {
+        guard profiles.count > threshold else {
             return (profiles, [])
         }
+        let individualLimit = max(threshold - 1, 0)
         return (
-            Array(profiles.prefix(maxIndividualProfileItems)),
-            Array(profiles.dropFirst(maxIndividualProfileItems))
+            Array(profiles.prefix(individualLimit)),
+            Array(profiles.dropFirst(individualLimit))
         )
+    }
+
+    /// Splits `profiles` according to `mode`, the single entry point every
+    /// production call site should use. `.automatic` needs `spaceInput` (a
+    /// measurement of real menu bar space) and `currentCollapsedCount` (for
+    /// hysteresis, see `MenuBarSpaceCalculator`); both are ignored by the
+    /// other two modes. A `nil` `spaceInput` in `.automatic` mode (no screen
+    /// available to measure against) falls back to never collapsing, rather
+    /// than guessing — the manual modes exist for exactly this situation.
+    static func overflowPlan(
+        for profiles: [Profile],
+        mode: MenuBarOverflowMode,
+        currentCollapsedCount: Int,
+        spaceInput: MenuBarLayoutInput?
+    ) -> (individual: [Profile], overflow: [Profile]) {
+        switch mode {
+        case .never:
+            return (profiles, [])
+        case .afterCount(let threshold):
+            return splitForOverflow(profiles, threshold: threshold)
+        case .automatic:
+            guard let spaceInput else {
+                return (profiles, [])
+            }
+            let collapsedCount = MenuBarSpaceCalculator.collapsedCount(
+                for: spaceInput,
+                currentCollapsedCount: currentCollapsedCount
+            )
+            let individualCount = max(
+                profiles.count - collapsedCount,
+                0
+            )
+            return (
+                Array(profiles.prefix(individualCount)),
+                Array(profiles.dropFirst(individualCount))
+            )
+        }
     }
 
     // Stable provider-neutral metric identity prevents dynamic windows from
@@ -60,6 +116,27 @@ final class StatusBarUIManager {
     // profile.
     private var overflowStatusItem: NSStatusItem?
     private(set) var overflowProfileIDs: [UUID] = []
+
+    /// Governs how (and whether) excess profiles collapse into the overflow
+    /// item. Defaults to the pre-existing fixed-threshold behavior so
+    /// nothing changes for a caller (or a test) that never sets this
+    /// explicitly; `MenuBarManager` is the production caller that reads the
+    /// persisted user setting — which itself defaults to `.automatic` — and
+    /// assigns it here before every layout recompute.
+    var overflowMode: MenuBarOverflowMode = .afterCount(
+        StatusBarUIManager.overflowThreshold
+    )
+
+    /// Supplies live screen/foreign-item measurements for `.automatic`
+    /// mode. Injectable so tests can supply a fake without touching real
+    /// AppKit or window-server state.
+    var spaceProbe: MenuBarSpaceProbing = MenuBarSpaceProbe()
+
+    /// Estimated width for a profile item that has no `NSStatusItem` yet
+    /// (e.g. a profile just added to the selection), so `.automatic` mode
+    /// has *something* to measure before the item's real window exists.
+    /// Sized to this app's typical rendered icon width.
+    static let estimatedProfileItemWidth: CGFloat = 40
 
     // Current display mode
     private var isMultiProfileMode: Bool = false
@@ -570,8 +647,8 @@ final class StatusBarUIManager {
         } else {
             // Above the overflow threshold, only the first few profiles get
             // their own status item; the rest collapse into one overflow
-            // item (see `splitForOverflow`).
-            let plan = Self.splitForOverflow(selectedProfiles)
+            // item (see `overflowPlan(for:mode:currentCollapsedCount:spaceInput:)`).
+            let plan = currentOverflowPlan(for: selectedProfiles)
 
             // Create one status item per individually-shown profile
             for profile in plan.individual {
@@ -630,7 +707,7 @@ final class StatusBarUIManager {
         let selectedProfiles = profiles.filter {
             $0.isSelectedForDisplay && !$0.deletionInProgress
         }
-        let plan = Self.splitForOverflow(selectedProfiles)
+        let plan = currentOverflowPlan(for: selectedProfiles)
         let desiredIDs: Set<UUID> = selectedProfiles.isEmpty
             ? [Self.multiProfileDefaultPlaceholderID]
             : Set(plan.individual.map(\.id))
@@ -704,6 +781,52 @@ final class StatusBarUIManager {
         LoggingService.shared.logUIEvent(
             "Multi-profile config updated: removed=\(idsToRemove.count), added=\(idsToAdd.count), kept=\(currentIDs.intersection(desiredIDs).count)"
         )
+    }
+
+    /// Computes the individual/overflow split for `selectedProfiles`
+    /// according to `overflowMode`, measuring current item widths via
+    /// `spaceProbe` when `.automatic` is in effect. `.never` and
+    /// `.afterCount` never touch the probe at all.
+    private func currentOverflowPlan(
+        for selectedProfiles: [Profile]
+    ) -> (individual: [Profile], overflow: [Profile]) {
+        let spaceInput: MenuBarLayoutInput?
+        if case .automatic = overflowMode {
+            let ourItemWidths = selectedProfiles.map { profile in
+                itemWidth(for: multiProfileStatusItems[profile.id])
+                    ?? Self.estimatedProfileItemWidth
+            }
+            let overflowWidth = itemWidth(for: overflowStatusItem)
+                ?? Self.estimatedProfileItemWidth
+            spaceInput = spaceProbe.makeLayoutInput(
+                ourItemWidths: ourItemWidths,
+                overflowItemWidth: overflowWidth
+            )
+        } else {
+            spaceInput = nil
+        }
+        return Self.overflowPlan(
+            for: selectedProfiles,
+            mode: overflowMode,
+            currentCollapsedCount: overflowProfileIDs.count,
+            spaceInput: spaceInput
+        )
+    }
+
+    /// The real, measured width of `item`'s button window, or its rendered
+    /// image's width as a fallback for the brief window before AppKit
+    /// finishes laying the button's own window out. `nil` when neither is
+    /// available (most commonly: `item` is `nil`, because no status item
+    /// has been created yet for that profile).
+    private func itemWidth(for item: NSStatusItem?) -> CGFloat? {
+        guard let button = item?.button else { return nil }
+        if let window = button.window, window.frame.width > 0 {
+            return window.frame.width
+        }
+        if let image = button.image {
+            return image.size.width
+        }
+        return nil
     }
 
     /// Reconciles the single overflow status item against the profiles

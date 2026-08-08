@@ -16,6 +16,30 @@ final class StatusBarOverflowTests: HostedAppTestCase {
         @objc func toggle() {}
     }
 
+    /// A `MenuBarSpaceProbing` fake that returns a fixed screen/foreign-item
+    /// measurement (or `nil`, simulating no available screen) regardless of
+    /// what `StatusBarUIManager` asks for, while still substituting the
+    /// caller-supplied item widths so tests reflect however many items are
+    /// actually in play.
+    private final class FakeSpaceProbe: MenuBarSpaceProbing {
+        var fixedMeasurement: (
+            screenWidth: CGFloat, foreignItemsWidth: CGFloat
+        )?
+
+        func makeLayoutInput(
+            ourItemWidths: [CGFloat],
+            overflowItemWidth: CGFloat
+        ) -> MenuBarLayoutInput? {
+            guard let fixedMeasurement else { return nil }
+            return MenuBarLayoutInput(
+                screenWidth: fixedMeasurement.screenWidth,
+                foreignItemsWidth: fixedMeasurement.foreignItemsWidth,
+                ourItemWidths: ourItemWidths,
+                overflowItemWidth: overflowItemWidth
+            )
+        }
+    }
+
     private func makeProfiles(_ count: Int) -> [Profile] {
         (0..<count).map {
             Profile(name: "Profile \($0)")
@@ -195,5 +219,169 @@ final class StatusBarOverflowTests: HostedAppTestCase {
             activeProfileID: nil
         )
         XCTAssertEqual(rows.map(\.id), [profiles[0].id])
+    }
+
+    // MARK: - overflowPlan(for:mode:currentCollapsedCount:spaceInput:) (pure logic)
+
+    func testOverflowPlanNeverModeKeepsEveryProfileIndividualRegardlessOfCount() {
+        let profiles = makeProfiles(20)
+        let plan = StatusBarUIManager.overflowPlan(
+            for: profiles,
+            mode: .never,
+            currentCollapsedCount: 0,
+            spaceInput: nil
+        )
+        XCTAssertEqual(plan.individual.count, 20)
+        XCTAssertTrue(plan.overflow.isEmpty)
+    }
+
+    func testOverflowPlanAfterCountModeUsesTheConfiguredThreshold() {
+        let profiles = makeProfiles(8)
+        let plan = StatusBarUIManager.overflowPlan(
+            for: profiles,
+            mode: .afterCount(6),
+            currentCollapsedCount: 0,
+            spaceInput: nil
+        )
+        XCTAssertEqual(plan.individual.count, 5)
+        XCTAssertEqual(plan.overflow.count, 3)
+    }
+
+    func testOverflowPlanAutomaticModeWithNoSpaceInputNeverCollapses() {
+        // No screen to measure against (e.g. fully headless) — automatic
+        // mode must fall back to never collapsing rather than guess.
+        let profiles = makeProfiles(20)
+        let plan = StatusBarUIManager.overflowPlan(
+            for: profiles,
+            mode: .automatic,
+            currentCollapsedCount: 0,
+            spaceInput: nil
+        )
+        XCTAssertEqual(plan.individual.count, 20)
+        XCTAssertTrue(plan.overflow.isEmpty)
+    }
+
+    func testOverflowPlanAutomaticModeCollapsesWhenSpaceIsInsufficient() {
+        let profiles = makeProfiles(5)
+        let spaceInput = MenuBarLayoutInput(
+            screenWidth: 600,
+            foreignItemsWidth: 0,
+            ourItemWidths: Array(repeating: CGFloat(40), count: 5),
+            overflowItemWidth: 30
+        )
+        // freeWidth = 600 - 0 - 500 (appMenuReserve) = 100; 5 * 40 = 200
+        // does not fit.
+        let plan = StatusBarUIManager.overflowPlan(
+            for: profiles,
+            mode: .automatic,
+            currentCollapsedCount: 0,
+            spaceInput: spaceInput
+        )
+        XCTAssertFalse(plan.overflow.isEmpty)
+        XCTAssertEqual(plan.individual.count + plan.overflow.count, 5)
+        XCTAssertNotEqual(
+            plan.overflow.count,
+            1,
+            "must never collapse exactly one profile"
+        )
+    }
+
+    // MARK: - StatusBarUIManager.overflowMode integration
+
+    func testNeverModeCreatesNoOverflowItemForManyProfiles() {
+        let manager = retain(StatusBarUIManager())
+        defer { manager.cleanup() }
+        manager.overflowMode = .never
+        let target = MenuTarget()
+        let profiles = makeProfiles(12)
+        manager.setupMultiProfile(
+            profiles: profiles,
+            target: target,
+            action: #selector(MenuTarget.toggle)
+        )
+
+        XCTAssertNil(manager.overflowButton)
+        for profile in profiles {
+            XCTAssertNotNil(
+                manager.button(for: profile.id),
+                "\(profile.name) must keep its own item in .never mode"
+            )
+        }
+    }
+
+    func testAfterCountModeWithCustomThresholdOnAnInstance() {
+        let manager = retain(StatusBarUIManager())
+        defer { manager.cleanup() }
+        manager.overflowMode = .afterCount(6)
+        let target = MenuTarget()
+        let profiles = makeProfiles(8)
+        manager.setupMultiProfile(
+            profiles: profiles,
+            target: target,
+            action: #selector(MenuTarget.toggle)
+        )
+
+        XCTAssertNotNil(manager.overflowButton)
+        XCTAssertEqual(manager.overflowProfileIDs.count, 3)
+        for profile in profiles.prefix(5) {
+            XCTAssertNotNil(manager.button(for: profile.id))
+        }
+    }
+
+    func testAutomaticModeCollapsesUsingInjectedSpaceProbe() {
+        let manager = retain(StatusBarUIManager())
+        defer { manager.cleanup() }
+        manager.overflowMode = .automatic
+        let fakeProbe = FakeSpaceProbe()
+        // freeWidth = 600 - 0 - 500 = 100pt: far too little for 5 items
+        // that report ~40pt each (the estimated default width for items
+        // that don't have a real status item window yet).
+        fakeProbe.fixedMeasurement = (
+            screenWidth: 600, foreignItemsWidth: 0
+        )
+        manager.spaceProbe = fakeProbe
+        let target = MenuTarget()
+        let profiles = makeProfiles(5)
+        manager.setupMultiProfile(
+            profiles: profiles,
+            target: target,
+            action: #selector(MenuTarget.toggle)
+        )
+
+        XCTAssertNotNil(
+            manager.overflowButton,
+            "narrow simulated menu bar space must force a collapse"
+        )
+        XCTAssertFalse(manager.overflowProfileIDs.isEmpty)
+        XCTAssertNotEqual(
+            manager.overflowProfileIDs.count,
+            1,
+            "must never collapse exactly one profile"
+        )
+    }
+
+    func testAutomaticModeNeverCollapsesWhenSpaceIsAmple() {
+        let manager = retain(StatusBarUIManager())
+        defer { manager.cleanup() }
+        manager.overflowMode = .automatic
+        let fakeProbe = FakeSpaceProbe()
+        // A very wide simulated screen with no other apps' status items:
+        // plenty of room for every profile.
+        fakeProbe.fixedMeasurement = (
+            screenWidth: 6000, foreignItemsWidth: 0
+        )
+        manager.spaceProbe = fakeProbe
+        let target = MenuTarget()
+        let profiles = makeProfiles(7)
+        manager.setupMultiProfile(
+            profiles: profiles,
+            target: target,
+            action: #selector(MenuTarget.toggle)
+        )
+
+        XCTAssertNil(manager.overflowButton)
+        for profile in profiles {
+            XCTAssertNotNil(manager.button(for: profile.id))
+        }
     }
 }
