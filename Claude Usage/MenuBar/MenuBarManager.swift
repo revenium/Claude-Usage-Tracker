@@ -2661,6 +2661,13 @@ class MenuBarManager: NSObject, ObservableObject {
     }
 
     private func setupWakeObserver() {
+        // Mirrors `setupHeadlessModeObserver()`'s re-entrancy guard: `setup()`
+        // can run again (e.g. the headless retry path in
+        // `handleScreenChange()`), and re-registering here would leak a
+        // duplicate observer that fires its handler once per surviving copy —
+        // meaning one extra wake refresh per leaked copy, forever.
+        guard wakeObserver == nil else { return }
+
         wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didWakeNotification,
             object: nil,
@@ -2729,6 +2736,14 @@ class MenuBarManager: NSObject, ObservableObject {
     /// need for `wakeDelay`'s reconnect grace period: the catch-up fetch
     /// fires right away rather than after a delay.
     private func setupScreenSleepObserver() {
+        // Same re-entrancy guard as `setupHeadlessModeObserver()`. Both the
+        // sleep and wake observers below are registered together and removed
+        // together in `cleanupResources()`, so testing one is sufficient. A
+        // leaked duplicate here would pause and resume auto-refresh once per
+        // surviving copy, and each leaked wake copy would fire its own
+        // catch-up fetch.
+        guard screenSleepObserver == nil else { return }
+
         screenSleepObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.screensDidSleepNotification,
             object: nil,
@@ -2785,6 +2800,11 @@ class MenuBarManager: NSObject, ObservableObject {
     /// `RefreshTimingPolicy.autoRefreshTiming`, restoring the normal
     /// cadence just as immediately when Low Power Mode turns back off.
     private func setupLowPowerModeObserver() {
+        // Same re-entrancy guard as `setupHeadlessModeObserver()`: a leaked
+        // duplicate would rebuild the refresh timer once per surviving copy on
+        // every Low Power Mode transition.
+        guard lowPowerModeObserver == nil else { return }
+
         lowPowerModeObserver = NotificationCenter.default.addObserver(
             forName: .NSProcessInfoPowerStateDidChange,
             object: nil,
