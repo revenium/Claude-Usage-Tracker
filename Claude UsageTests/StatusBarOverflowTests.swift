@@ -30,11 +30,21 @@ final class StatusBarOverflowTests: HostedAppTestCase {
         /// can assert it only ever credits us for items actually rendered.
         private(set) var lastCurrentlyOnScreenWidth: CGFloat?
 
+        /// How many times `currentOverflowPlan` actually consulted this
+        /// probe. This is the load-bearing assertion for the
+        /// manager-detected regression fix: `currentOverflowPlan` must skip
+        /// this Accessibility-backed call entirely once a menu bar manager
+        /// is detected, not merely discard the result afterward — a test
+        /// that only checked the resulting split would still pass even if
+        /// the (expensive, contention-prone) probe call happened anyway.
+        private(set) var makeLayoutInputCallCount = 0
+
         func makeLayoutInput(
             ourItemWidths: [CGFloat],
             overflowItemWidth: CGFloat,
             currentlyOnScreenWidth: CGFloat
         ) -> MenuBarLayoutInput? {
+            makeLayoutInputCallCount += 1
             lastCurrentlyOnScreenWidth = currentlyOnScreenWidth
             guard let fixedMeasurement else { return nil }
             return MenuBarLayoutInput(
@@ -482,6 +492,89 @@ final class StatusBarOverflowTests: HostedAppTestCase {
         for profile in profiles {
             XCTAssertNotNil(manager.button(for: profile.id))
         }
+    }
+
+    /// Regression test for the shipped bug where a detected menu bar
+    /// manager (Ice, Thaw, Bartender, ...) still paid for the Accessibility
+    /// probe on every replan even though its result was always discarded.
+    /// That contention, on a machine where the manager is simultaneously
+    /// driving our own status item windows via synthetic drag events, made
+    /// Thaw's move events time out and locked up its rearrange UI —
+    /// asserting only on the resulting split (as
+    /// `testAutomaticModeDoesNotCollapseWhenRunningApplicationsProviderReportsAKnownManager`
+    /// does) would still pass even with the probe firing uselessly every
+    /// time, so this asserts directly on the call count instead.
+    func testAutomaticModeNeverConsultsSpaceProbeWhenManagerDetected() {
+        let manager = retain(StatusBarUIManager())
+        defer { manager.cleanup() }
+        manager.overflowMode = .automatic
+        let fakeProbe = FakeSpaceProbe()
+        // Narrow enough to force a collapse if the probe were consulted —
+        // proving the split below comes from skipping the probe, not from
+        // the probe happening to report ample space.
+        fakeProbe.fixedMeasurement = (
+            appMenuMaxX: 0, statusRegionMinX: 108
+        )
+        manager.spaceProbe = fakeProbe
+        let fakeRunningApplications = FakeRunningApplications()
+        fakeRunningApplications.bundleIdentifiers = ["com.stonerl.Thaw"]
+        manager.runningApplicationsProvider = fakeRunningApplications
+        let target = MenuTarget()
+        let profiles = makeProfiles(5)
+        manager.setupMultiProfile(
+            profiles: profiles,
+            target: target,
+            action: #selector(MenuTarget.toggle)
+        )
+
+        XCTAssertEqual(
+            fakeProbe.makeLayoutInputCallCount,
+            0,
+            "a detected menu bar manager must skip the Accessibility probe "
+                + "entirely, not merely discard its result — the probe "
+                + "contends with the manager's own AX-driven item moves"
+        )
+        XCTAssertNil(manager.overflowButton)
+        for profile in profiles {
+            XCTAssertNotNil(manager.button(for: profile.id))
+        }
+    }
+
+    /// Companion to `testAutomaticModeNeverConsultsSpaceProbeWhenManagerDetected`:
+    /// proves the manager-detected skip didn't also disable the probe when
+    /// no manager is present. Without a manager, `.automatic` must consult
+    /// the probe exactly as before, and collapsing must still happen when
+    /// simulated space is insufficient.
+    func testAutomaticModeConsultsSpaceProbeWhenNoManagerDetected() {
+        let manager = retain(StatusBarUIManager())
+        defer { manager.cleanup() }
+        manager.overflowMode = .automatic
+        let fakeProbe = FakeSpaceProbe()
+        fakeProbe.fixedMeasurement = (
+            appMenuMaxX: 0, statusRegionMinX: 108
+        )
+        manager.spaceProbe = fakeProbe
+        manager.runningApplicationsProvider = FakeRunningApplications()
+        let target = MenuTarget()
+        let profiles = makeProfiles(5)
+        manager.setupMultiProfile(
+            profiles: profiles,
+            target: target,
+            action: #selector(MenuTarget.toggle)
+        )
+
+        XCTAssertEqual(
+            fakeProbe.makeLayoutInputCallCount,
+            1,
+            "with no manager detected, the probe must still be consulted "
+                + "exactly once per replan, same as before this fix"
+        )
+        XCTAssertNotNil(
+            manager.overflowButton,
+            "collapsing must still happen when space is insufficient and "
+                + "no manager is present"
+        )
+        XCTAssertFalse(manager.overflowProfileIDs.isEmpty)
     }
 
     func testAutomaticModeNeverCollapsesWhenSpaceIsAmple() {

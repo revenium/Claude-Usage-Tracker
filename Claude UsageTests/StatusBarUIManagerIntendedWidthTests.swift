@@ -49,6 +49,22 @@ final class StatusBarUIManagerIntendedWidthTests: HostedAppTestCase {
         }
     }
 
+    /// A `RunningApplicationBundleIdentifiersProviding` fake reporting no
+    /// menu bar manager, so tests exercising `.automatic` mode's space-probe
+    /// path aren't at the mercy of whatever is actually running on the
+    /// machine executing them. Mirrors `StatusBarOverflowTests`'s private
+    /// fake of the same name — this machine genuinely runs Thaw, and without
+    /// this injection `currentOverflowPlan` would detect it as a manager and
+    /// skip the probe entirely, which is exactly the regression this file's
+    /// `testAutomaticModeUsesIntendedWidthOnlyForClaudeProfiles` would
+    /// otherwise silently fall victim to.
+    private final class FakeRunningApplications:
+        RunningApplicationBundleIdentifiersProviding
+    {
+        var bundleIdentifiers: [String] = []
+        var runningBundleIdentifiers: [String] { bundleIdentifiers }
+    }
+
     private func makeProfile(sessionPercentage: Double) -> Profile {
         var usage = ClaudeUsage.empty
         usage.sessionPercentage = sessionPercentage
@@ -179,6 +195,10 @@ final class StatusBarUIManagerIntendedWidthTests: HostedAppTestCase {
         let fakeProbe = FakeSpaceProbe()
         fakeProbe.fixedMeasurement = (appMenuMaxX: 0, statusRegionMinX: 6008)
         manager.spaceProbe = fakeProbe
+        // See FakeRunningApplications above: isolate this test from real
+        // menu bar manager state, or the probe assertions below would
+        // depend on nothing being detected as running on this machine.
+        manager.runningApplicationsProvider = FakeRunningApplications()
 
         let config = MultiProfileDisplayConfig(
             iconStyle: .percentage,

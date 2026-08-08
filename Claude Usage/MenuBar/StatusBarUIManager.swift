@@ -829,39 +829,73 @@ final class StatusBarUIManager {
         let spaceInput: MenuBarLayoutInput?
         let runningBundleIdentifiers: [String]
         if case .automatic = overflowMode {
-            let config = ProfileManager.shared.multiProfileConfig
-            let activeProfileId = ProfileManager.shared.activeClaudeProfileID
-            let ourItemWidths = selectedProfiles.map { profile -> CGFloat in
-                guard profile.providerID == .claude else {
-                    return itemWidth(for: multiProfileStatusItems[profile.id])
-                        ?? Self.estimatedProfileItemWidth
-                }
-                return intendedItemWidth(
-                    for: profile,
-                    config: config,
-                    isActive: profile.id == activeProfileId
-                )
-            }
-            let overflowWidth = itemWidth(for: overflowStatusItem)
-                ?? Self.estimatedProfileItemWidth
-            // Only items ALREADY on the menu bar are baked into the status
-            // region the probe is about to measure, so only those are added
-            // back. `itemWidth(for:)` returning nil means "not rendered
-            // yet" — an estimate must NOT be substituted here, or we would
-            // credit ourselves space we do not occupy. See
-            // `MenuBarLayoutInput.currentlyOnScreenWidth`.
-            let currentlyOnScreenWidth =
-                multiProfileStatusItems.values
-                    .compactMap { itemWidth(for: $0) }
-                    .reduce(0, +)
-                + (itemWidth(for: overflowStatusItem) ?? 0)
-            spaceInput = spaceProbe.makeLayoutInput(
-                ourItemWidths: ourItemWidths,
-                overflowItemWidth: overflowWidth,
-                currentlyOnScreenWidth: currentlyOnScreenWidth
-            )
+            // Read the running-application list FIRST — it's a cheap
+            // in-process `NSWorkspace` query with no Accessibility
+            // involvement — so the manager check below can decide whether
+            // the expensive gathering beneath it is worth doing at all.
             runningBundleIdentifiers =
                 runningApplicationsProvider.runningBundleIdentifiers
+            if MenuBarManagerDetection.detectedManager(
+                runningBundleIdentifiers: runningBundleIdentifiers
+            ) != nil {
+                // `overflowPlan(...)`'s `.automatic` guard below always
+                // returns "every profile keeps its own item" once a
+                // manager is detected, regardless of `spaceInput` — so
+                // skip both the width rendering and `spaceProbe
+                // .makeLayoutInput(...)` entirely rather than computing an
+                // answer only to discard it. This is NOT just an
+                // optimization: `makeLayoutInput` performs synchronous
+                // Accessibility reads on the main thread, and a menu bar
+                // manager (Ice, Thaw, Bartender, ...) is, at the same
+                // moment, driving OUR status item windows via synthetic
+                // drag events to lay itself out. AX contention between the
+                // two was observed to make Thaw's move events miss their
+                // response deadline (`EventError.itemResponseTimeout`),
+                // locking up Thaw's rearrange UI completely — switching
+                // this app to `.never` (which never touches the probe)
+                // fixed it outright. Do not reorder this back to "gather
+                // input, then decide" — the policy that manager-detected
+                // means never-collapse still lives solely in
+                // `overflowPlan(...)`'s guard; this only skips collecting
+                // input that guard would throw away anyway.
+                spaceInput = nil
+            } else {
+                let config = ProfileManager.shared.multiProfileConfig
+                let activeProfileId =
+                    ProfileManager.shared.activeClaudeProfileID
+                let ourItemWidths = selectedProfiles.map {
+                    profile -> CGFloat in
+                    guard profile.providerID == .claude else {
+                        return itemWidth(
+                            for: multiProfileStatusItems[profile.id]
+                        ) ?? Self.estimatedProfileItemWidth
+                    }
+                    return intendedItemWidth(
+                        for: profile,
+                        config: config,
+                        isActive: profile.id == activeProfileId
+                    )
+                }
+                let overflowWidth = itemWidth(for: overflowStatusItem)
+                    ?? Self.estimatedProfileItemWidth
+                // Only items ALREADY on the menu bar are baked into the
+                // status region the probe is about to measure, so only
+                // those are added back. `itemWidth(for:)` returning nil
+                // means "not rendered yet" — an estimate must NOT be
+                // substituted here, or we would credit ourselves space we
+                // do not occupy. See
+                // `MenuBarLayoutInput.currentlyOnScreenWidth`.
+                let currentlyOnScreenWidth =
+                    multiProfileStatusItems.values
+                        .compactMap { itemWidth(for: $0) }
+                        .reduce(0, +)
+                    + (itemWidth(for: overflowStatusItem) ?? 0)
+                spaceInput = spaceProbe.makeLayoutInput(
+                    ourItemWidths: ourItemWidths,
+                    overflowItemWidth: overflowWidth,
+                    currentlyOnScreenWidth: currentlyOnScreenWidth
+                )
+            }
         } else {
             spaceInput = nil
             runningBundleIdentifiers = []
