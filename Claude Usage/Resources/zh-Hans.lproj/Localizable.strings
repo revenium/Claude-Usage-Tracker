@@ -501,6 +501,8 @@
 "multiprofile.overflow.never" = "从不";
 "multiprofile.overflow.after_count" = "显示的配置文件超过";
 "multiprofile.overflow.after_count_suffix" = "个时";
+"multiprofile.overflow.accessibility_hint" = "自动模式会测量菜单栏的可用空间，这需要辅助功能权限。";
+"multiprofile.overflow.accessibility_grant_button" = "授予辅助功能权限…";
 
 /* ==================== */
 /* MARK: - General Settings (Profile-Level) */

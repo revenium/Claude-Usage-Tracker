@@ -1164,8 +1164,13 @@ class MenuBarManager: NSObject, ObservableObject {
     // Observer for screen/display changes (headless mode support)
     private var screenObserver: NSObjectProtocol?
 
+    // Observer for frontmost-application changes (automatic-mode overflow
+    // depends on the frontmost app's menu bar boundary).
+    private var frontmostAppObserver: NSObjectProtocol?
+
     // Debounces automatic-mode overflow recomputation triggered by screen
-    // configuration changes (see `handleScreenChange()`).
+    // configuration or frontmost-application changes (see
+    // `handleScreenChange()` / `handleFrontmostAppChange()`).
     private var overflowRecomputeDebounceTimer: Timer?
 
     // Observer for wake-from-sleep
@@ -1413,6 +1418,12 @@ class MenuBarManager: NSObject, ObservableObject {
         if let screenObserver = screenObserver {
             NotificationCenter.default.removeObserver(screenObserver)
             self.screenObserver = nil
+        }
+        if let frontmostAppObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(
+                frontmostAppObserver
+            )
+            self.frontmostAppObserver = nil
         }
         if let wakeObserver = wakeObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver)
@@ -2979,6 +2990,29 @@ class MenuBarManager: NSObject, ObservableObject {
                 self?.handleScreenChange()
             }
         }
+
+        // Automatic-mode overflow depends on which app is frontmost (its
+        // menu bar boundary is one of the two measured numbers), so a
+        // change of frontmost app is exactly as significant to the layout
+        // as a screen reconfiguration. This also fires when the user
+        // returns from System Settings after granting Accessibility
+        // access, which is what lets automatic mode start measuring
+        // immediately rather than waiting for some unrelated event.
+        frontmostAppObserver = NSWorkspace.shared.notificationCenter
+            .addObserver(
+                forName: NSWorkspace.didActivateApplicationNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.handleFrontmostAppChange()
+                }
+            }
+    }
+
+    private func handleFrontmostAppChange() {
+        guard profileManager.displayMode == .multi else { return }
+        scheduleOverflowRecompute()
     }
 
     private func handleScreenChange() {
@@ -3009,7 +3043,7 @@ class MenuBarManager: NSObject, ObservableObject {
     private func scheduleOverflowRecompute() {
         overflowRecomputeDebounceTimer?.invalidate()
         overflowRecomputeDebounceTimer = Timer.scheduledTimer(
-            withTimeInterval: 0.3,
+            withTimeInterval: 0.2,
             repeats: false
         ) { [weak self] _ in
             self?.updateMultiProfileDisplay()

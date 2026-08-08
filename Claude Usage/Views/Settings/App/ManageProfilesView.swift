@@ -315,6 +315,8 @@ struct ManageProfilesView: View {
                                             setOverflowMode(.automatic)
                                         }
                                     )
+                                    AccessibilityGrantHint()
+                                        .padding(.leading, 22)
                                     overflowModeRow(
                                         title:
                                             "multiprofile.overflow.never"
@@ -536,6 +538,67 @@ struct ManageProfilesView: View {
             }
         }
         .buttonStyle(.plain)
+    }
+}
+
+/// Inline hint shown under the "Automatic" overflow option: automatic mode
+/// needs the Accessibility grant to measure the frontmost app's menu bar
+/// boundary (see `MenuBarSpaceProbe.frontmostAppMenuMaxX()`), and shows
+/// nothing once it's granted. The grant is requested ONLY from this
+/// explicit button — never silently at launch.
+private struct AccessibilityGrantHint: View {
+    @State private var isTrusted = MenuBarAccessibilityAccess.isTrusted()
+
+    var body: some View {
+        Group {
+            if !isTrusted {
+                HStack(
+                    alignment: .top,
+                    spacing: DesignTokens.Spacing.small
+                ) {
+                    Image(systemName: "hand.raised.fill")
+                        .font(.system(size: 11))
+                        .foregroundColor(.orange)
+                    VStack(
+                        alignment: .leading,
+                        spacing: DesignTokens.Spacing.extraSmall
+                    ) {
+                        Text(
+                            "multiprofile.overflow.accessibility_hint"
+                                .localized
+                        )
+                        .font(DesignTokens.Typography.caption)
+                        .foregroundColor(.secondary)
+                        Button(
+                            "multiprofile.overflow.accessibility_grant_button"
+                                .localized
+                        ) {
+                            MenuBarAccessibilityAccess.requestAccess()
+                            if let url = URL(
+                                string:
+                                    "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+                            ) {
+                                NSWorkspace.shared.open(url)
+                            }
+                        }
+                        .font(DesignTokens.Typography.caption)
+                    }
+                }
+            }
+        }
+        .onAppear {
+            isTrusted = MenuBarAccessibilityAccess.isTrusted()
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: NSApplication.didBecomeActiveNotification
+            )
+        ) { _ in
+            // The user grants access from System Settings, a different
+            // app, so this is the moment we can observe the change —
+            // there is no direct notification for an AX trust flip.
+            isTrusted = MenuBarAccessibilityAccess.isTrusted()
+        }
     }
 }
 

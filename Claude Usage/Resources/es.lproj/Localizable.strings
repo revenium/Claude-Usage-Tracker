@@ -494,6 +494,8 @@
 "multiprofile.overflow.never" = "Nunca";
 "multiprofile.overflow.after_count" = "Cuando se muestran más de";
 "multiprofile.overflow.after_count_suffix" = "perfiles";
+"multiprofile.overflow.accessibility_hint" = "El modo automático mide cuánto espacio libre hay en la barra de menú, lo cual requiere acceso de Accesibilidad.";
+"multiprofile.overflow.accessibility_grant_button" = "Conceder acceso de Accesibilidad…";
 
 /* ==================== */
 /* MARK: - General Settings (Profile-Level) */
