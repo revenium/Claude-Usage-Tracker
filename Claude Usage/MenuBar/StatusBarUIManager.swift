@@ -135,6 +135,17 @@ final class StatusBarUIManager {
     /// Sized to this app's typical rendered icon width.
     static let estimatedProfileItemWidth: CGFloat = 40
 
+    /// Fallback difference between a status item's window width and its
+    /// image width, used only before `calibratedButtonPadding()` has ever
+    /// found a real item to measure (e.g. the very first cold layout pass).
+    static let fallbackButtonPadding: CGFloat = 6
+
+    /// Last padding value `calibratedButtonPadding()` measured from a real
+    /// status item, kept around so a later cold pass (no item currently has
+    /// both a window and an image) can still use a real measurement instead
+    /// of falling all the way back to `fallbackButtonPadding`.
+    private var lastKnownButtonPadding: CGFloat?
+
     // Current display mode
     private var isMultiProfileMode: Bool = false
 
@@ -789,9 +800,14 @@ final class StatusBarUIManager {
     ) -> (individual: [Profile], overflow: [Profile]) {
         let spaceInput: MenuBarLayoutInput?
         if case .automatic = overflowMode {
+            let config = ProfileManager.shared.multiProfileConfig
+            let activeProfileId = ProfileManager.shared.activeClaudeProfileID
             let ourItemWidths = selectedProfiles.map { profile in
-                itemWidth(for: multiProfileStatusItems[profile.id])
-                    ?? Self.estimatedProfileItemWidth
+                intendedItemWidth(
+                    for: profile,
+                    config: config,
+                    isActive: profile.id == activeProfileId
+                )
             }
             let overflowWidth = itemWidth(for: overflowStatusItem)
                 ?? Self.estimatedProfileItemWidth
@@ -836,6 +852,56 @@ final class StatusBarUIManager {
             return image.size.width
         }
         return nil
+    }
+
+    /// Difference between a status item button's window width and the width
+    /// of the image inside it. Calibrated from a real rendered item rather
+    /// than hardcoded, so it stays correct if AppKit's status item metrics
+    /// change. Scans every current profile item plus the overflow item for
+    /// one that has both a laid-out window and an image; caches the last
+    /// good value so a later cold pass (nothing currently qualifies) can
+    /// still use a real measurement instead of `Self.fallbackButtonPadding`.
+    func calibratedButtonPadding() -> CGFloat? {
+        let candidates = Array(multiProfileStatusItems.values)
+            + [overflowStatusItem].compactMap { $0 }
+        for item in candidates {
+            guard let button = item.button,
+                  let window = button.window,
+                  window.frame.width > 0,
+                  let image = button.image else {
+                continue
+            }
+            let padding = window.frame.width - image.size.width
+            guard padding >= 0 else { continue }
+            lastKnownButtonPadding = padding
+            return padding
+        }
+        return lastKnownButtonPadding
+    }
+
+    /// The width a profile's status item WILL have once rendered with
+    /// `config`, computed by calling the same rendering code the paint path
+    /// (`updateMultiProfileButtons`/`renderProfileMenuBar`) uses — rather
+    /// than reusing the previous render's measured width (one render
+    /// behind) or a hardcoded estimate (off by −65% to +32% across real
+    /// configs). Used only to plan the overflow split before a profile's
+    /// status item necessarily exists yet.
+    func intendedItemWidth(
+        for profile: Profile,
+        config: MultiProfileDisplayConfig,
+        isActive: Bool
+    ) -> CGFloat {
+        // isDarkMode is always false here: light and dark render identically
+        // at 34.5pt for the same config, since appearance only changes
+        // colour, not geometry — verified against `renderProfileMenuBar`.
+        let render = renderProfileMenuBar(
+            for: profile,
+            config: config,
+            isDarkMode: false,
+            isActive: isActive
+        )
+        return render.image.size.width
+            + (calibratedButtonPadding() ?? Self.fallbackButtonPadding)
     }
 
     /// Reconciles the single overflow status item against the profiles
@@ -977,6 +1043,195 @@ final class StatusBarUIManager {
         return newImage
     }
 
+    /// The rendered menu bar image for one profile, plus the session values
+    /// needed to build its accessibility label. Returned together so the
+    /// image and the label built from it can never drift apart.
+    struct ProfileMenuBarRender {
+        let image: NSImage
+        let sessionDisplay: Double
+        let showRemaining: Bool
+    }
+
+    /// Builds the exact image `updateMultiProfileButtons` paints for one
+    /// profile's status item — usage percentages, statuses, time/pace
+    /// markers, the icon-style-specific render, the provider badge, and the
+    /// active-profile underline — without touching any button. Shared by
+    /// the paint path and `intendedItemWidth(for:config:isActive:)`, which
+    /// needs the same image's width before its status item exists, so the
+    /// overflow-space calculation is never a render behind reality.
+    func renderProfileMenuBar(
+        for profile: Profile,
+        config: MultiProfileDisplayConfig,
+        isDarkMode: Bool,
+        isActive: Bool
+    ) -> ProfileMenuBarRender {
+        // Get usage data for this profile
+        let usage = profile.claudeUsage ?? ClaudeUsage.empty
+        let showRemaining = config.showRemainingPercentage
+
+        // Calculate percentages
+        let sessionUsed = usage.effectiveSessionPercentage
+        let weekUsed = usage.weeklyPercentage
+
+        let sessionDisplay = UsageStatusCalculator.getDisplayPercentage(
+            usedPercentage: sessionUsed,
+            showRemaining: showRemaining
+        )
+        let weekDisplay = UsageStatusCalculator.getDisplayPercentage(
+            usedPercentage: weekUsed,
+            showRemaining: showRemaining
+        )
+
+        let sessionElapsed = UsageStatusCalculator.elapsedFraction(
+            resetTime: usage.sessionResetTime,
+            duration: Constants.sessionWindow,
+            showRemaining: false
+        )
+        let weekElapsed = UsageStatusCalculator.elapsedFraction(
+            resetTime: usage.weeklyResetTime,
+            duration: Constants.weeklyWindow,
+            showRemaining: false
+        )
+        let sessionStatus = UsageStatusCalculator.calculateStatus(
+            usedPercentage: sessionUsed,
+            showRemaining: showRemaining,
+            elapsedFraction: config.usePaceColoring ? sessionElapsed : nil
+        )
+        let weekStatus = UsageStatusCalculator.calculateStatus(
+            usedPercentage: weekUsed,
+            showRemaining: showRemaining,
+            elapsedFraction: config.usePaceColoring ? weekElapsed : nil
+        )
+
+        // Use multi-profile config's useSystemColor as monochrome mode
+        // When useSystemColor is ON, icons will be white (like single-profile monochrome)
+        let useMonochrome = config.useSystemColor
+
+        // Calculate time marker fractions for multi-profile display
+        let sessionMarker: CGFloat? = config.showTimeMarker
+            ? sessionElapsed.map { CGFloat(showRemaining ? 1.0 - $0 : $0) }
+            : nil
+        let weekMarker: CGFloat? = config.showTimeMarker
+            ? weekElapsed.map { CGFloat(showRemaining ? 1.0 - $0 : $0) }
+            : nil
+
+        // Compute pace status for multi-profile rendering
+        let sessionPaceStatus: PaceStatus? = {
+            guard config.showPaceMarker, let elapsed = sessionElapsed else { return nil }
+            return PaceStatus.calculate(usedPercentage: sessionUsed, elapsedFraction: elapsed)
+        }()
+        let weekPaceStatus: PaceStatus? = {
+            guard config.showPaceMarker, let elapsed = weekElapsed else { return nil }
+            return PaceStatus.calculate(usedPercentage: weekUsed, elapsedFraction: elapsed)
+        }()
+
+        // Create icon based on selected style
+        let image: NSImage
+        switch config.iconStyle {
+        case .concentric:
+            if config.showProfileLabel {
+                image = renderer.createConcentricIconWithLabel(
+                    sessionPercentage: sessionDisplay,
+                    weekPercentage: config.showWeek ? weekDisplay : 0,
+                    sessionStatus: sessionStatus,
+                    weekStatus: weekStatus,
+                    profileName: profile.name,
+                    monochromeMode: useMonochrome,
+                    isDarkMode: isDarkMode,
+                    useSystemColor: false,
+                    sessionTimeMarker: sessionMarker,
+                    weekTimeMarker: config.showWeek ? weekMarker : nil,
+                    sessionPaceStatus: sessionPaceStatus,
+                    weekPaceStatus: config.showWeek ? weekPaceStatus : nil,
+                    showPaceMarker: config.showPaceMarker
+                )
+            } else {
+                image = renderer.createConcentricIcon(
+                    sessionPercentage: sessionDisplay,
+                    weekPercentage: config.showWeek ? weekDisplay : 0,
+                    sessionStatus: sessionStatus,
+                    weekStatus: weekStatus,
+                    profileInitial: String(profile.name.prefix(1)),
+                    monochromeMode: useMonochrome,
+                    isDarkMode: isDarkMode,
+                    useSystemColor: false,
+                    sessionTimeMarker: sessionMarker,
+                    weekTimeMarker: config.showWeek ? weekMarker : nil,
+                    sessionPaceStatus: sessionPaceStatus,
+                    weekPaceStatus: config.showWeek ? weekPaceStatus : nil,
+                    showPaceMarker: config.showPaceMarker
+                )
+            }
+        case .progressBar:
+            image = renderer.createMultiProfileProgressBar(
+                sessionPercentage: sessionDisplay,
+                weekPercentage: config.showWeek ? weekDisplay : nil,
+                sessionStatus: sessionStatus,
+                weekStatus: weekStatus,
+                profileName: config.showProfileLabel ? profile.name : nil,
+                monochromeMode: useMonochrome,
+                isDarkMode: isDarkMode,
+                useSystemColor: false,
+                sessionTimeMarker: sessionMarker,
+                weekTimeMarker: config.showWeek ? weekMarker : nil,
+                sessionPaceStatus: sessionPaceStatus,
+                weekPaceStatus: config.showWeek ? weekPaceStatus : nil,
+                showPaceMarker: config.showPaceMarker
+            )
+        case .compact:
+            image = renderer.createCompactDot(
+                percentage: sessionDisplay,
+                status: sessionStatus,
+                profileInitial: config.showProfileLabel ? String(profile.name.prefix(1)) : nil,
+                monochromeMode: useMonochrome,
+                isDarkMode: isDarkMode,
+                useSystemColor: false,
+                paceStatus: sessionPaceStatus,
+                showPaceMarker: config.showPaceMarker
+            )
+        case .percentage:
+            image = renderer.createMultiProfilePercentage(
+                sessionPercentage: sessionDisplay,
+                weekPercentage: config.showWeek ? weekDisplay : nil,
+                sessionStatus: sessionStatus,
+                weekStatus: weekStatus,
+                profileName: config.showProfileLabel ? profile.name : nil,
+                monochromeMode: useMonochrome,
+                isDarkMode: isDarkMode,
+                useSystemColor: false,
+                sessionPaceStatus: sessionPaceStatus,
+                weekPaceStatus: config.showWeek ? weekPaceStatus : nil,
+                showPaceMarker: config.showPaceMarker
+            )
+        }
+
+        let badgeStyle = ProfileManager.shared.providerBadgeStyle
+        let badgedImage = renderer.applyProviderBadge(
+            to: image,
+            providerID: .claude,
+            style: badgeStyle,
+            isDarkMode: isDarkMode
+        )
+
+        let finalImage: NSImage
+        if isActive {
+            let underlinedImage = addGreenUnderline(to: badgedImage)
+            underlinedImage.isTemplate = false
+            finalImage = underlinedImage
+        } else {
+            badgedImage.isTemplate = useMonochrome
+                && !config.showPaceMarker
+                && !badgeStyle.showsTint
+            finalImage = badgedImage
+        }
+
+        return ProfileMenuBarRender(
+            image: finalImage,
+            sessionDisplay: sessionDisplay,
+            showRemaining: showRemaining
+        )
+    }
+
     /// Updates all multi-profile status items
     func updateMultiProfileButtons(profiles: [Profile], config: MultiProfileDisplayConfig, activeProfileId: UUID? = nil) {
         guard isMultiProfileMode else { return }
@@ -991,166 +1246,15 @@ final class StatusBarUIManager {
 
             // Get actual menu bar appearance from the button (based on wallpaper, not system mode)
             let menuBarIsDark = button.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-
-            // Get usage data for this profile
-            let usage = profile.claudeUsage ?? ClaudeUsage.empty
-            let showRemaining = config.showRemainingPercentage
-
-            // Calculate percentages
-            let sessionUsed = usage.effectiveSessionPercentage
-            let weekUsed = usage.weeklyPercentage
-
-            let sessionDisplay = UsageStatusCalculator.getDisplayPercentage(
-                usedPercentage: sessionUsed,
-                showRemaining: showRemaining
-            )
-            let weekDisplay = UsageStatusCalculator.getDisplayPercentage(
-                usedPercentage: weekUsed,
-                showRemaining: showRemaining
-            )
-
-            let sessionElapsed = UsageStatusCalculator.elapsedFraction(
-                resetTime: usage.sessionResetTime,
-                duration: Constants.sessionWindow,
-                showRemaining: false
-            )
-            let weekElapsed = UsageStatusCalculator.elapsedFraction(
-                resetTime: usage.weeklyResetTime,
-                duration: Constants.weeklyWindow,
-                showRemaining: false
-            )
-            let sessionStatus = UsageStatusCalculator.calculateStatus(
-                usedPercentage: sessionUsed,
-                showRemaining: showRemaining,
-                elapsedFraction: config.usePaceColoring ? sessionElapsed : nil
-            )
-            let weekStatus = UsageStatusCalculator.calculateStatus(
-                usedPercentage: weekUsed,
-                showRemaining: showRemaining,
-                elapsedFraction: config.usePaceColoring ? weekElapsed : nil
-            )
-
-            // Use multi-profile config's useSystemColor as monochrome mode
-            // When useSystemColor is ON, icons will be white (like single-profile monochrome)
-            let useMonochrome = config.useSystemColor
-
-            // Calculate time marker fractions for multi-profile display
-            let sessionMarker: CGFloat? = config.showTimeMarker
-                ? sessionElapsed.map { CGFloat(showRemaining ? 1.0 - $0 : $0) }
-                : nil
-            let weekMarker: CGFloat? = config.showTimeMarker
-                ? weekElapsed.map { CGFloat(showRemaining ? 1.0 - $0 : $0) }
-                : nil
-
-            // Compute pace status for multi-profile rendering
-            let sessionPaceStatus: PaceStatus? = {
-                guard config.showPaceMarker, let elapsed = sessionElapsed else { return nil }
-                return PaceStatus.calculate(usedPercentage: sessionUsed, elapsedFraction: elapsed)
-            }()
-            let weekPaceStatus: PaceStatus? = {
-                guard config.showPaceMarker, let elapsed = weekElapsed else { return nil }
-                return PaceStatus.calculate(usedPercentage: weekUsed, elapsedFraction: elapsed)
-            }()
-
-            // Create icon based on selected style
-            let image: NSImage
-            switch config.iconStyle {
-            case .concentric:
-                if config.showProfileLabel {
-                    image = renderer.createConcentricIconWithLabel(
-                        sessionPercentage: sessionDisplay,
-                        weekPercentage: config.showWeek ? weekDisplay : 0,
-                        sessionStatus: sessionStatus,
-                        weekStatus: weekStatus,
-                        profileName: profile.name,
-                        monochromeMode: useMonochrome,
-                        isDarkMode: menuBarIsDark,
-                        useSystemColor: false,
-                        sessionTimeMarker: sessionMarker,
-                        weekTimeMarker: config.showWeek ? weekMarker : nil,
-                        sessionPaceStatus: sessionPaceStatus,
-                        weekPaceStatus: config.showWeek ? weekPaceStatus : nil,
-                        showPaceMarker: config.showPaceMarker
-                    )
-                } else {
-                    image = renderer.createConcentricIcon(
-                        sessionPercentage: sessionDisplay,
-                        weekPercentage: config.showWeek ? weekDisplay : 0,
-                        sessionStatus: sessionStatus,
-                        weekStatus: weekStatus,
-                        profileInitial: String(profile.name.prefix(1)),
-                        monochromeMode: useMonochrome,
-                        isDarkMode: menuBarIsDark,
-                        useSystemColor: false,
-                        sessionTimeMarker: sessionMarker,
-                        weekTimeMarker: config.showWeek ? weekMarker : nil,
-                        sessionPaceStatus: sessionPaceStatus,
-                        weekPaceStatus: config.showWeek ? weekPaceStatus : nil,
-                        showPaceMarker: config.showPaceMarker
-                    )
-                }
-            case .progressBar:
-                image = renderer.createMultiProfileProgressBar(
-                    sessionPercentage: sessionDisplay,
-                    weekPercentage: config.showWeek ? weekDisplay : nil,
-                    sessionStatus: sessionStatus,
-                    weekStatus: weekStatus,
-                    profileName: config.showProfileLabel ? profile.name : nil,
-                    monochromeMode: useMonochrome,
-                    isDarkMode: menuBarIsDark,
-                    useSystemColor: false,
-                    sessionTimeMarker: sessionMarker,
-                    weekTimeMarker: config.showWeek ? weekMarker : nil,
-                    sessionPaceStatus: sessionPaceStatus,
-                    weekPaceStatus: config.showWeek ? weekPaceStatus : nil,
-                    showPaceMarker: config.showPaceMarker
-                )
-            case .compact:
-                image = renderer.createCompactDot(
-                    percentage: sessionDisplay,
-                    status: sessionStatus,
-                    profileInitial: config.showProfileLabel ? String(profile.name.prefix(1)) : nil,
-                    monochromeMode: useMonochrome,
-                    isDarkMode: menuBarIsDark,
-                    useSystemColor: false,
-                    paceStatus: sessionPaceStatus,
-                    showPaceMarker: config.showPaceMarker
-                )
-            case .percentage:
-                image = renderer.createMultiProfilePercentage(
-                    sessionPercentage: sessionDisplay,
-                    weekPercentage: config.showWeek ? weekDisplay : nil,
-                    sessionStatus: sessionStatus,
-                    weekStatus: weekStatus,
-                    profileName: config.showProfileLabel ? profile.name : nil,
-                    monochromeMode: useMonochrome,
-                    isDarkMode: menuBarIsDark,
-                    useSystemColor: false,
-                    sessionPaceStatus: sessionPaceStatus,
-                    weekPaceStatus: config.showWeek ? weekPaceStatus : nil,
-                    showPaceMarker: config.showPaceMarker
-                )
-            }
-
-            let badgeStyle = ProfileManager.shared.providerBadgeStyle
-            let badgedImage = renderer.applyProviderBadge(
-                to: image,
-                providerID: .claude,
-                style: badgeStyle,
-                isDarkMode: menuBarIsDark
-            )
-
             let isActive = profile.id == activeProfileId
-            if isActive {
-                let underlinedImage = addGreenUnderline(to: badgedImage)
-                underlinedImage.isTemplate = false
-                button.image = underlinedImage
-            } else {
-                badgedImage.isTemplate = useMonochrome
-                    && !config.showPaceMarker
-                    && !badgeStyle.showsTint
-                button.image = badgedImage
-            }
+
+            let render = renderProfileMenuBar(
+                for: profile,
+                config: config,
+                isDarkMode: menuBarIsDark,
+                isActive: isActive
+            )
+            button.image = render.image
             statusItemIdentities[ObjectIdentifier(button)] =
                 ProviderStatusItemIdentity(
                     profileID: profile.id,
@@ -1162,8 +1266,8 @@ final class StatusBarUIManager {
                 profile.providerID
             )
             let baseLabel = "\(appearance.displayName), \(profile.name), "
-                + "\(Int(sessionDisplay.rounded()))% "
-                + Self.usageModeText(showRemaining: showRemaining)
+                + "\(Int(render.sessionDisplay.rounded()))% "
+                + Self.usageModeText(showRemaining: render.showRemaining)
             let label = Self.profileAccessibilityLabel(
                 baseLabel,
                 isActive: isActive
