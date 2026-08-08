@@ -139,6 +139,35 @@ nonisolated struct RefreshTimingPolicy: Equatable, Sendable {
         elapsedSinceLastAutomaticRefresh > wakeDebounce
     }
 
+    /// Whether a wake-triggered refresh that was deferred by `wakeDelay`
+    /// should still fire once that delay elapses. Checked again at fire
+    /// time rather than trusting the check made when the deferral was
+    /// scheduled, because a system wake fires both
+    /// `NSWorkspace.didWakeNotification` and
+    /// `NSWorkspace.screensDidWakeNotification` — the latter refreshes
+    /// immediately, with no delay — so `lastAutoRefreshTime` can advance
+    /// during the deferral window. Re-checking here is what stops both
+    /// paths from fetching for the same wake.
+    static func shouldFireDeferredWakeRefresh(
+        lastAutoRefreshTime: Date,
+        at now: Date
+    ) -> Bool {
+        shouldRefreshAfterWake(
+            elapsedSinceLastAutomaticRefresh:
+                now.timeIntervalSince(lastAutoRefreshTime)
+        )
+    }
+
+    /// A system wake unconditionally means the display is awake too,
+    /// regardless of whatever `isDisplayAsleep` last observed. This is a
+    /// deliberate recovery path — not merely an optimisation — for a
+    /// `screensDidWakeNotification` that never arrives: without it, a
+    /// missed display-wake notification would leave auto-refresh paused
+    /// forever, showing a silently stale menu bar until the app restarts.
+    static func isDisplayAsleepAfterSystemWake() -> Bool {
+        false
+    }
+
     static func timerFired(at date: Date) -> TimerFire {
         TimerFire(occurredAt: date, trigger: .timer)
     }
@@ -2639,6 +2668,18 @@ class MenuBarManager: NSObject, ObservableObject {
         ) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
+
+                // A system wake implies the display is coming back too.
+                // Force `isDisplayAsleep` false and restart the timer here
+                // — independently of `setupScreenSleepObserver()`'s own
+                // wake handler — as a recovery path in case
+                // `screensDidWakeNotification` is ever missed. Without
+                // this, a missed display-wake notification would leave
+                // auto-refresh permanently paused.
+                self.isDisplayAsleep =
+                    RefreshTimingPolicy.isDisplayAsleepAfterSystemWake()
+                self.restartAutoRefresh()
+
                 let timeSinceLastRefresh =
                     Date().timeIntervalSince(
                         self.lastAutoRefreshTime
@@ -2659,8 +2700,23 @@ class MenuBarManager: NSObject, ObservableObject {
                     deadline: .now()
                         + RefreshTimingPolicy.wakeDelay
                 ) { [weak self] in
-                    self?.lastAutoRefreshTime = Date()
-                    self?.refreshUsage(trigger: .wake)
+                    guard let self else { return }
+                    // Re-check right before firing: `screensDidWakeNotification`
+                    // fetches immediately (no delay), so if it lands first it
+                    // will have stamped `lastAutoRefreshTime` after this block
+                    // was already scheduled. See
+                    // `shouldFireDeferredWakeRefresh`'s doc comment.
+                    guard RefreshTimingPolicy.shouldFireDeferredWakeRefresh(
+                        lastAutoRefreshTime: self.lastAutoRefreshTime,
+                        at: Date()
+                    ) else {
+                        LoggingService.shared.log(
+                            "MenuBarManager: Skipping deferred wake refresh (already refreshed)"
+                        )
+                        return
+                    }
+                    self.lastAutoRefreshTime = Date()
+                    self.refreshUsage(trigger: .wake)
                 }
             }
         }
@@ -2701,6 +2757,12 @@ class MenuBarManager: NSObject, ObservableObject {
                 )
                 self.restartAutoRefresh()
 
+                // This debounce isn't just a defensive nicety: a *system*
+                // wake fires both `didWakeNotification` (handled in
+                // `setupWakeObserver()`) and this `screensDidWakeNotification`
+                // together. Without it, every system wake would fan out two
+                // refreshes instead of one — exactly the waste this whole
+                // change exists to remove. Do not delete it.
                 let timeSinceLastRefresh = Date().timeIntervalSince(
                     self.lastAutoRefreshTime
                 )

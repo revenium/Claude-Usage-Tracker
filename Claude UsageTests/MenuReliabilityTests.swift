@@ -142,6 +142,81 @@ final class MenuReliabilityTests: HostedAppTestCase {
         XCTAssertEqual(timing?.interval, 240)
     }
 
+    /// Reproduces the double-fetch regression a system wake used to cause:
+    /// `didWakeNotification` schedules a fetch `wakeDelay` (3s) out, but
+    /// `screensDidWakeNotification` — delivered for the same system wake —
+    /// fetches immediately and stamps `lastAutoRefreshTime` in the
+    /// meantime. By the time the deferred fetch actually runs, re-checking
+    /// against the now-updated `lastAutoRefreshTime` must suppress it.
+    func testDeferredWakeRefreshSuppressedWhenAlreadyRefreshedInDebounceWindow() {
+        let wakeDetectedAt = Date(timeIntervalSinceReferenceDate: 100_000)
+
+        // At the moment the wake was first observed, nothing had refreshed
+        // in a long time, so the deferred fetch would have been scheduled.
+        XCTAssertTrue(
+            RefreshTimingPolicy.shouldRefreshAfterWake(
+                elapsedSinceLastAutomaticRefresh: 3_600
+            )
+        )
+
+        // Before the deferred block runs, a concurrent path (the
+        // display-wake handler, which fetches with no delay) already
+        // refreshed and stamped `lastAutoRefreshTime`.
+        let concurrentRefreshAt = wakeDetectedAt.addingTimeInterval(0.5)
+
+        // The deferred block fires `wakeDelay` after the original wake —
+        // re-checking against the updated `lastAutoRefreshTime` must now
+        // suppress it, since barely any time has passed since that refresh.
+        let deferredFiresAt = wakeDetectedAt.addingTimeInterval(
+            RefreshTimingPolicy.wakeDelay
+        )
+        XCTAssertFalse(
+            RefreshTimingPolicy.shouldFireDeferredWakeRefresh(
+                lastAutoRefreshTime: concurrentRefreshAt,
+                at: deferredFiresAt
+            )
+        )
+    }
+
+    func testDeferredWakeRefreshProceedsWhenNothingElseRefreshedMeanwhile() {
+        let wakeDetectedAt = Date(timeIntervalSinceReferenceDate: 100_000)
+        // No concurrent refresh happened — `lastAutoRefreshTime` is still
+        // the stale value from long before the wake.
+        let staleLastRefresh = wakeDetectedAt.addingTimeInterval(-3_600)
+        let deferredFiresAt = wakeDetectedAt.addingTimeInterval(
+            RefreshTimingPolicy.wakeDelay
+        )
+        XCTAssertTrue(
+            RefreshTimingPolicy.shouldFireDeferredWakeRefresh(
+                lastAutoRefreshTime: staleLastRefresh,
+                at: deferredFiresAt
+            )
+        )
+    }
+
+    /// The guarantee that actually matters for the missed-`screensDidWake`
+    /// recovery path: after a system wake, auto-refresh is schedulable — not
+    /// just that the recovered flag happens to equal `false`. Checks both
+    /// halves together (the flag `isDisplayAsleepAfterSystemWake()` reports,
+    /// and that feeding it into `autoRefreshTiming` yields a real timer),
+    /// under both Low Power Mode states, so this fails if either half of the
+    /// recovery breaks even though the flag alone would still read `false`.
+    func testSystemWakeAlwaysLeadsToARunningAutoRefreshTimer() {
+        let recoveredState = RefreshTimingPolicy.isDisplayAsleepAfterSystemWake()
+        XCTAssertFalse(recoveredState)
+
+        for isLowPowerModeEnabled in [true, false] {
+            XCTAssertNotNil(
+                RefreshTimingPolicy.autoRefreshTiming(
+                    baseInterval: 30,
+                    isDisplayAsleep: recoveredState,
+                    isLowPowerModeEnabled: isLowPowerModeEnabled
+                ),
+                "Expected a scheduled timer after system-wake recovery (Low Power Mode: \(isLowPowerModeEnabled))"
+            )
+        }
+    }
+
     func testAutomaticRefreshTriggersRemainTypedAndNonInteractive() {
         let triggers: [(UsageRefreshTrigger, String)] = [
             (.startup, "startup"),
