@@ -148,11 +148,19 @@ nonisolated struct RefreshTimingPolicy: Equatable, Sendable {
     /// immediately, with no delay — so `lastAutoRefreshTime` can advance
     /// during the deferral window. Re-checking here is what stops both
     /// paths from fetching for the same wake.
+    ///
+    /// `isDisplayAsleep` is re-read at fire time for the same reason: the
+    /// display can go back to sleep during the deferral (a brief wake, or
+    /// the lid closing again), and this deferred fetch is the one path that
+    /// would otherwise bypass the "no refresh while the display is asleep"
+    /// guarantee the periodic timer gets from `autoRefreshTiming`.
     static func shouldFireDeferredWakeRefresh(
         lastAutoRefreshTime: Date,
-        at now: Date
+        at now: Date,
+        isDisplayAsleep: Bool
     ) -> Bool {
-        shouldRefreshAfterWake(
+        guard !isDisplayAsleep else { return false }
+        return shouldRefreshAfterWake(
             elapsedSinceLastAutomaticRefresh:
                 now.timeIntervalSince(lastAutoRefreshTime)
         )
@@ -2715,10 +2723,12 @@ class MenuBarManager: NSObject, ObservableObject {
                     // `shouldFireDeferredWakeRefresh`'s doc comment.
                     guard RefreshTimingPolicy.shouldFireDeferredWakeRefresh(
                         lastAutoRefreshTime: self.lastAutoRefreshTime,
-                        at: Date()
+                        at: Date(),
+                        isDisplayAsleep: self.isDisplayAsleep
                     ) else {
                         LoggingService.shared.log(
-                            "MenuBarManager: Skipping deferred wake refresh (already refreshed)"
+                            "MenuBarManager: Skipping deferred wake refresh"
+                                + " (already refreshed, or display asleep again)"
                         )
                         return
                     }

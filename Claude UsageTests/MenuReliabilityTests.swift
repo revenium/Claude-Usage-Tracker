@@ -173,7 +173,8 @@ final class MenuReliabilityTests: HostedAppTestCase {
         XCTAssertFalse(
             RefreshTimingPolicy.shouldFireDeferredWakeRefresh(
                 lastAutoRefreshTime: concurrentRefreshAt,
-                at: deferredFiresAt
+                at: deferredFiresAt,
+                isDisplayAsleep: false
             )
         )
     }
@@ -189,8 +190,34 @@ final class MenuReliabilityTests: HostedAppTestCase {
         XCTAssertTrue(
             RefreshTimingPolicy.shouldFireDeferredWakeRefresh(
                 lastAutoRefreshTime: staleLastRefresh,
-                at: deferredFiresAt
+                at: deferredFiresAt,
+                isDisplayAsleep: false
             )
+        )
+    }
+
+    /// The deferred wake fetch is the one path that could otherwise refresh
+    /// while the display is asleep: the display can go back to sleep during
+    /// the three-second `wakeDelay` (a brief wake, or the lid closing
+    /// again), and the periodic timer's protection via `autoRefreshTiming`
+    /// does not apply to a block that was already scheduled. Everything
+    /// else about this case is identical to the "proceeds" test above, so
+    /// the display state is the only thing deciding the outcome.
+    func testDeferredWakeRefreshSuppressedWhenDisplayWentBackToSleep() {
+        let wakeDetectedAt = Date(timeIntervalSinceReferenceDate: 100_000)
+        let staleLastRefresh = wakeDetectedAt.addingTimeInterval(-3_600)
+        let deferredFiresAt = wakeDetectedAt.addingTimeInterval(
+            RefreshTimingPolicy.wakeDelay
+        )
+
+        XCTAssertFalse(
+            RefreshTimingPolicy.shouldFireDeferredWakeRefresh(
+                lastAutoRefreshTime: staleLastRefresh,
+                at: deferredFiresAt,
+                isDisplayAsleep: true
+            ),
+            "A display that slept again during wakeDelay must suppress the"
+                + " deferred fetch, even though the debounce would allow it"
         )
     }
 
