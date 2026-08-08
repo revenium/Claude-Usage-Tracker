@@ -53,10 +53,18 @@ contains 'REVENIUM_UPDATE_CHANNEL = development;' "$project" \
     || fail 'Debug update channel is not development-isolated'
 contains 'REVENIUM_UPDATE_CHANNEL = production;' "$project" \
     || fail 'Release update channel is not production'
-[[ $(count_matches 'SPARKLE_FEED_URL = "";' "$project") -eq 3 ]] \
-    || fail 'Debug, local Release, and UI-testing feed defaults must all be empty'
-[[ $(count_matches 'SPARKLE_PUBLIC_ED_KEY = "";' "$project") -eq 3 ]] \
-    || fail 'Debug, local Release, and UI-testing public-key defaults must all be empty'
+# The real feed URL and public key are injected by the release workflow alone, so
+# every configuration checked into the project must default them to empty. Comparing
+# the empty count against the total count keeps this true as configurations are added
+# and, unlike a fixed expected count, still fails when a new one hardcodes a value.
+feed_url_total=$(count_matches 'SPARKLE_FEED_URL = ' "$project")
+feed_url_empty=$(count_matches 'SPARKLE_FEED_URL = "";' "$project")
+[[ $feed_url_total -ge 3 && $feed_url_empty -eq $feed_url_total ]] \
+    || fail 'every build configuration must default the Sparkle feed to empty'
+public_key_total=$(count_matches 'SPARKLE_PUBLIC_ED_KEY = ' "$project")
+public_key_empty=$(count_matches 'SPARKLE_PUBLIC_ED_KEY = "";' "$project")
+[[ $public_key_total -ge 3 && $public_key_empty -eq $public_key_total ]] \
+    || fail 'every build configuration must default the Sparkle public key to empty'
 contains "static let appGroupIdentifier = \"$expected_app_group\"" \
     'Claude Usage/Shared/Utilities/Constants.swift' \
     || fail 'legacy preference/app-group identity changed'
