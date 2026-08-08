@@ -2978,6 +2978,14 @@ class MenuBarManager: NSObject, ObservableObject {
     // MARK: - Headless Mode (Remote Desktop Support)
 
     private func setupHeadlessModeObserver() {
+        // `handleScreenChange()` re-invokes `setup()` (and therefore this
+        // function) on its headless/Remote-Desktop reconnect retry path.
+        // Both observers below are registered together here and are never
+        // removed outside of `cleanupResources()`, so if one is already
+        // present, re-registering would leak a duplicate that fires its
+        // handler once per surviving copy on every future event.
+        guard screenObserver == nil else { return }
+
         // Always observe screen changes to support headless Mac setups (Remote Desktop)
         LoggingService.shared.log("MenuBarManager: Setting up screen change observer for headless support")
 
@@ -3039,7 +3047,8 @@ class MenuBarManager: NSObject, ObservableObject {
     }
 
     /// Debounces automatic-mode overflow recomputation triggered by screen
-    /// configuration changes. See `handleScreenChange()`.
+    /// configuration or frontmost-application changes (see
+    /// `handleScreenChange()` / `handleFrontmostAppChange()`).
     private func scheduleOverflowRecompute() {
         overflowRecomputeDebounceTimer?.invalidate()
         overflowRecomputeDebounceTimer = Timer.scheduledTimer(
