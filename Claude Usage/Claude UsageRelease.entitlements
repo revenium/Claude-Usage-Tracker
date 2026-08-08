@@ -4,18 +4,32 @@
 <dict>
 	<key>com.apple.security.network.client</key>
 	<true/>
-	<key>keychain-access-groups</key>
-	<array>
-		<!--
-		Team-prefixed data-protection Keychain access group. $(DEVELOPMENT_TEAM)
-		is a build setting, never a literal team ID, so no distribution
-		credential is hard-coded here (see RELEASING.md "Distribution
-		identity"). Xcode itself resolves it for any signed local build; the
-		release workflow, which signs with a bare `codesign` call rather than
-		through an Xcode build phase, resolves it explicitly from the
-		APPLE_TEAM_ID Actions variable immediately before signing.
-		-->
-		<string>$(DEVELOPMENT_TEAM).com.claudeusagetracker.credentials</string>
-	</array>
+	<!--
+	NO keychain-access-groups here, deliberately.
+
+	`keychain-access-groups` is a restricted entitlement: on a Developer ID
+	app the system only honours it when an embedded provisioning profile
+	(Contents/embedded.provisionprofile) allowlists that exact group. This
+	project has no such profile, and signing an app with the entitlement
+	anyway does not degrade — AMFI refuses to spawn the process at all
+	(`launchctl error 163`, "Security policy issue"). v3.3.0 shipped exactly
+	that and could not be launched on any machine.
+
+	Removing it is safe rather than merely expedient:
+	ProfileKeychainDomainResolver decides the Keychain by *probing* at
+	runtime, not by inspecting entitlements, so without the entitlement the
+	probe returns errSecMissingEntitlement and profile credentials use the
+	login Keychain — the behaviour every shipped release before v3.3.0 had.
+
+	To restore data-protection Keychain storage, all three of these are
+	required together, and none of them alone is sufficient:
+	  1. A Developer ID provisioning profile carrying the Keychain Sharing
+	     capability for `<team>.com.claudeusagetracker.credentials`.
+	  2. That profile embedded at Contents/embedded.provisionprofile by the
+	     release workflow before signing.
+	  3. This entitlement restored, matching the profile's group exactly.
+	scripts/validate_distribution.sh enforces (1)+(2) whenever (3) is
+	present, so the combination that broke v3.3.0 cannot be committed again.
+	-->
 </dict>
 </plist>

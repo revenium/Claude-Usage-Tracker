@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.3.1] - 2026-08-07
+
+### Fixed
+
+- **3.3.0 could not be launched at all; this release fixes that.** 3.3.0 was
+  signed with a `keychain-access-groups` entitlement. On an app distributed
+  outside the App Store, the system honours that entitlement only when an
+  embedded provisioning profile grants it, and this app has never carried
+  one. The result was not a disabled feature but a refused launch: macOS
+  rejected the process before it started, on every machine. 3.3.0 was
+  withdrawn from the update feed; anyone still on 3.2.1 was never offered it.
+
+  Profile credentials therefore continue to live in the login Keychain, as
+  they have in every release to date — the code that prefers the
+  data-protection Keychain decides by asking the system at runtime, not by
+  reading its own entitlements, so it simply takes the same path it did
+  before. Nothing is migrated, moved, or lost by this release, and everything
+  3.3.0 added to the menu bar is unchanged and now actually reachable.
+
+  Restoring data-protection Keychain storage needs a provisioning profile
+  that grants the access group, embedded at build time. Release validation
+  now refuses any build that claims the entitlement without one.
+
 ## [3.3.0] - 2026-08-07
 
 ### Added
