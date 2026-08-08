@@ -18,6 +18,12 @@ struct ManageProfilesView: View {
         ProfileProviderKind = .claude
     @State private var newCodexHomePath = ""
     @State private var errorMessage: String?
+    // `DataStore` isn't an `ObservableObject`; this view owns the
+    // displayed value locally and writes through on every change, the
+    // same pattern `SettingToggle`'s bindings above use for other
+    // `DataStore`-backed settings elsewhere in the app.
+    @State private var overflowMode: MenuBarOverflowMode =
+        DataStore.shared.loadMenuBarOverflowMode()
 
     init(
         dependencies: ProviderUIDependencies? = nil
@@ -283,6 +289,96 @@ struct ManageProfilesView: View {
                                 )
                             )
 
+                            Divider()
+                                .padding(.vertical, DesignTokens.Spacing.small)
+
+                            // Overflow Behavior
+                            VStack(
+                                alignment: .leading,
+                                spacing: DesignTokens.Spacing.small
+                            ) {
+                                Text("multiprofile.overflow.title".localized)
+                                    .font(DesignTokens.Typography.caption)
+                                    .foregroundColor(.secondary)
+
+                                VStack(
+                                    alignment: .leading,
+                                    spacing: DesignTokens.Spacing.extraSmall
+                                ) {
+                                    overflowModeRow(
+                                        title:
+                                            "multiprofile.overflow.automatic"
+                                                .localized,
+                                        isSelected: overflowModeKind
+                                            == .automatic,
+                                        onSelect: {
+                                            setOverflowMode(.automatic)
+                                        }
+                                    )
+                                    overflowModeRow(
+                                        title:
+                                            "multiprofile.overflow.never"
+                                                .localized,
+                                        isSelected: overflowModeKind
+                                            == .never,
+                                        onSelect: {
+                                            setOverflowMode(.never)
+                                        }
+                                    )
+                                    HStack(
+                                        spacing: DesignTokens.Spacing
+                                            .extraSmall
+                                    ) {
+                                        overflowModeRow(
+                                            title:
+                                                "multiprofile.overflow.after_count"
+                                                    .localized,
+                                            isSelected: overflowModeKind
+                                                == .afterCount,
+                                            onSelect: {
+                                                setOverflowMode(
+                                                    .afterCount(
+                                                        overflowAfterCountThreshold
+                                                    )
+                                                )
+                                            }
+                                        )
+                                        Picker(
+                                            "",
+                                            selection: Binding(
+                                                get: {
+                                                    overflowAfterCountThreshold
+                                                },
+                                                set: { newValue in
+                                                    setOverflowMode(
+                                                        .afterCount(newValue)
+                                                    )
+                                                }
+                                            )
+                                        ) {
+                                            ForEach(
+                                                Self.overflowAfterCountOptions,
+                                                id: \.self
+                                            ) { count in
+                                                Text("\(count)").tag(count)
+                                            }
+                                        }
+                                        .labelsHidden()
+                                        .pickerStyle(.menu)
+                                        .frame(width: 56)
+                                        .disabled(
+                                            overflowModeKind != .afterCount
+                                        )
+                                        Text(
+                                            "multiprofile.overflow.after_count_suffix"
+                                                .localized
+                                        )
+                                        .font(DesignTokens.Typography.body)
+                                        .foregroundColor(.primary)
+                                    }
+                                }
+                            }
+
                             // Info message
                             HStack(alignment: .top, spacing: 8) {
                                 Image(systemName: "info.circle.fill")
@@ -395,6 +491,51 @@ struct ManageProfilesView: View {
         newProfileName = ""
         newProfileProvider = .claude
         newCodexHomePath = ""
+    }
+
+    // MARK: - Overflow Mode
+
+    private static let overflowAfterCountOptions = [3, 4, 5, 6, 8, 10]
+
+    private var overflowModeKind: MenuBarOverflowMode.StorageKind {
+        overflowMode.storageKind
+    }
+
+    private var overflowAfterCountThreshold: Int {
+        if case .afterCount(let count) = overflowMode {
+            return count
+        }
+        return MenuBarOverflowMode.defaultAfterCountThreshold
+    }
+
+    private func setOverflowMode(_ mode: MenuBarOverflowMode) {
+        overflowMode = mode
+        DataStore.shared.saveMenuBarOverflowMode(mode)
+        // Reuses the existing multi-profile recompute path — the overflow
+        // mode is exactly the kind of visual/layout change that path
+        // already exists to propagate to the live menu bar.
+        MenuBarNotificationDelivery.enqueue(.multiProfileConfigChanged)
+    }
+
+    private func overflowModeRow(
+        title: String,
+        isSelected: Bool,
+        onSelect: @escaping () -> Void
+    ) -> some View {
+        Button(action: onSelect) {
+            HStack(spacing: DesignTokens.Spacing.extraSmall) {
+                Image(
+                    systemName: isSelected
+                        ? "largecircle.fill.circle"
+                        : "circle"
+                )
+                .foregroundColor(isSelected ? .accentColor : .secondary)
+                Text(title)
+                    .font(DesignTokens.Typography.body)
+                    .foregroundColor(.primary)
+            }
+        }
+        .buttonStyle(.plain)
     }
 }
 
