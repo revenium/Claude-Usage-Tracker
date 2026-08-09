@@ -317,6 +317,19 @@ final class UsageHistoryServiceTests: XCTestCase {
             resetTime: Date(timeIntervalSince1970: 0)
         )
 
+        // The first write to a brand-new profile has no on-disk primary to
+        // archive, so the one-time retention repair is deliberately
+        // deferred and the version left unstamped. A second write finds a
+        // primary, archives it, repairs, and stamps the version — so it is
+        // legitimately not a no-op. Get that out of the way before
+        // measuring, or this test would be asserting against the repair
+        // rather than against the transform.
+        service.recordSessionReset(
+            for: profileID,
+            previousUsage: usage,
+            resetTime: Date(timeIntervalSince1970: 1)
+        )
+
         let fileURL = try store.fileURL(for: profileID, kind: .history)
         let before = try Data(contentsOf: fileURL)
 

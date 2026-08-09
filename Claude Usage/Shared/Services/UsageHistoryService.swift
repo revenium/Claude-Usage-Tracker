@@ -137,15 +137,11 @@ nonisolated struct HistoryRetentionPolicy: Equatable, Sendable {
         type: ResetType,
         cap: Int
     ) -> [UsageSnapshot] {
-        let matching = snapshots.filter { $0.resetType == type }
-        guard matching.count > cap else { return snapshots }
-        let idsToRemove = Set(
-            matching
-                .sorted { $0.timestamp > $1.timestamp }
-                .suffix(matching.count - cap)
-                .map(\.id)
+        pruned(
+            snapshots,
+            keepingNewest: cap,
+            among: snapshots.filter { $0.resetType == type }
         )
-        return snapshots.filter { !idsToRemove.contains($0.id) }
     }
 
     /// Keeps the newest `cap` records overall, regardless of type.
@@ -153,11 +149,30 @@ nonisolated struct HistoryRetentionPolicy: Equatable, Sendable {
         _ snapshots: [UsageSnapshot],
         cap: Int
     ) -> [UsageSnapshot] {
-        guard snapshots.count > cap else { return snapshots }
+        pruned(snapshots, keepingNewest: cap, among: snapshots)
+    }
+
+    /// The single eviction rule both caps above are expressed in terms of:
+    /// keep the newest `cap` of `candidates`, remove the rest from
+    /// `snapshots`, and leave everything outside `candidates` untouched.
+    ///
+    /// Deliberately one implementation rather than two near-identical ones.
+    /// A change to how eviction picks its victims — a tie-break for equal
+    /// timestamps, a stable removal that does not go through a `Set` — must
+    /// apply to per-type and total capping together; editing one copy and
+    /// not the other would let them diverge silently, and eviction here
+    /// deletes user records that have no other copy once the archive is
+    /// past.
+    private static func pruned(
+        _ snapshots: [UsageSnapshot],
+        keepingNewest cap: Int,
+        among candidates: [UsageSnapshot]
+    ) -> [UsageSnapshot] {
+        guard candidates.count > cap else { return snapshots }
         let idsToRemove = Set(
-            snapshots
+            candidates
                 .sorted { $0.timestamp > $1.timestamp }
-                .suffix(snapshots.count - cap)
+                .suffix(candidates.count - cap)
                 .map(\.id)
         )
         return snapshots.filter { !idsToRemove.contains($0.id) }
@@ -494,7 +509,7 @@ class UsageHistoryService: ProfileHistoryDeleting {
                     history.addNormalizedSnapshot(candidate)
                 }
                 pruneNormalizedSnapshots(in: &history)
-                enforceRetention(for: profileID, providerID: providerID, in: &history)
+                enforceRetention(for: profileID, in: &history)
             }
         } catch {
             LoggingService.shared.logStorageError(
@@ -524,7 +539,7 @@ class UsageHistoryService: ProfileHistoryDeleting {
         do {
             try updateHistory(for: profileId) { history in
                 admitted = addSnapshotIfAdmissible(snapshot, for: profileId, to: &history)
-                enforceRetention(for: profileId, providerID: .claude, in: &history)
+                enforceRetention(for: profileId, in: &history)
             }
             if admitted {
                 LoggingService.shared.logInfo("Recorded session reset snapshot for profile \(profileId.uuidString.prefix(8)): \(usage.sessionPercentage)% usage")
@@ -552,7 +567,7 @@ class UsageHistoryService: ProfileHistoryDeleting {
         do {
             try updateHistory(for: profileId) { history in
                 admitted = addSnapshotIfAdmissible(snapshot, for: profileId, to: &history)
-                enforceRetention(for: profileId, providerID: .claude, in: &history)
+                enforceRetention(for: profileId, in: &history)
             }
             if admitted {
                 LoggingService.shared.logInfo("Recorded weekly reset snapshot for profile \(profileId.uuidString.prefix(8)): \(usage.weeklyPercentage)% usage")
@@ -580,7 +595,7 @@ class UsageHistoryService: ProfileHistoryDeleting {
         do {
             try updateHistory(for: profileId) { history in
                 admitted = addSnapshotIfAdmissible(snapshot, for: profileId, to: &history)
-                enforceRetention(for: profileId, providerID: .claude, in: &history)
+                enforceRetention(for: profileId, in: &history)
             }
             if admitted {
                 LoggingService.shared.logInfo("Recorded billing cycle snapshot for profile \(profileId.uuidString.prefix(8)): \(usage.formattedUsed) spent")
@@ -616,7 +631,7 @@ class UsageHistoryService: ProfileHistoryDeleting {
         do {
             try updateHistory(for: profileId) { history in
                 admitted = addSnapshotIfAdmissible(snapshot, for: profileId, to: &history)
-                enforceRetention(for: profileId, providerID: .claude, in: &history)
+                enforceRetention(for: profileId, in: &history)
             }
             setLastSessionRecordTime(now, for: profileId)
             if admitted {
@@ -654,7 +669,7 @@ class UsageHistoryService: ProfileHistoryDeleting {
         do {
             try updateHistory(for: profileId) { history in
                 admitted = addSnapshotIfAdmissible(snapshot, for: profileId, to: &history)
-                enforceRetention(for: profileId, providerID: .claude, in: &history)
+                enforceRetention(for: profileId, in: &history)
             }
             setLastWeeklyRecordTime(now, for: profileId)
             if admitted {
@@ -710,15 +725,15 @@ class UsageHistoryService: ProfileHistoryDeleting {
     /// is lost, and repair is retried on the next write to this profile.
     private func enforceRetention(
         for profileID: UUID,
-        providerID: ProviderID,
         in history: inout UsageHistoryData
     ) {
         guard HistoryRetentionPolicy.needsRepair(history) else {
             history.snapshots = HistoryRetentionPolicy.pruned(history.snapshots)
             return
         }
+        let archived: URL?
         do {
-            try fileStore.archive(
+            archived = try fileStore.archive(
                 UsageHistoryData.self,
                 for: profileID,
                 kind: .history
@@ -727,6 +742,31 @@ class UsageHistoryService: ProfileHistoryDeleting {
             LoggingService.shared.logStorageError(
                 "historyRepair.archive",
                 error: error
+            )
+            return
+        }
+
+        // `archive` returns nil — it does not throw — when there is no
+        // on-disk primary yet. That is not always "nothing to preserve":
+        // `loadHistory` falls back to the legacy `UserDefaults` store when
+        // the file store has nothing, so `history` can hold real pre-repair
+        // records whose only copy is that legacy entry. Repairing here
+        // would write the pruned result as the profile's first on-disk
+        // file, and the next launch's migration would then treat that file
+        // as authoritative and delete the legacy entry — destroying the
+        // originals with no archive, which is precisely what this whole
+        // change exists to prevent.
+        //
+        // So repair only when something was actually archived, unless
+        // there is demonstrably nothing to lose. Skipping is safe and
+        // self-correcting: the caller still persists the unrepaired
+        // history, so a primary exists on the next write and repair
+        // proceeds then with a real archive behind it.
+        guard archived != nil || history.snapshots.isEmpty else {
+            LoggingService.shared.logInfo(
+                "Deferring usage history repair for profile "
+                    + "\(profileID.uuidString.prefix(8)): no on-disk copy to "
+                    + "archive yet"
             )
             return
         }
