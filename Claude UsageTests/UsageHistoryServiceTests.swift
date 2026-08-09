@@ -217,6 +217,77 @@ final class UsageHistoryServiceTests: XCTestCase {
         XCTAssertTrue(history.sessionSnapshots.isEmpty)
     }
 
+    func testRecordWeeklyResetRejectsSnapshotWithFutureTriggeringResetTime() async throws {
+        try await MainActor.run {
+            try testRecordWeeklyResetRejectsSnapshotWithFutureTriggeringResetTimeOnMainActor()
+        }
+    }
+
+    /// The weekly path builds its snapshot through a different factory
+    /// (`fromWeeklyReset`) with a different `resetType`, so admission has to
+    /// be verified here too rather than assumed from the session path.
+    @MainActor
+    private func testRecordWeeklyResetRejectsSnapshotWithFutureTriggeringResetTimeOnMainActor() throws {
+        let environment = try makeEnvironment()
+        let profileID = UUID()
+        let service = UsageHistoryService(
+            defaults: environment.defaults,
+            fileStore: ProfileUsageFileStore(baseURL: environment.rootURL)
+        )
+        // Weekly usage must be non-zero, or `recordWeeklyReset` returns
+        // early on its "no usage to record" guard and the test would pass
+        // without admission ever being consulted.
+        let usage = makeClaudeUsage(
+            sessionPercentage: 10,
+            sessionResetTime: Date(),
+            weeklyPercentage: 61
+        )
+
+        service.recordWeeklyReset(
+            for: profileID,
+            previousUsage: usage,
+            resetTime: .distantFuture
+        )
+
+        let history = service.loadHistory(for: profileID)
+        XCTAssertTrue(history.snapshots.isEmpty)
+        XCTAssertTrue(history.weeklySnapshots.isEmpty)
+    }
+
+    func testPeriodicRecordingIsAdmittedBecauseItsResetTimeIsNeverAhead() async throws {
+        try await MainActor.run {
+            try testPeriodicRecordingIsAdmittedBecauseItsResetTimeIsNeverAheadOnMainActor()
+        }
+    }
+
+    /// The two periodic paths differ from the reset paths in a way that
+    /// matters for admission: they stamp `triggeringResetTime` from the
+    /// injected `now()`, the same clock as `timestamp`, so they are always
+    /// admissible and must not be caught by the new rejection. This guards
+    /// against an over-eager admission rule silently dropping the periodic
+    /// snapshots that make up most of the genuinely useful history.
+    @MainActor
+    private func testPeriodicRecordingIsAdmittedBecauseItsResetTimeIsNeverAheadOnMainActor() throws {
+        let environment = try makeEnvironment()
+        let profileID = UUID()
+        let now = Date(timeIntervalSince1970: 20_000)
+        let service = UsageHistoryService(
+            defaults: environment.defaults,
+            fileStore: ProfileUsageFileStore(baseURL: environment.rootURL, now: { now }),
+            now: { now }
+        )
+
+        service.recordSessionPeriodic(
+            for: profileID,
+            usage: makeClaudeUsage(sessionPercentage: 33, sessionResetTime: now)
+        )
+
+        let history = service.loadHistory(for: profileID)
+        XCTAssertEqual(history.snapshots.count, 1)
+        XCTAssertEqual(history.sessionSnapshots.count, 1)
+        XCTAssertEqual(history.sessionSnapshots.first?.sessionPercentage, 33)
+    }
+
     func testNoOpTransformSkipsFileWrite() async throws {
         try await MainActor.run {
             try testNoOpTransformSkipsFileWriteOnMainActor()
@@ -264,16 +335,17 @@ final class UsageHistoryServiceTests: XCTestCase {
     @MainActor
     private func makeClaudeUsage(
         sessionPercentage: Double,
-        sessionResetTime: Date
+        sessionResetTime: Date,
+        weeklyPercentage: Double = 0
     ) -> ClaudeUsage {
         ClaudeUsage(
             sessionTokensUsed: 1,
             sessionLimit: 100,
             sessionPercentage: sessionPercentage,
             sessionResetTime: sessionResetTime,
-            weeklyTokensUsed: 0,
+            weeklyTokensUsed: weeklyPercentage > 0 ? 1 : 0,
             weeklyLimit: 100,
-            weeklyPercentage: 0,
+            weeklyPercentage: weeklyPercentage,
             weeklyResetTime: sessionResetTime,
             opusWeeklyTokensUsed: 0,
             opusWeeklyPercentage: 0,

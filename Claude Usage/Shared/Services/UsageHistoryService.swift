@@ -46,7 +46,6 @@ nonisolated struct HistorySnapshotAdmission: Equatable, Sendable {
     }
 }
 
-
 @MainActor
 protocol ProfileHistoryDeleting: AnyObject {
     func deleteHistoryThrowing(for profileId: UUID) throws
@@ -396,12 +395,15 @@ class UsageHistoryService: ProfileHistoryDeleting {
         }
 
         let snapshot = UsageSnapshot.fromSessionReset(usage, resetTime: resetTime)
+        var admitted = false
         do {
             try updateHistory(for: profileId) { history in
-                addSnapshotIfAdmissible(snapshot, for: profileId, to: &history)
+                admitted = addSnapshotIfAdmissible(snapshot, for: profileId, to: &history)
                 pruneSessionSnapshots(in: &history)
             }
-            LoggingService.shared.logInfo("Recorded session reset snapshot for profile \(profileId.uuidString.prefix(8)): \(usage.sessionPercentage)% usage")
+            if admitted {
+                LoggingService.shared.logInfo("Recorded session reset snapshot for profile \(profileId.uuidString.prefix(8)): \(usage.sessionPercentage)% usage")
+            }
         } catch {
             LoggingService.shared.logStorageError("recordSessionReset", error: error)
         }
@@ -421,12 +423,15 @@ class UsageHistoryService: ProfileHistoryDeleting {
         }
 
         let snapshot = UsageSnapshot.fromWeeklyReset(usage, resetTime: resetTime)
+        var admitted = false
         do {
             try updateHistory(for: profileId) { history in
-                addSnapshotIfAdmissible(snapshot, for: profileId, to: &history)
+                admitted = addSnapshotIfAdmissible(snapshot, for: profileId, to: &history)
                 pruneWeeklySnapshots(in: &history)
             }
-            LoggingService.shared.logInfo("Recorded weekly reset snapshot for profile \(profileId.uuidString.prefix(8)): \(usage.weeklyPercentage)% usage")
+            if admitted {
+                LoggingService.shared.logInfo("Recorded weekly reset snapshot for profile \(profileId.uuidString.prefix(8)): \(usage.weeklyPercentage)% usage")
+            }
         } catch {
             LoggingService.shared.logStorageError("recordWeeklyReset", error: error)
         }
@@ -446,11 +451,14 @@ class UsageHistoryService: ProfileHistoryDeleting {
         }
 
         let snapshot = UsageSnapshot.fromBillingCycleReset(usage, resetTime: resetTime)
+        var admitted = false
         do {
             try updateHistory(for: profileId) { history in
-                addSnapshotIfAdmissible(snapshot, for: profileId, to: &history)
+                admitted = addSnapshotIfAdmissible(snapshot, for: profileId, to: &history)
             }
-            LoggingService.shared.logInfo("Recorded billing cycle snapshot for profile \(profileId.uuidString.prefix(8)): \(usage.formattedUsed) spent")
+            if admitted {
+                LoggingService.shared.logInfo("Recorded billing cycle snapshot for profile \(profileId.uuidString.prefix(8)): \(usage.formattedUsed) spent")
+            }
         } catch {
             LoggingService.shared.logStorageError("recordBillingCycleReset", error: error)
         }
@@ -478,13 +486,16 @@ class UsageHistoryService: ProfileHistoryDeleting {
             triggeringResetTime: now
         )
 
+        var admitted = false
         do {
             try updateHistory(for: profileId) { history in
-                addSnapshotIfAdmissible(snapshot, for: profileId, to: &history)
+                admitted = addSnapshotIfAdmissible(snapshot, for: profileId, to: &history)
                 pruneSessionSnapshots(in: &history)
             }
             setLastSessionRecordTime(now, for: profileId)
-            LoggingService.shared.logInfo("Recorded periodic session snapshot: \(usage.sessionPercentage)%")
+            if admitted {
+                LoggingService.shared.logInfo("Recorded periodic session snapshot: \(usage.sessionPercentage)%")
+            }
         } catch {
             LoggingService.shared.logStorageError("recordSessionPeriodic", error: error)
         }
@@ -513,13 +524,16 @@ class UsageHistoryService: ProfileHistoryDeleting {
             triggeringResetTime: now
         )
 
+        var admitted = false
         do {
             try updateHistory(for: profileId) { history in
-                addSnapshotIfAdmissible(snapshot, for: profileId, to: &history)
+                admitted = addSnapshotIfAdmissible(snapshot, for: profileId, to: &history)
                 pruneWeeklySnapshots(in: &history)
             }
             setLastWeeklyRecordTime(now, for: profileId)
-            LoggingService.shared.logInfo("Recorded periodic weekly snapshot: \(usage.weeklyPercentage)%")
+            if admitted {
+                LoggingService.shared.logInfo("Recorded periodic weekly snapshot: \(usage.weeklyPercentage)%")
+            }
         } catch {
             LoggingService.shared.logStorageError("recordWeeklyPeriodic", error: error)
         }
@@ -529,11 +543,17 @@ class UsageHistoryService: ProfileHistoryDeleting {
     /// reject it. A rejected snapshot can never be returned by any query, so
     /// storing it would only grow the file forever with no user-visible
     /// benefit.
+    /// Returns whether the snapshot was actually stored, so callers do not
+    /// log a successful recording for a snapshot that was rejected. The
+    /// rejection log is the only signal of how often reset detection fires
+    /// falsely, so a "Recorded" line beside it would make that signal
+    /// useless to the person reading it.
+    @discardableResult
     private func addSnapshotIfAdmissible(
         _ snapshot: UsageSnapshot,
         for profileId: UUID,
         to history: inout UsageHistoryData
-    ) {
+    ) -> Bool {
         guard HistorySnapshotAdmission.isAdmissible(snapshot) else {
             LoggingService.shared.logInfo(
                 "Rejected unreachable \(snapshot.resetType.rawValue) "
@@ -541,9 +561,10 @@ class UsageHistoryService: ProfileHistoryDeleting {
                     + "triggeringResetTime is after timestamp + "
                     + "\(Int(HistorySnapshotAdmission.tolerance))s tolerance"
             )
-            return
+            return false
         }
         history.addSnapshot(snapshot)
+        return true
     }
 
     // Deliberately unchanged: these count from the display-filtered

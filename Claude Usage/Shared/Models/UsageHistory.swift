@@ -446,21 +446,30 @@ struct UsageHistoryData: Codable, Equatable {
     /// Session reset snapshots sorted by date (newest first), filtered for valid data
     var sessionSnapshots: [UsageSnapshot] {
         snapshots(for: .sessionReset)
-            .filter { $0.triggeringResetTime <= $0.timestamp.addingTimeInterval(60) } // Allow 1 min tolerance
+            .filter {
+                $0.triggeringResetTime <= $0.timestamp
+                    .addingTimeInterval(HistorySnapshotAdmission.tolerance)
+            }
             .sorted { $0.timestamp > $1.timestamp }
     }
 
     /// Weekly reset snapshots sorted by date (newest first), filtered for valid data
     var weeklySnapshots: [UsageSnapshot] {
         snapshots(for: .weeklyReset)
-            .filter { $0.triggeringResetTime <= $0.timestamp.addingTimeInterval(60) } // Allow 1 min tolerance
+            .filter {
+                $0.triggeringResetTime <= $0.timestamp
+                    .addingTimeInterval(HistorySnapshotAdmission.tolerance)
+            }
             .sorted { $0.timestamp > $1.timestamp }
     }
 
     /// Billing cycle snapshots sorted by date (newest first), filtered for valid data
     var billingCycleSnapshots: [UsageSnapshot] {
         snapshots(for: .billingCycle)
-            .filter { $0.triggeringResetTime <= $0.timestamp.addingTimeInterval(60) } // Allow 1 min tolerance
+            .filter {
+                $0.triggeringResetTime <= $0.timestamp
+                    .addingTimeInterval(HistorySnapshotAdmission.tolerance)
+            }
             .sorted { $0.timestamp > $1.timestamp }
     }
 
