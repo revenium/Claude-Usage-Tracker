@@ -279,6 +279,38 @@ nonisolated final class ProfileUsageFileStore: @unchecked Sendable {
         try atomicStore.delete(at: relativePath(for: profileID, kind: kind))
     }
 
+    /// Archives the current on-disk primary for `profileID`/`kind` before an
+    /// in-place repair rewrites it. Returns `nil` if there is nothing to
+    /// archive yet. See `AtomicJSONFileStore.archivePrimary`.
+    ///
+    /// Safe to call from within an in-progress `update(...)` transform for
+    /// the same profile: `updateLock` is an `NSRecursiveLock`, so the
+    /// archive is taken against whatever is still on disk — the unmodified
+    /// pre-transform state — before that same `update` call persists
+    /// anything.
+    @discardableResult
+    func archive<Payload: Codable>(
+        _ type: Payload.Type,
+        for profileID: UUID,
+        kind: ProfileUsageRecordKind
+    ) throws -> URL? {
+        updateLock.lock()
+        defer { updateLock.unlock() }
+        return try atomicStore.archivePrimary(
+            ProfileUsageFileEnvelope<Payload>.self,
+            at: relativePath(for: profileID, kind: kind)
+        )
+    }
+
+    /// Removes stale `.tmp` and repair-archive artifacts across every
+    /// profile this store manages. See
+    /// `AtomicJSONFileStore.sweepStaleArtifacts`.
+    func sweepStaleArtifacts(now: Date = Date()) {
+        updateLock.lock()
+        defer { updateLock.unlock() }
+        atomicStore.sweepStaleArtifacts(now: now)
+    }
+
     /// Removes every durable record and recovery artifact owned by a profile.
     /// The throwing contract lets profile deletion avoid reporting success or
     /// clearing legacy sources after a partial filesystem failure.

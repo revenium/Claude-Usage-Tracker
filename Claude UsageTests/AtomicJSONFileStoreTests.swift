@@ -200,6 +200,122 @@ final class AtomicJSONFileStoreTests: XCTestCase {
         XCTAssertFalse(names.contains { $0.hasSuffix(".tmp") })
     }
 
+    func testArchivePrimaryReturnsNilWhenNothingToArchive() throws {
+        let store = AtomicJSONFileStore(baseURL: try makeTemporaryRoot())
+        XCTAssertNil(try store.archivePrimary(Fixture.self, at: "profile/history.json"))
+    }
+
+    func testArchivePrimaryCopiesAndVerifiesUnderTimestampedName() throws {
+        let rootURL = try makeTemporaryRoot()
+        let store = AtomicJSONFileStore(
+            baseURL: rootURL,
+            now: { Date(timeIntervalSince1970: 555) }
+        )
+        let relativePath = "profile/history.json"
+        try store.write(Fixture(value: "pre-repair"), to: relativePath)
+
+        let archiveURL = try XCTUnwrap(try store.archivePrimary(Fixture.self, at: relativePath))
+        XCTAssertEqual(archiveURL.lastPathComponent, "history.json.archive-555000")
+        XCTAssertEqual(
+            try JSONDecoder().decode(Fixture.self, from: Data(contentsOf: archiveURL)),
+            Fixture(value: "pre-repair")
+        )
+        XCTAssertEqual(try permissions(at: archiveURL), 0o600)
+
+        // The primary is unaffected by archiving — this is a preservation
+        // step, not part of any rewrite.
+        XCTAssertEqual(try store.read(Fixture.self, from: relativePath), Fixture(value: "pre-repair"))
+    }
+
+    func testArchivePrimaryLeavesNoPartialArchiveOnFailure() throws {
+        let rootURL = try makeTemporaryRoot()
+        let fixedNow = Date(timeIntervalSince1970: 777)
+        let store = AtomicJSONFileStore(baseURL: rootURL, now: { fixedNow })
+        let relativePath = "profile/history.json"
+        try store.write(Fixture(value: "original"), to: relativePath)
+
+        // A fixed clock means the second archive attempt collides with the
+        // first's filename, so `copyItem` fails — a stand-in for any
+        // mid-copy failure, since the recovery path (remove the partial
+        // archive, throw) is identical either way.
+        _ = try store.archivePrimary(Fixture.self, at: relativePath)
+        XCTAssertThrowsError(try store.archivePrimary(Fixture.self, at: relativePath))
+
+        let fileURL = try store.fileURL(for: relativePath)
+        let names = try FileManager.default.contentsOfDirectory(
+            atPath: fileURL.deletingLastPathComponent().path
+        )
+        // Exactly the first archive remains — the failed second attempt's
+        // partial copy was cleaned up, and the primary was never touched.
+        XCTAssertEqual(names.filter { $0.contains(".archive-") }.count, 1)
+        XCTAssertEqual(try store.read(Fixture.self, from: relativePath), Fixture(value: "original"))
+    }
+
+    func testDeleteRemovesOwnedArchiveArtifacts() throws {
+        let rootURL = try makeTemporaryRoot()
+        let store = AtomicJSONFileStore(baseURL: rootURL)
+        let relativePath = "profile/history.json"
+        try store.write(Fixture(value: "original"), to: relativePath)
+        _ = try store.archivePrimary(Fixture.self, at: relativePath)
+
+        let fileURL = try store.fileURL(for: relativePath)
+        let names = try FileManager.default.contentsOfDirectory(
+            atPath: fileURL.deletingLastPathComponent().path
+        )
+        XCTAssertTrue(names.contains { $0.contains(".archive-") })
+
+        try store.delete(at: relativePath)
+        let remainingNames = try FileManager.default.contentsOfDirectory(
+            atPath: fileURL.deletingLastPathComponent().path
+        )
+        XCTAssertFalse(remainingNames.contains { $0.contains(".archive-") })
+    }
+
+    func testSweepStaleArtifactsRemovesOnlyArtifactsPastTheirRetentionWindow() throws {
+        let rootURL = try makeTemporaryRoot()
+        let store = AtomicJSONFileStore(baseURL: rootURL)
+        let profileDirectory = rootURL.appendingPathComponent("profile", isDirectory: true)
+        try FileManager.default.createDirectory(at: profileDirectory, withIntermediateDirectories: true)
+
+        let staleTmp = profileDirectory.appendingPathComponent(".history.json.old-id.tmp")
+        let freshTmp = profileDirectory.appendingPathComponent(".history.json.new-id.tmp")
+        let staleArchive = profileDirectory.appendingPathComponent("history.json.archive-1000")
+        let freshArchive = profileDirectory.appendingPathComponent("history.json.archive-2000")
+        // Not owned artifacts — must survive regardless of age.
+        let unrelatedFile = profileDirectory.appendingPathComponent("history.json")
+
+        for url in [staleTmp, freshTmp, staleArchive, freshArchive, unrelatedFile] {
+            try Data("x".utf8).write(to: url)
+        }
+
+        let now = Date(timeIntervalSince1970: 10_000_000)
+        try FileManager.default.setAttributes(
+            [.modificationDate: now.addingTimeInterval(-25 * 60 * 60)],
+            ofItemAtPath: staleTmp.path
+        )
+        try FileManager.default.setAttributes(
+            [.modificationDate: now.addingTimeInterval(-1 * 60 * 60)],
+            ofItemAtPath: freshTmp.path
+        )
+        try FileManager.default.setAttributes(
+            [.modificationDate: now.addingTimeInterval(-31 * 24 * 60 * 60)],
+            ofItemAtPath: staleArchive.path
+        )
+        try FileManager.default.setAttributes(
+            [.modificationDate: now.addingTimeInterval(-1 * 24 * 60 * 60)],
+            ofItemAtPath: freshArchive.path
+        )
+
+        store.sweepStaleArtifacts(now: now)
+
+        let remaining = try FileManager.default.contentsOfDirectory(atPath: profileDirectory.path)
+        XCTAssertFalse(remaining.contains(staleTmp.lastPathComponent))
+        XCTAssertTrue(remaining.contains(freshTmp.lastPathComponent))
+        XCTAssertFalse(remaining.contains(staleArchive.lastPathComponent))
+        XCTAssertTrue(remaining.contains(freshArchive.lastPathComponent))
+        XCTAssertTrue(remaining.contains(unrelatedFile.lastPathComponent))
+    }
+
     func testRejectsPathsOutsideBaseDirectory() throws {
         let store = AtomicJSONFileStore(baseURL: try makeTemporaryRoot())
 

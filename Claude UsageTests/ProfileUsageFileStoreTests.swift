@@ -380,6 +380,61 @@ final class ProfileUsageFileStoreTests: XCTestCase {
         )
     }
 
+    func testArchiveCopiesCurrentPrimaryAndDeleteRemovesIt() throws {
+        let rootURL = try makeTemporaryRoot()
+        let store = ProfileUsageFileStore(baseURL: rootURL)
+        let profileID = UUID()
+
+        XCTAssertNil(
+            try store.archive(Fixture.self, for: profileID, kind: .history)
+        )
+
+        try store.save(
+            Fixture(value: "pre-repair"),
+            for: profileID,
+            providerID: "claude",
+            kind: .history
+        )
+        let archiveURL = try XCTUnwrap(
+            try store.archive(Fixture.self, for: profileID, kind: .history)
+        )
+        let archivedEnvelope = try JSONDecoder().decode(
+            ProfileUsageFileEnvelope<Fixture>.self,
+            from: Data(contentsOf: archiveURL)
+        )
+        XCTAssertEqual(archivedEnvelope.payload, Fixture(value: "pre-repair"))
+
+        try store.delete(for: profileID, kind: .history)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: archiveURL.path))
+    }
+
+    func testSweepStaleArtifactsDelegatesAcrossProfiles() throws {
+        let rootURL = try makeTemporaryRoot()
+        let store = ProfileUsageFileStore(baseURL: rootURL)
+        let profileID = UUID()
+        try store.save(
+            Fixture(value: "current"),
+            for: profileID,
+            providerID: "claude",
+            kind: .history
+        )
+
+        let historyURL = try store.fileURL(for: profileID, kind: .history)
+        let staleTmp = historyURL
+            .deletingLastPathComponent()
+            .appendingPathComponent(".history-v1.json.stale.tmp")
+        try Data().write(to: staleTmp)
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date(timeIntervalSince1970: 0)],
+            ofItemAtPath: staleTmp.path
+        )
+
+        store.sweepStaleArtifacts(now: Date())
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: staleTmp.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: historyURL.path))
+    }
+
     private func makeTemporaryRoot() throws -> URL {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("ProfileUsageFileStoreTests-\(UUID().uuidString)")

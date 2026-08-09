@@ -332,6 +332,487 @@ final class UsageHistoryServiceTests: XCTestCase {
         XCTAssertEqual(before, after)
     }
 
+    // MARK: - HistoryRetentionPolicy
+
+    func testNeedsRepairReflectsRetentionVersion() async throws {
+        try await MainActor.run {
+            try testNeedsRepairReflectsRetentionVersionOnMainActor()
+        }
+    }
+
+    @MainActor
+    private func testNeedsRepairReflectsRetentionVersionOnMainActor() throws {
+        XCTAssertTrue(HistoryRetentionPolicy.needsRepair(UsageHistoryData()))
+        XCTAssertTrue(
+            HistoryRetentionPolicy.needsRepair(
+                UsageHistoryData(retentionVersion: 0)
+            )
+        )
+        XCTAssertFalse(
+            HistoryRetentionPolicy.needsRepair(
+                UsageHistoryData(retentionVersion: HistoryRetentionPolicy.currentVersion)
+            )
+        )
+    }
+
+    func testPrunedKeepsNewestWithinEachTypeCapAndDropsOldest() async throws {
+        try await MainActor.run {
+            try testPrunedKeepsNewestWithinEachTypeCapAndDropsOldestOnMainActor()
+        }
+    }
+
+    @MainActor
+    private func testPrunedKeepsNewestWithinEachTypeCapAndDropsOldestOnMainActor() throws {
+        let cap = HistoryRetentionPolicy.maxWeeklySnapshots
+        let snapshots = (0..<(cap + 10)).map { index in
+            makeRawSnapshot(
+                type: .weeklyReset,
+                timestamp: Date(timeIntervalSince1970: Double(index))
+            )
+        }
+
+        let pruned = HistoryRetentionPolicy.pruned(snapshots)
+
+        XCTAssertEqual(pruned.count, cap)
+        let keptTimestamps = Set(pruned.map(\.timestamp))
+        // The newest `cap` records are indices 10..<(cap+10); the oldest 10
+        // (indices 0..<10) must be gone.
+        for index in 0..<10 {
+            XCTAssertFalse(keptTimestamps.contains(Date(timeIntervalSince1970: Double(index))))
+        }
+        for index in 10..<(cap + 10) {
+            XCTAssertTrue(keptTimestamps.contains(Date(timeIntervalSince1970: Double(index))))
+        }
+    }
+
+    /// The decisive regression test for the danger this policy has to avoid:
+    /// measured against real profile data, inadmissible records vastly
+    /// outnumber admissible ones and are written no less recently. A pruner
+    /// that capped by raw timestamp alone — "keep the newest N regardless of
+    /// reachability" — would let that recent garbage crowd out older,
+    /// currently-displayed legitimate records: on real files this left as
+    /// few as 20 of 500 currently-visible weekly records. This test
+    /// reproduces that shape directly: every inadmissible record here is
+    /// timestamped *after* every admissible one, so a raw-timestamp cap
+    /// would keep only inadmissible records. `pruned` must still surface
+    /// every admissible record and none of the inadmissible ones.
+    func testPrunedEvictsInadmissibleRecordsRegardlessOfRecency() async throws {
+        try await MainActor.run {
+            try testPrunedEvictsInadmissibleRecordsRegardlessOfRecencyOnMainActor()
+        }
+    }
+
+    @MainActor
+    private func testPrunedEvictsInadmissibleRecordsRegardlessOfRecencyOnMainActor() throws {
+        let admissibleCount = HistoryRetentionPolicy.maxWeeklySnapshots - 5
+        let admissible = (0..<admissibleCount).map { index in
+            makeRawSnapshot(
+                type: .weeklyReset,
+                timestamp: Date(timeIntervalSince1970: Double(index))
+            )
+        }
+        // Every inadmissible record is newer than every admissible one, and
+        // there are far more of them — exactly the shape measured on real
+        // profiles (garbage outnumbers legitimate records and is at least
+        // as recent).
+        let inadmissible = (0..<10_000).map { index in
+            makeRawSnapshot(
+                type: .weeklyReset,
+                timestamp: Date(timeIntervalSince1970: Double(admissibleCount + index)),
+                triggeringResetTime: .distantFuture
+            )
+        }
+
+        let pruned = HistoryRetentionPolicy.pruned(admissible + inadmissible)
+
+        XCTAssertEqual(pruned.count, admissibleCount)
+        XCTAssertEqual(Set(pruned.map(\.id)), Set(admissible.map(\.id)))
+    }
+
+    func testPrunedIsIdempotent() async throws {
+        try await MainActor.run {
+            try testPrunedIsIdempotentOnMainActor()
+        }
+    }
+
+    @MainActor
+    private func testPrunedIsIdempotentOnMainActor() throws {
+        let snapshots = (0..<(HistoryRetentionPolicy.maxSessionSnapshots + 50)).map { index in
+            makeRawSnapshot(
+                type: .sessionReset,
+                timestamp: Date(timeIntervalSince1970: Double(index)),
+                triggeringResetTime: index.isMultiple(of: 7) ? .distantFuture : Date(timeIntervalSince1970: Double(index))
+            )
+        }
+
+        let oncePruned = HistoryRetentionPolicy.pruned(snapshots)
+        let twicePruned = HistoryRetentionPolicy.pruned(oncePruned)
+
+        XCTAssertEqual(oncePruned.map(\.id), twicePruned.map(\.id))
+    }
+
+    func testPrunedOnEmptyArrayIsEmpty() async throws {
+        try await MainActor.run {
+            XCTAssertTrue(HistoryRetentionPolicy.pruned([]).isEmpty)
+        }
+    }
+
+    func testRepairedIfNeededIsNoOpWhenAlreadyAtCurrentVersion() async throws {
+        try await MainActor.run {
+            try testRepairedIfNeededIsNoOpWhenAlreadyAtCurrentVersionOnMainActor()
+        }
+    }
+
+    @MainActor
+    private func testRepairedIfNeededIsNoOpWhenAlreadyAtCurrentVersionOnMainActor() throws {
+        let history = UsageHistoryData(
+            snapshots: [makeRawSnapshot(type: .sessionReset, triggeringResetTime: .distantFuture)],
+            retentionVersion: HistoryRetentionPolicy.currentVersion
+        )
+        XCTAssertEqual(HistoryRetentionPolicy.repairedIfNeeded(history), history)
+    }
+
+    /// Reproduces the leak's real shape at scale — tens of thousands of
+    /// inadmissible records outnumbering a small admissible set, as measured
+    /// on Jason's live profiles (85,590 stored, 1,500 reachable) — without
+    /// committing a multi-megabyte fixture. `pruned` must still converge to
+    /// exactly the admissible set.
+    func testRegressionFixtureReproducingTheLeakIsFullyRepaired() async throws {
+        try await MainActor.run {
+            try testRegressionFixtureReproducingTheLeakIsFullyRepairedOnMainActor()
+        }
+    }
+
+    @MainActor
+    private func testRegressionFixtureReproducingTheLeakIsFullyRepairedOnMainActor() throws {
+        let admissibleSession = (0..<1000).map { index in
+            makeRawSnapshot(
+                type: .sessionReset,
+                timestamp: Date(timeIntervalSince1970: Double(index) * 600)
+            )
+        }
+        let admissibleWeekly = (0..<500).map { index in
+            makeRawSnapshot(
+                type: .weeklyReset,
+                timestamp: Date(timeIntervalSince1970: Double(index) * 7_200)
+            )
+        }
+        let inadmissible = (0..<85_000).map { index -> UsageSnapshot in
+            makeRawSnapshot(
+                type: index.isMultiple(of: 2) ? .sessionReset : .weeklyReset,
+                timestamp: Date(timeIntervalSince1970: Double(index) * 300),
+                triggeringResetTime: .distantFuture
+            )
+        }
+        let raw = admissibleSession + admissibleWeekly + inadmissible
+        XCTAssertEqual(raw.count, 86_500)
+
+        let pruned = HistoryRetentionPolicy.pruned(raw)
+
+        XCTAssertEqual(pruned.count, 1_500)
+        XCTAssertEqual(
+            Set(pruned.map(\.id)),
+            Set((admissibleSession + admissibleWeekly).map(\.id))
+        )
+    }
+
+    // MARK: - Repair archive and interruption safety
+
+    /// The single most important ordering guarantee of this change: the
+    /// very first write to a profile whose history predates
+    /// `HistoryRetentionPolicy` must archive the pre-repair file before any
+    /// record is evicted, and the resulting live file must contain exactly
+    /// the admissible records — unaffected by the presence of the far more
+    /// numerous inadmissible ones alongside them.
+    func testFirstWriteToUnrepairedHistoryArchivesBeforeEvictingUnreachableRecords() async throws {
+        try await MainActor.run {
+            try testFirstWriteToUnrepairedHistoryArchivesBeforeEvictingUnreachableRecordsOnMainActor()
+        }
+    }
+
+    @MainActor
+    private func testFirstWriteToUnrepairedHistoryArchivesBeforeEvictingUnreachableRecordsOnMainActor() throws {
+        let environment = try makeEnvironment()
+        let profileID = UUID()
+        let now = Date(timeIntervalSince1970: 50_000)
+        let store = ProfileUsageFileStore(baseURL: environment.rootURL, now: { now })
+
+        let admissible = makeRawSnapshot(
+            type: .sessionReset,
+            timestamp: Date(timeIntervalSince1970: 100)
+        )
+        let inadmissible = (0..<20).map { index in
+            makeRawSnapshot(
+                type: .sessionReset,
+                timestamp: Date(timeIntervalSince1970: 200 + Double(index)),
+                triggeringResetTime: .distantFuture
+            )
+        }
+        let preRepair = UsageHistoryData(snapshots: [admissible] + inadmissible)
+        try store.save(preRepair, for: profileID, providerID: "claude", kind: .history)
+
+        let service = UsageHistoryService(
+            defaults: environment.defaults,
+            fileStore: store,
+            now: { now }
+        )
+        service.recordSessionPeriodic(
+            for: profileID,
+            usage: makeClaudeUsage(sessionPercentage: 40, sessionResetTime: now)
+        )
+
+        let historyURL = try store.fileURL(for: profileID, kind: .history)
+        let siblingNames = try FileManager.default.contentsOfDirectory(
+            atPath: historyURL.deletingLastPathComponent().path
+        )
+        let archiveName = try XCTUnwrap(
+            siblingNames.first { $0.contains(".archive-") }
+        )
+        let archivedEnvelope = try JSONDecoder().decode(
+            ProfileUsageFileEnvelope<UsageHistoryData>.self,
+            from: Data(
+                contentsOf: historyURL.deletingLastPathComponent()
+                    .appendingPathComponent(archiveName)
+            )
+        )
+        // The archive holds every pre-repair record, including the ones
+        // about to be evicted.
+        XCTAssertEqual(archivedEnvelope.payload.snapshots.count, preRepair.snapshots.count)
+
+        let repaired = service.loadHistory(for: profileID)
+        XCTAssertEqual(repaired.retentionVersion, HistoryRetentionPolicy.currentVersion)
+        // Exactly the pre-existing admissible record plus the new one just
+        // recorded — none of the 20 inadmissible ones survive.
+        XCTAssertEqual(repaired.snapshots.count, 2)
+        XCTAssertTrue(repaired.snapshots.allSatisfy(HistorySnapshotAdmission.isAdmissible))
+        XCTAssertTrue(repaired.snapshots.contains { $0.id == admissible.id })
+    }
+
+    func testSecondWriteAfterRepairDoesNotCreateAnotherArchive() async throws {
+        try await MainActor.run {
+            try testSecondWriteAfterRepairDoesNotCreateAnotherArchiveOnMainActor()
+        }
+    }
+
+    @MainActor
+    private func testSecondWriteAfterRepairDoesNotCreateAnotherArchiveOnMainActor() throws {
+        let environment = try makeEnvironment()
+        let profileID = UUID()
+        let now = Date(timeIntervalSince1970: 60_000)
+        let store = ProfileUsageFileStore(baseURL: environment.rootURL, now: { now })
+
+        // Seed data that actually needs repairing, so the first write is
+        // guaranteed to archive — otherwise "no second archive" would be
+        // true only because no archive was ever needed at all.
+        let inadmissible = makeRawSnapshot(
+            type: .sessionReset,
+            timestamp: Date(timeIntervalSince1970: 100),
+            triggeringResetTime: .distantFuture
+        )
+        try store.save(
+            UsageHistoryData(snapshots: [inadmissible]),
+            for: profileID,
+            providerID: "claude",
+            kind: .history
+        )
+
+        let service = UsageHistoryService(
+            defaults: environment.defaults,
+            fileStore: store,
+            now: { now }
+        )
+        let usage = makeClaudeUsage(sessionPercentage: 10, sessionResetTime: now)
+        service.recordSessionPeriodic(for: profileID, usage: usage)
+
+        let historyURL = try store.fileURL(for: profileID, kind: .history)
+        let siblingDirectory = historyURL.deletingLastPathComponent()
+        let archiveCountAfterFirstWrite = try FileManager.default
+            .contentsOfDirectory(atPath: siblingDirectory.path)
+            .filter { $0.contains(".archive-") }
+            .count
+        XCTAssertEqual(archiveCountAfterFirstWrite, 1)
+
+        // Already repaired by the first write, so a second write — even one
+        // that itself changes nothing prunable — must not archive again.
+        service.recordWeeklyPeriodic(for: profileID, usage: usage)
+        let archiveCountAfterSecondWrite = try FileManager.default
+            .contentsOfDirectory(atPath: siblingDirectory.path)
+            .filter { $0.contains(".archive-") }
+            .count
+
+        XCTAssertEqual(archiveCountAfterSecondWrite, archiveCountAfterFirstWrite)
+    }
+
+    /// Billing cycle history had no cap or repair at all before this
+    /// change — `recordBillingCycleReset` called `updateHistory` with no
+    /// prune of any kind.
+    func testRecordBillingCycleResetIsNowCapped() async throws {
+        try await MainActor.run {
+            try testRecordBillingCycleResetIsNowCappedOnMainActor()
+        }
+    }
+
+    @MainActor
+    private func testRecordBillingCycleResetIsNowCappedOnMainActor() throws {
+        let environment = try makeEnvironment()
+        let profileID = UUID()
+        let now = Date(timeIntervalSince1970: 70_000)
+        let store = ProfileUsageFileStore(baseURL: environment.rootURL, now: { now })
+
+        let existing = (0..<HistoryRetentionPolicy.maxBillingCycleSnapshots).map { index in
+            makeRawSnapshot(
+                type: .billingCycle,
+                timestamp: Date(timeIntervalSince1970: Double(index))
+            )
+        }
+        try store.save(
+            UsageHistoryData(snapshots: existing),
+            for: profileID,
+            providerID: "claude",
+            kind: .history
+        )
+
+        let service = UsageHistoryService(
+            defaults: environment.defaults,
+            fileStore: store,
+            now: { now }
+        )
+        let usage = APIUsage(
+            currentSpendCents: 500,
+            resetsAt: now,
+            prepaidCreditsCents: 100,
+            currency: "USD",
+            apiTokenCostCents: nil,
+            apiCostByModel: nil,
+            costBySource: nil,
+            dailyCostCents: nil
+        )
+        service.recordBillingCycleReset(for: profileID, previousUsage: usage, resetTime: .distantPast)
+
+        let result = service.loadHistory(for: profileID)
+        XCTAssertEqual(result.billingCycleSnapshots.count, HistoryRetentionPolicy.maxBillingCycleSnapshots)
+    }
+
+    /// Reproduces an interruption exactly where it is most dangerous: the
+    /// archive has already been written, but the process dies before the
+    /// corrected (destructive) rewrite lands. The original file must be
+    /// completely untouched and still flagged as needing repair, and a
+    /// later retry must still succeed.
+    func testInterruptedRepairRewriteLeavesOriginalIntactAndStillNeedingRepair() async throws {
+        try await MainActor.run {
+            try testInterruptedRepairRewriteLeavesOriginalIntactAndStillNeedingRepairOnMainActor()
+        }
+    }
+
+    @MainActor
+    private func testInterruptedRepairRewriteLeavesOriginalIntactAndStillNeedingRepairOnMainActor() throws {
+        let environment = try makeEnvironment()
+        let profileID = UUID()
+        let now = Date(timeIntervalSince1970: 80_000)
+
+        let seedingStore = ProfileUsageFileStore(baseURL: environment.rootURL, now: { now })
+        let admissible = makeRawSnapshot(
+            type: .sessionReset,
+            timestamp: Date(timeIntervalSince1970: 100)
+        )
+        let inadmissible = makeRawSnapshot(
+            type: .sessionReset,
+            timestamp: Date(timeIntervalSince1970: 200),
+            triggeringResetTime: .distantFuture
+        )
+        let preRepair = UsageHistoryData(snapshots: [admissible, inadmissible])
+        try seedingStore.save(preRepair, for: profileID, providerID: "claude", kind: .history)
+        let historyURL = try seedingStore.fileURL(for: profileID, kind: .history)
+        let originalBytes = try Data(contentsOf: historyURL)
+
+        // Fails only the primary's install rename (target ends in
+        // "history-v1.json", not ".bak"), leaving `.bak` maintenance
+        // untouched — the same technique
+        // `AtomicJSONFileStoreTests.testTargetRenameFailureLeavesValidPrimaryOnline`
+        // uses. The archive step uses `copyItem`, not a rename, so it is
+        // unaffected and still completes before this injected failure is
+        // ever reached.
+        let failingAtomicStore = AtomicJSONFileStore(
+            baseURL: environment.rootURL,
+            now: { now },
+            renameOperation: { source, target in
+                guard target.pathExtension == "bak" else {
+                    throw InjectedInterruption.expected
+                }
+                guard Darwin.rename(source.path, target.path) == 0 else {
+                    throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+                }
+            }
+        )
+        let failingStore = ProfileUsageFileStore(atomicStore: failingAtomicStore, now: { now })
+        let failingService = UsageHistoryService(
+            defaults: environment.defaults,
+            fileStore: failingStore,
+            now: { now }
+        )
+
+        failingService.recordSessionPeriodic(
+            for: profileID,
+            usage: makeClaudeUsage(sessionPercentage: 5, sessionResetTime: now)
+        )
+
+        // The archive succeeded (copyItem is unaffected by renameOperation)
+        // but the rewrite's install failed, so the primary is untouched.
+        let siblingNames = try FileManager.default.contentsOfDirectory(
+            atPath: historyURL.deletingLastPathComponent().path
+        )
+        XCTAssertTrue(siblingNames.contains { $0.contains(".archive-") })
+        XCTAssertEqual(try Data(contentsOf: historyURL), originalBytes)
+
+        let stillUnrepaired = try XCTUnwrap(
+            try seedingStore.load(
+                UsageHistoryData.self,
+                for: profileID,
+                providerID: "claude",
+                kind: .history
+            )
+        )
+        XCTAssertNil(stillUnrepaired.retentionVersion)
+
+        // A retry through a working store must still succeed. A fresh store
+        // with an advanced clock avoids colliding with the archive the
+        // failed attempt already wrote — `seedingStore`'s fixed `now`
+        // closure would otherwise produce the same
+        // `.archive-<epoch-ms>` name twice.
+        let retryNow = now.addingTimeInterval(1)
+        let retryStore = ProfileUsageFileStore(baseURL: environment.rootURL, now: { retryNow })
+        let retryService = UsageHistoryService(
+            defaults: environment.defaults,
+            fileStore: retryStore,
+            now: { retryNow }
+        )
+        retryService.recordSessionPeriodic(
+            for: profileID,
+            usage: makeClaudeUsage(sessionPercentage: 5, sessionResetTime: retryNow)
+        )
+        let repaired = retryService.loadHistory(for: profileID)
+        XCTAssertEqual(repaired.retentionVersion, HistoryRetentionPolicy.currentVersion)
+        XCTAssertTrue(repaired.snapshots.allSatisfy(HistorySnapshotAdmission.isAdmissible))
+    }
+
+    nonisolated private enum InjectedInterruption: Error {
+        case expected
+    }
+
+    @MainActor
+    private func makeRawSnapshot(
+        type: ResetType,
+        timestamp: Date = Date(timeIntervalSince1970: 1_000),
+        triggeringResetTime: Date? = nil
+    ) -> UsageSnapshot {
+        UsageSnapshot(
+            id: UUID(),
+            timestamp: timestamp,
+            resetType: type,
+            triggeringResetTime: triggeringResetTime ?? timestamp
+        )
+    }
+
     @MainActor
     private func makeClaudeUsage(
         sessionPercentage: Double,

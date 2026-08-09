@@ -46,6 +46,124 @@ nonisolated struct HistorySnapshotAdmission: Equatable, Sendable {
     }
 }
 
+/// Corrected retention policy for legacy `UsageSnapshot` history.
+///
+/// The previous pruners (`pruneSessionSnapshots` / `pruneWeeklySnapshots`,
+/// now removed) counted from `UsageHistoryData.sessionSnapshots` /
+/// `.weeklySnapshots`, which are already filtered by
+/// `HistorySnapshotAdmission`'s display predicate. A record that predicate
+/// hides was therefore also hidden from pruning and could never be evicted —
+/// measured at ~97% of stored records on live installs. This type counts
+/// and selects from the raw `snapshots` array instead, so every stored
+/// record — reachable or not — is subject to its cap.
+///
+/// Applying this to already-oversized history is destructive by design: the
+/// whole point is to finally evict records the old pruner could never see.
+/// It must never run against unarchived data — see `retentionVersion` and
+/// `UsageHistoryService.enforceRetention`, which archives before the first
+/// application per profile.
+nonisolated struct HistoryRetentionPolicy: Equatable, Sendable {
+    /// Bumped whenever the retention rules change in a way that requires
+    /// re-applying them to already-repaired data. `UsageHistoryData` carries
+    /// the version it was last repaired to; a mismatch means the stored
+    /// array predates this version and cannot be trusted to already satisfy
+    /// the caps below.
+    static let currentVersion = 1
+
+    static let maxSessionSnapshots = 1000     // ~7 days at 10-min intervals
+    static let maxWeeklySnapshots = 500       // ~6 weeks at 2-hour intervals
+    /// No cap existed at all before this policy — `recordBillingCycleReset`
+    /// called `updateHistory` with no prune of any kind. Monthly resets make
+    /// even this generous a span cover decades; it exists as a backstop,
+    /// not because billing history is expected to approach it.
+    static let maxBillingCycleSnapshots = 500
+    /// Backstop against a future `ResetType` shipping without its own cap
+    /// above. Not expected to bind today — the per-type caps already sum to
+    /// exactly this value.
+    static let maxTotalSnapshots =
+        maxSessionSnapshots + maxWeeklySnapshots + maxBillingCycleSnapshots
+
+    /// Whether `history.snapshots` may contain records this policy's caps
+    /// would evict but a prior, uncorrected pruner could never see.
+    static func needsRepair(_ history: UsageHistoryData) -> Bool {
+        (history.retentionVersion ?? 0) < currentVersion
+    }
+
+    /// Evicts every inadmissible record, then applies the per-type caps and
+    /// the total backstop to what remains. Idempotent — pruning an
+    /// already-pruned array removes nothing further — which is what makes
+    /// re-running a repair after an interruption safe.
+    ///
+    /// The inadmissible-eviction step is unconditional, not merely another
+    /// cap, and it must run *before* the per-type caps below rather than
+    /// being folded into a single "keep the newest N regardless of
+    /// reachability" pass. On real data, inadmissible records vastly
+    /// outnumber admissible ones and are written no less recently — capping
+    /// by raw timestamp alone would let that recent garbage crowd out
+    /// older, currently-displayed legitimate records out of the cap.
+    /// Measured against real profiles, a naive raw-timestamp cap kept as
+    /// few as 20 of a profile's 500 currently-visible weekly records,
+    /// silently erasing the rest of what the user can see today. Evicting
+    /// inadmissible records first — categorically, since a record no query
+    /// can ever return has zero value at any recency — then capping only
+    /// the admissible remainder is what makes the caps below a no-op on
+    /// every profile measured (each already sits at or under them),
+    /// reproducing exactly what `UsageHistoryData`'s display queries
+    /// already return.
+    static func pruned(_ snapshots: [UsageSnapshot]) -> [UsageSnapshot] {
+        var result = snapshots.filter(HistorySnapshotAdmission.isAdmissible)
+        result = pruned(result, type: .sessionReset, cap: maxSessionSnapshots)
+        result = pruned(result, type: .weeklyReset, cap: maxWeeklySnapshots)
+        result = pruned(result, type: .billingCycle, cap: maxBillingCycleSnapshots)
+        result = prunedToTotal(result, cap: maxTotalSnapshots)
+        return result
+    }
+
+    /// Applies `pruned(_:)` and stamps `currentVersion`, but only when
+    /// `history` is not already at `currentVersion`. A no-op on
+    /// already-repaired history, by construction.
+    static func repairedIfNeeded(_ history: UsageHistoryData) -> UsageHistoryData {
+        guard needsRepair(history) else { return history }
+        var repaired = history
+        repaired.snapshots = pruned(history.snapshots)
+        repaired.retentionVersion = currentVersion
+        return repaired
+    }
+
+    /// Keeps the newest `cap` records of `type`, dropping the rest — from
+    /// the full array, not a display-filtered view.
+    private static func pruned(
+        _ snapshots: [UsageSnapshot],
+        type: ResetType,
+        cap: Int
+    ) -> [UsageSnapshot] {
+        let matching = snapshots.filter { $0.resetType == type }
+        guard matching.count > cap else { return snapshots }
+        let idsToRemove = Set(
+            matching
+                .sorted { $0.timestamp > $1.timestamp }
+                .suffix(matching.count - cap)
+                .map(\.id)
+        )
+        return snapshots.filter { !idsToRemove.contains($0.id) }
+    }
+
+    /// Keeps the newest `cap` records overall, regardless of type.
+    private static func prunedToTotal(
+        _ snapshots: [UsageSnapshot],
+        cap: Int
+    ) -> [UsageSnapshot] {
+        guard snapshots.count > cap else { return snapshots }
+        let idsToRemove = Set(
+            snapshots
+                .sorted { $0.timestamp > $1.timestamp }
+                .suffix(snapshots.count - cap)
+                .map(\.id)
+        )
+        return snapshots.filter { !idsToRemove.contains($0.id) }
+    }
+}
+
 @MainActor
 protocol ProfileHistoryDeleting: AnyObject {
     func deleteHistoryThrowing(for profileId: UUID) throws
@@ -77,9 +195,10 @@ class UsageHistoryService: ProfileHistoryDeleting {
     private let lastSessionRecordTimePrefix = "lastSessionRecordTime_"
     private let lastWeeklyRecordTimePrefix = "lastWeeklyRecordTime_"
 
-    /// Maximum snapshots to keep per type (to prevent excessive data)
-    private let maxSessionSnapshots = 1000   // ~7 days at 10-min intervals
-    private let maxWeeklySnapshots = 500     // ~6 weeks at 2-hour intervals
+    /// Maximum normalized snapshots to keep (to prevent excessive data).
+    /// Legacy snapshot caps live on `HistoryRetentionPolicy` instead, since
+    /// they must be applied consistently whether triggered by an ordinary
+    /// write or by the one-time repair.
     private let maxNormalizedSnapshots: Int
 
     /// Recording intervals for periodic snapshots
@@ -87,6 +206,10 @@ class UsageHistoryService: ProfileHistoryDeleting {
     private let weeklyRecordingInterval: TimeInterval = 2 * 60 * 60  // 2 hours
 
     private let legacyProviderID = ProviderID.claude
+
+    /// Runs `ProfileUsageFileStore.sweepStaleArtifacts` at most once per
+    /// service lifetime — see `updateHistory`.
+    private var hasSweptStaleArtifacts = false
 
     init(
         defaults: UserDefaults = .standard,
@@ -290,6 +413,7 @@ class UsageHistoryService: ProfileHistoryDeleting {
         providerID: ProviderID = .claude,
         transform: (inout UsageHistoryData) -> Void
     ) throws -> UsageHistoryData {
+        sweepStaleArtifactsIfNeeded()
         let initialHistory =
             providerID == .claude
             ? (decodeLegacyHistory(for: profileID) ?? UsageHistoryData())
@@ -370,6 +494,7 @@ class UsageHistoryService: ProfileHistoryDeleting {
                     history.addNormalizedSnapshot(candidate)
                 }
                 pruneNormalizedSnapshots(in: &history)
+                enforceRetention(for: profileID, providerID: providerID, in: &history)
             }
         } catch {
             LoggingService.shared.logStorageError(
@@ -399,7 +524,7 @@ class UsageHistoryService: ProfileHistoryDeleting {
         do {
             try updateHistory(for: profileId) { history in
                 admitted = addSnapshotIfAdmissible(snapshot, for: profileId, to: &history)
-                pruneSessionSnapshots(in: &history)
+                enforceRetention(for: profileId, providerID: .claude, in: &history)
             }
             if admitted {
                 LoggingService.shared.logInfo("Recorded session reset snapshot for profile \(profileId.uuidString.prefix(8)): \(usage.sessionPercentage)% usage")
@@ -427,7 +552,7 @@ class UsageHistoryService: ProfileHistoryDeleting {
         do {
             try updateHistory(for: profileId) { history in
                 admitted = addSnapshotIfAdmissible(snapshot, for: profileId, to: &history)
-                pruneWeeklySnapshots(in: &history)
+                enforceRetention(for: profileId, providerID: .claude, in: &history)
             }
             if admitted {
                 LoggingService.shared.logInfo("Recorded weekly reset snapshot for profile \(profileId.uuidString.prefix(8)): \(usage.weeklyPercentage)% usage")
@@ -455,6 +580,7 @@ class UsageHistoryService: ProfileHistoryDeleting {
         do {
             try updateHistory(for: profileId) { history in
                 admitted = addSnapshotIfAdmissible(snapshot, for: profileId, to: &history)
+                enforceRetention(for: profileId, providerID: .claude, in: &history)
             }
             if admitted {
                 LoggingService.shared.logInfo("Recorded billing cycle snapshot for profile \(profileId.uuidString.prefix(8)): \(usage.formattedUsed) spent")
@@ -490,7 +616,7 @@ class UsageHistoryService: ProfileHistoryDeleting {
         do {
             try updateHistory(for: profileId) { history in
                 admitted = addSnapshotIfAdmissible(snapshot, for: profileId, to: &history)
-                pruneSessionSnapshots(in: &history)
+                enforceRetention(for: profileId, providerID: .claude, in: &history)
             }
             setLastSessionRecordTime(now, for: profileId)
             if admitted {
@@ -528,7 +654,7 @@ class UsageHistoryService: ProfileHistoryDeleting {
         do {
             try updateHistory(for: profileId) { history in
                 admitted = addSnapshotIfAdmissible(snapshot, for: profileId, to: &history)
-                pruneWeeklySnapshots(in: &history)
+                enforceRetention(for: profileId, providerID: .claude, in: &history)
             }
             setLastWeeklyRecordTime(now, for: profileId)
             if admitted {
@@ -567,35 +693,63 @@ class UsageHistoryService: ProfileHistoryDeleting {
         return true
     }
 
-    // Deliberately unchanged: these count from the display-filtered
-    // `sessionSnapshots` / `weeklySnapshots`, so a record the display hides
-    // is also invisible here and can never be evicted. That is a real bug —
-    // it is why ~97% of the stored records are unreachable and immortal —
-    // but correcting it here would delete roughly 85,000 already-stored
-    // records on the very first write, with no archive and no undo. The
-    // owner asked for those records to be archived first, so the fix lands
-    // with the archive, not before it. Do not "tidy" this into operating on
-    // the raw array without that archive in place.
-    private func pruneSessionSnapshots(in history: inout UsageHistoryData) {
-        let sessionCount = history.sessionSnapshots.count
-        guard sessionCount > maxSessionSnapshots else {
+    /// Applies `HistoryRetentionPolicy` to `history.snapshots` in place,
+    /// archiving the pre-repair file first if this is the first time this
+    /// profile has been repaired.
+    ///
+    /// This is the single choke point every write to a profile's legacy
+    /// history passes through, so the corrected policy — which, unlike the
+    /// pruners it replaces, can see and evict records the display filter
+    /// hides — can never run against a profile whose pre-correction records
+    /// have not already been safely archived. Ordering is what makes this
+    /// safe: `fileStore.archive` runs against whatever is on disk *before*
+    /// this method mutates `history`, and `history` is only ever persisted
+    /// afterward, by the `ProfileUsageFileStore.update` call already in
+    /// progress around this transform. If archiving fails, retention is
+    /// simply not enforced this cycle — the array stays large but nothing
+    /// is lost, and repair is retried on the next write to this profile.
+    private func enforceRetention(
+        for profileID: UUID,
+        providerID: ProviderID,
+        in history: inout UsageHistoryData
+    ) {
+        guard HistoryRetentionPolicy.needsRepair(history) else {
+            history.snapshots = HistoryRetentionPolicy.pruned(history.snapshots)
             return
         }
-        let toRemove = sessionCount - maxSessionSnapshots
-        let oldestSessions = history.sessionSnapshots.suffix(toRemove)
-        let idsToRemove = Set(oldestSessions.map { $0.id })
-        history.snapshots.removeAll { idsToRemove.contains($0.id) }
+        do {
+            try fileStore.archive(
+                UsageHistoryData.self,
+                for: profileID,
+                kind: .history
+            )
+        } catch {
+            LoggingService.shared.logStorageError(
+                "historyRepair.archive",
+                error: error
+            )
+            return
+        }
+        let before = history.snapshots.count
+        history = HistoryRetentionPolicy.repairedIfNeeded(history)
+        let after = history.snapshots.count
+        if before != after {
+            LoggingService.shared.logInfo(
+                "Repaired usage history for profile "
+                    + "\(profileID.uuidString.prefix(8)): "
+                    + "\(before) -> \(after) records"
+            )
+        }
     }
 
-    private func pruneWeeklySnapshots(in history: inout UsageHistoryData) {
-        let weeklyCount = history.weeklySnapshots.count
-        guard weeklyCount > maxWeeklySnapshots else {
-            return
-        }
-        let toRemove = weeklyCount - maxWeeklySnapshots
-        let oldestWeekly = history.weeklySnapshots.suffix(toRemove)
-        let idsToRemove = Set(oldestWeekly.map { $0.id })
-        history.snapshots.removeAll { idsToRemove.contains($0.id) }
+    /// Removes stale `.tmp` and history-archive artifacts across every
+    /// profile this service's file store manages. Runs at most once per
+    /// service lifetime, on the first write, so it never runs at launch and
+    /// never repeats needlessly while the app stays open.
+    private func sweepStaleArtifactsIfNeeded() {
+        guard !hasSweptStaleArtifacts else { return }
+        hasSweptStaleArtifacts = true
+        fileStore.sweepStaleArtifacts()
     }
 
     private func pruneNormalizedSnapshots(

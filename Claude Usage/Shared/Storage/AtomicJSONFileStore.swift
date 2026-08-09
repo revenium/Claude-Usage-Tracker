@@ -247,6 +247,12 @@ nonisolated final class AtomicJSONFileStore: @unchecked Sendable {
                     || (name.hasPrefix(".\(backupURL.lastPathComponent).") && name.hasSuffix(".tmp"))
                     || name.hasPrefix("\(targetURL.lastPathComponent).corrupt-")
                     || name.hasPrefix("\(backupURL.lastPathComponent).corrupt-")
+                    // A repair archives the pre-repair primary as
+                    // `<name>.archive-<epoch-ms>` before rewriting it (see
+                    // `archivePrimary`). Without this, "clear history"
+                    // would leave that copy of the user's data on disk
+                    // after they asked for it to be gone.
+                    || name.hasPrefix("\(targetURL.lastPathComponent).archive-")
             }
         } catch {
             throw AtomicJSONFileStoreError.deleteFailed(parentURL, underlying: error)
@@ -264,6 +270,141 @@ nonisolated final class AtomicJSONFileStore: @unchecked Sendable {
         }) {
             throw AtomicJSONFileStoreError.deleteVerificationFailed(remainingURL)
         }
+    }
+
+    /// Copies the current primary for `relativePath` to a timestamped
+    /// `.archive-<epoch-ms>` snapshot in the same directory, verifying both
+    /// the primary and the archive decode before returning.
+    ///
+    /// Intended to run immediately before a caller performs a destructive
+    /// in-place rewrite (a retention repair pruning records an older, buggy
+    /// pruner could never see): archive, verify, *then* rewrite. Returns
+    /// `nil` when there is no primary yet — nothing to preserve. Throws,
+    /// and leaves no partial archive behind, on any failure; a caller must
+    /// treat that as "do not proceed with the rewrite this cycle" rather
+    /// than attempt to recover, since the whole point of archiving first is
+    /// that the rewrite is never allowed to run without it.
+    @discardableResult
+    func archivePrimary<Value: Decodable>(
+        _ type: Value.Type,
+        at relativePath: String
+    ) throws -> URL? {
+        lock.lock()
+        defer { lock.unlock() }
+
+        let targetURL = try fileURL(for: relativePath)
+        guard fileManager.fileExists(atPath: targetURL.path) else {
+            return nil
+        }
+        // Archiving corrupt bytes would preserve nothing useful. A primary
+        // that cannot decode is `read`'s problem (quarantine / backup
+        // restore), not this method's.
+        _ = try decode(type, from: targetURL)
+
+        let archiveURL = targetURL.appendingPathExtension(
+            "archive-\(Int64(now().timeIntervalSince1970 * 1_000))"
+        )
+        do {
+            // If the destination already exists — an unlikely but possible
+            // collision, e.g. two archive attempts within the same
+            // millisecond, or a stale archive left at this exact name —
+            // `copyItem` throws without creating anything. The catch below
+            // must not then remove whatever already occupies that path:
+            // this call did not create it, so it is not this call's to
+            // delete.
+            try fileManager.copyItem(at: targetURL, to: archiveURL)
+        } catch {
+            throw AtomicJSONFileStoreError.installFailed(archiveURL, underlying: error)
+        }
+        do {
+            try setPermissions(0o600, at: archiveURL)
+            // Verifies the bytes that actually landed on disk for the
+            // archive, not merely that the source decoded a moment ago.
+            _ = try decode(type, from: archiveURL)
+        } catch {
+            // Past this point the copy is ours, so a failure here does
+            // leave a partial artifact behind — clean it up.
+            try? fileManager.removeItem(at: archiveURL)
+            throw AtomicJSONFileStoreError.installFailed(archiveURL, underlying: error)
+        }
+        return archiveURL
+    }
+
+    /// Removes stale recovery artifacts this store owns from every profile
+    /// subdirectory beneath `baseURL`:
+    ///
+    /// - Orphaned `.tmp` staging files. Every `catch` in `write` already
+    ///   removes its own tmp file on error, so the only way one survives is
+    ///   the process dying outright between the temporary write and the
+    ///   rename — confirmed on a live install as a 6-day-stale 21.7MB
+    ///   fragment, since nothing but `delete` (profile-scoped) cleans these
+    ///   up today. A live write completes in seconds, so the age floor
+    ///   below leaves an enormous margin before an in-flight write from
+    ///   another instance could be mistaken for an orphan.
+    /// - Stale `.archive-<epoch-ms>` snapshots written by `archivePrimary`,
+    ///   once older than their retention window.
+    ///
+    /// Best-effort per artifact: one file this process cannot remove (or a
+    /// directory that cannot be listed) does not stop the sweep from
+    /// clearing the rest.
+    func sweepStaleArtifacts(now: Date = Date()) {
+        lock.lock()
+        defer { lock.unlock() }
+
+        guard let directories = try? fileManager.contentsOfDirectory(
+            at: baseURL,
+            includingPropertiesForKeys: [.isDirectoryKey]
+        ) else {
+            return
+        }
+
+        for directory in directories {
+            guard (try? directory.resourceValues(forKeys: [.isDirectoryKey]))?
+                .isDirectory == true else {
+                continue
+            }
+            guard let entries = try? fileManager.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: [.contentModificationDateKey]
+            ) else {
+                continue
+            }
+            for url in entries {
+                guard let retention = Self.staleArtifactRetention(
+                    for: url.lastPathComponent
+                ) else {
+                    continue
+                }
+                guard let modified = try? url.resourceValues(
+                    forKeys: [.contentModificationDateKey]
+                ).contentModificationDate else {
+                    continue
+                }
+                guard now.timeIntervalSince(modified) > retention else {
+                    continue
+                }
+                try? fileManager.removeItem(at: url)
+            }
+        }
+    }
+
+    private static let tmpArtifactRetention: TimeInterval = 24 * 60 * 60
+    private static let archiveArtifactRetention: TimeInterval = 30 * 24 * 60 * 60
+
+    /// Returns the retention window for `filename` if it matches a
+    /// recovery-artifact naming convention this store owns, or `nil` if the
+    /// sweep should leave it alone.
+    private static func staleArtifactRetention(for filename: String) -> TimeInterval? {
+        if filename.hasPrefix("."), filename.hasSuffix(".tmp") {
+            return tmpArtifactRetention
+        }
+        if let range = filename.range(of: ".archive-") {
+            let suffix = filename[range.upperBound...]
+            if !suffix.isEmpty, suffix.allSatisfy(\.isNumber) {
+                return archiveArtifactRetention
+            }
+        }
+        return nil
     }
 
     /// Removes an owned subtree after applying the same path containment rules

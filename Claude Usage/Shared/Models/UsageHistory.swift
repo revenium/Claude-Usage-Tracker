@@ -413,17 +413,29 @@ struct UsageHistoryData: Codable, Equatable {
     var snapshots: [UsageSnapshot]
     var normalizedSnapshots: [NormalizedUsageSnapshot]
 
+    /// Version of `HistoryRetentionPolicy` this history has been repaired
+    /// to, or `nil` if it predates the policy entirely. Additive in both
+    /// directions: an older build ignores the key on read (via
+    /// `decodeIfPresent` below) and simply omits it on its own next write,
+    /// which only means a later re-upgrade repairs again — an idempotent,
+    /// harmless re-run rather than a data-loss risk. See
+    /// `HistoryRetentionPolicy.needsRepair`.
+    var retentionVersion: Int?
+
     init(
         snapshots: [UsageSnapshot] = [],
-        normalizedSnapshots: [NormalizedUsageSnapshot] = []
+        normalizedSnapshots: [NormalizedUsageSnapshot] = [],
+        retentionVersion: Int? = nil
     ) {
         self.snapshots = snapshots
         self.normalizedSnapshots = normalizedSnapshots
+        self.retentionVersion = retentionVersion
     }
 
     private enum CodingKeys: String, CodingKey {
         case snapshots
         case normalizedSnapshots
+        case retentionVersion
     }
 
     init(from decoder: Decoder) throws {
@@ -436,6 +448,10 @@ struct UsageHistoryData: Codable, Equatable {
             [NormalizedUsageSnapshot].self,
             forKey: .normalizedSnapshots
         ) ?? []
+        retentionVersion = try container.decodeIfPresent(
+            Int.self,
+            forKey: .retentionVersion
+        )
     }
 
     /// Snapshots filtered by reset type
