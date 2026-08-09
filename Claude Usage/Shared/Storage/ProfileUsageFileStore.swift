@@ -238,8 +238,16 @@ nonisolated final class ProfileUsageFileStore: @unchecked Sendable {
         }
     }
 
+    /// Loads, transforms, and saves `Payload` under the profile lock.
+    ///
+    /// Skips the save entirely when `transform` leaves the payload
+    /// unchanged. A full save re-encodes and rewrites the whole file plus
+    /// its `.bak` copy, which is wasted work for a no-op transform — and
+    /// `HistorySnapshotAdmission` deliberately makes rejected-write no-ops
+    /// common, so this turns a rejected history record into zero disk I/O
+    /// instead of a full file rewrite.
     @discardableResult
-    func update<Payload: Codable>(
+    func update<Payload: Codable & Equatable>(
         _ type: Payload.Type,
         for profileID: UUID,
         providerID: String,
@@ -250,13 +258,17 @@ nonisolated final class ProfileUsageFileStore: @unchecked Sendable {
         updateLock.lock()
         defer { updateLock.unlock() }
 
-        var payload = try load(
+        let original = try load(
             type,
             for: profileID,
             providerID: providerID,
             kind: kind
         ) ?? initialValue()
+        var payload = original
         try transform(&payload)
+        guard payload != original else {
+            return payload
+        }
         try save(payload, for: profileID, providerID: providerID, kind: kind)
         return payload
     }

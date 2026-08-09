@@ -180,6 +180,117 @@ final class UsageHistoryServiceTests: XCTestCase {
         XCTAssertEqual(service.loadHistory(for: profileID), currentHistory)
     }
 
+    func testRecordSessionResetRejectsSnapshotWithFutureTriggeringResetTime() async throws {
+        try await MainActor.run {
+            try testRecordSessionResetRejectsSnapshotWithFutureTriggeringResetTimeOnMainActor()
+        }
+    }
+
+    /// Reproduces the false-positive reset mechanism directly: Claude's
+    /// session window can advance without an actual reset, so
+    /// `checkAndRecordSessionReset` sometimes calls `recordSessionReset` with
+    /// a `resetTime` that has not happened yet. Before admission, that
+    /// snapshot was written and then hidden forever by the display filter.
+    ///
+    /// `UsageSnapshot.fromSessionReset` stamps `timestamp` from the real
+    /// wall clock (not the service's injectable `now`), so `resetTime` is
+    /// anchored to `Date.distantFuture` here rather than an offset from an
+    /// injected clock, to stay correct regardless of when the test runs.
+    @MainActor
+    private func testRecordSessionResetRejectsSnapshotWithFutureTriggeringResetTimeOnMainActor() throws {
+        let environment = try makeEnvironment()
+        let profileID = UUID()
+        let service = UsageHistoryService(
+            defaults: environment.defaults,
+            fileStore: ProfileUsageFileStore(baseURL: environment.rootURL)
+        )
+        let usage = makeClaudeUsage(sessionPercentage: 55, sessionResetTime: Date())
+
+        service.recordSessionReset(
+            for: profileID,
+            previousUsage: usage,
+            resetTime: .distantFuture
+        )
+
+        let history = service.loadHistory(for: profileID)
+        XCTAssertTrue(history.snapshots.isEmpty)
+        XCTAssertTrue(history.sessionSnapshots.isEmpty)
+    }
+
+    func testNoOpTransformSkipsFileWrite() async throws {
+        try await MainActor.run {
+            try testNoOpTransformSkipsFileWriteOnMainActor()
+        }
+    }
+
+    /// `recordSessionReset` with a rejected (future-dated) snapshot is a
+    /// no-op transform on the stored history. Confirms `ProfileUsageFileStore
+    /// .update` skips the save in that case by asserting the file on disk is
+    /// byte-for-byte unchanged, rather than merely asserting the resulting
+    /// value is equal.
+    @MainActor
+    private func testNoOpTransformSkipsFileWriteOnMainActor() throws {
+        let environment = try makeEnvironment()
+        let profileID = UUID()
+        let now = Date(timeIntervalSince1970: 10_000)
+        let store = ProfileUsageFileStore(baseURL: environment.rootURL, now: { now })
+        let service = UsageHistoryService(
+            defaults: environment.defaults,
+            fileStore: store,
+            now: { now }
+        )
+        let usage = makeClaudeUsage(sessionPercentage: 30, sessionResetTime: now)
+        service.recordSessionReset(
+            for: profileID,
+            previousUsage: usage,
+            resetTime: Date(timeIntervalSince1970: 0)
+        )
+
+        let fileURL = try store.fileURL(for: profileID, kind: .history)
+        let before = try Data(contentsOf: fileURL)
+
+        // Rejected by admission: mutates nothing, so the transform is a
+        // true no-op on the stored payload.
+        service.recordSessionReset(
+            for: profileID,
+            previousUsage: usage,
+            resetTime: .distantFuture
+        )
+
+        let after = try Data(contentsOf: fileURL)
+        XCTAssertEqual(before, after)
+    }
+
+    @MainActor
+    private func makeClaudeUsage(
+        sessionPercentage: Double,
+        sessionResetTime: Date
+    ) -> ClaudeUsage {
+        ClaudeUsage(
+            sessionTokensUsed: 1,
+            sessionLimit: 100,
+            sessionPercentage: sessionPercentage,
+            sessionResetTime: sessionResetTime,
+            weeklyTokensUsed: 0,
+            weeklyLimit: 100,
+            weeklyPercentage: 0,
+            weeklyResetTime: sessionResetTime,
+            opusWeeklyTokensUsed: 0,
+            opusWeeklyPercentage: 0,
+            sonnetWeeklyTokensUsed: 0,
+            sonnetWeeklyPercentage: 0,
+            sonnetWeeklyResetTime: nil,
+            fableWeeklyTokensUsed: 0,
+            fableWeeklyPercentage: 0,
+            fableWeeklyResetTime: nil,
+            costUsed: nil,
+            costLimit: nil,
+            costCurrency: nil,
+            lastUpdated: sessionResetTime,
+            userTimezone: .current
+        )
+    }
+
     @MainActor
     private func makeEnvironment() throws -> (
         defaults: UserDefaults,

@@ -10,6 +10,43 @@ import AppKit
 import UniformTypeIdentifiers
 import UsageCore
 
+/// Whether a snapshot can ever be returned by `UsageHistoryData`'s
+/// display-filtered queries (`sessionSnapshots`, `weeklySnapshots`,
+/// `billingCycleSnapshots`), each of which requires
+/// `triggeringResetTime <= timestamp + tolerance`.
+///
+/// Reset detection can declare a reset whose triggering instant has not
+/// happened yet: Claude's session window is anchored to first message, so
+/// its reset time legitimately moves without an actual reset occurring, and
+/// each such false positive produces a snapshot dated slightly ahead of
+/// itself. Those snapshots were previously admitted, then hidden by the
+/// query filters above — and hidden from the pruner too, because it computed
+/// its counts from those same filtered views. A record invisible to every
+/// reader can never be selected for removal, so it accumulates forever
+/// (measured at ~97% of stored history on live installs). Rejecting it here,
+/// before it is ever written, is the fix: a record that can never be
+/// displayed is now never stored.
+nonisolated struct HistorySnapshotAdmission: Equatable, Sendable {
+    /// Matches the tolerance already used by `UsageHistoryData`'s display
+    /// filters, so admission and display agree by construction.
+    static let tolerance: TimeInterval = 60
+
+    static func isAdmissible(
+        timestamp: Date,
+        triggeringResetTime: Date
+    ) -> Bool {
+        triggeringResetTime <= timestamp.addingTimeInterval(tolerance)
+    }
+
+    static func isAdmissible(_ snapshot: UsageSnapshot) -> Bool {
+        isAdmissible(
+            timestamp: snapshot.timestamp,
+            triggeringResetTime: snapshot.triggeringResetTime
+        )
+    }
+}
+
+
 @MainActor
 protocol ProfileHistoryDeleting: AnyObject {
     func deleteHistoryThrowing(for profileId: UUID) throws
@@ -361,7 +398,7 @@ class UsageHistoryService: ProfileHistoryDeleting {
         let snapshot = UsageSnapshot.fromSessionReset(usage, resetTime: resetTime)
         do {
             try updateHistory(for: profileId) { history in
-                history.addSnapshot(snapshot)
+                addSnapshotIfAdmissible(snapshot, for: profileId, to: &history)
                 pruneSessionSnapshots(in: &history)
             }
             LoggingService.shared.logInfo("Recorded session reset snapshot for profile \(profileId.uuidString.prefix(8)): \(usage.sessionPercentage)% usage")
@@ -386,7 +423,7 @@ class UsageHistoryService: ProfileHistoryDeleting {
         let snapshot = UsageSnapshot.fromWeeklyReset(usage, resetTime: resetTime)
         do {
             try updateHistory(for: profileId) { history in
-                history.addSnapshot(snapshot)
+                addSnapshotIfAdmissible(snapshot, for: profileId, to: &history)
                 pruneWeeklySnapshots(in: &history)
             }
             LoggingService.shared.logInfo("Recorded weekly reset snapshot for profile \(profileId.uuidString.prefix(8)): \(usage.weeklyPercentage)% usage")
@@ -411,7 +448,7 @@ class UsageHistoryService: ProfileHistoryDeleting {
         let snapshot = UsageSnapshot.fromBillingCycleReset(usage, resetTime: resetTime)
         do {
             try updateHistory(for: profileId) { history in
-                history.addSnapshot(snapshot)
+                addSnapshotIfAdmissible(snapshot, for: profileId, to: &history)
             }
             LoggingService.shared.logInfo("Recorded billing cycle snapshot for profile \(profileId.uuidString.prefix(8)): \(usage.formattedUsed) spent")
         } catch {
@@ -443,7 +480,7 @@ class UsageHistoryService: ProfileHistoryDeleting {
 
         do {
             try updateHistory(for: profileId) { history in
-                history.addSnapshot(snapshot)
+                addSnapshotIfAdmissible(snapshot, for: profileId, to: &history)
                 pruneSessionSnapshots(in: &history)
             }
             setLastSessionRecordTime(now, for: profileId)
@@ -478,7 +515,7 @@ class UsageHistoryService: ProfileHistoryDeleting {
 
         do {
             try updateHistory(for: profileId) { history in
-                history.addSnapshot(snapshot)
+                addSnapshotIfAdmissible(snapshot, for: profileId, to: &history)
                 pruneWeeklySnapshots(in: &history)
             }
             setLastWeeklyRecordTime(now, for: profileId)
@@ -488,6 +525,36 @@ class UsageHistoryService: ProfileHistoryDeleting {
         }
     }
 
+    /// Adds `snapshot` to `history` unless `HistorySnapshotAdmission` would
+    /// reject it. A rejected snapshot can never be returned by any query, so
+    /// storing it would only grow the file forever with no user-visible
+    /// benefit.
+    private func addSnapshotIfAdmissible(
+        _ snapshot: UsageSnapshot,
+        for profileId: UUID,
+        to history: inout UsageHistoryData
+    ) {
+        guard HistorySnapshotAdmission.isAdmissible(snapshot) else {
+            LoggingService.shared.logInfo(
+                "Rejected unreachable \(snapshot.resetType.rawValue) "
+                    + "snapshot for profile \(profileId.uuidString.prefix(8)): "
+                    + "triggeringResetTime is after timestamp + "
+                    + "\(Int(HistorySnapshotAdmission.tolerance))s tolerance"
+            )
+            return
+        }
+        history.addSnapshot(snapshot)
+    }
+
+    // Deliberately unchanged: these count from the display-filtered
+    // `sessionSnapshots` / `weeklySnapshots`, so a record the display hides
+    // is also invisible here and can never be evicted. That is a real bug —
+    // it is why ~97% of the stored records are unreachable and immortal —
+    // but correcting it here would delete roughly 85,000 already-stored
+    // records on the very first write, with no archive and no undo. The
+    // owner asked for those records to be archived first, so the fix lands
+    // with the archive, not before it. Do not "tidy" this into operating on
+    // the raw array without that archive in place.
     private func pruneSessionSnapshots(in history: inout UsageHistoryData) {
         let sessionCount = history.sessionSnapshots.count
         guard sessionCount > maxSessionSnapshots else {
