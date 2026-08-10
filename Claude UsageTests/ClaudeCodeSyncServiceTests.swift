@@ -177,6 +177,25 @@ final class ClaudeCodeSyncServiceTests: HostedAppTestCase {
         XCTAssertNil(try service.readKeychainCredentials())
     }
 
+    /// A Keychain item whose secret is not valid UTF-8 is unreadable, not
+    /// empty. Returning `""` here would satisfy `readSystemCredentials`'s
+    /// non-nil check, fail its JSON validation, and tell the user their
+    /// credentials are corrupt — when the actionable answer is "log in".
+    @MainActor
+    func testUndecodableSecretReadsAsAbsentRatherThanEmpty() throws {
+        let runner = RecordingSecurityRunner()
+        runner.results = [
+            SecurityCommandResult(
+                exitCode: 0,
+                standardOutput: nil,
+                standardError: ""
+            )
+        ]
+        let service = makeService(runner: runner)
+
+        XCTAssertNil(try service.readKeychainCredentials())
+    }
+
     @MainActor
     func testReadFailureCarriesExitCodeAndStderr() {
         let runner = RecordingSecurityRunner()

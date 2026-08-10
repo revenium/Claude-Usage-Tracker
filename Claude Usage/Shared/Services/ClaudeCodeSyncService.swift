@@ -11,7 +11,19 @@ import Security
 /// The outcome of one `/usr/bin/security` invocation.
 struct SecurityCommandResult {
     let exitCode: Int32
-    let standardOutput: String
+
+    /// `nil` when the process wrote bytes that are not valid UTF-8.
+    ///
+    /// Deliberately distinct from `""`. A Keychain item whose secret is
+    /// binary — corrupted, or written by some other tool — is *unreadable*,
+    /// not *empty*, and `readKeychainCredentials` has to answer `nil` for it
+    /// so the user is told to log in rather than told their credentials are
+    /// corrupt. Coalescing the decode failure to an empty string here sends
+    /// it down the JSON-validation path instead and inverts that message.
+    let standardOutput: String?
+
+    /// Diagnostics only, so an undecodable byte here is worth nothing and
+    /// coalescing it to empty costs nothing.
     let standardError: String
 }
 
@@ -63,7 +75,7 @@ struct SecurityCLIRunner: SecurityCommandRunning {
 
         return SecurityCommandResult(
             exitCode: process.terminationStatus,
-            standardOutput: String(data: outputData, encoding: .utf8) ?? "",
+            standardOutput: String(data: outputData, encoding: .utf8),
             standardError: String(data: errorBox.data, encoding: .utf8) ?? ""
         )
     }
@@ -195,8 +207,17 @@ class ClaudeCodeSyncService {
         ])
 
         if result.exitCode == 0 {
-            return result.standardOutput
-                .trimmingCharacters(in: .whitespacesAndNewlines)
+            // Undecodable bytes read as absent, not as an empty credential:
+            // letting `""` through would fail JSON validation upstream and
+            // tell the user their credentials are corrupt, when the actionable
+            // answer is that there is nothing here to read.
+            guard let value = result.standardOutput else {
+                LoggingService.shared.log(
+                    "Keychain item is not valid UTF-8; treating as absent"
+                )
+                return nil
+            }
+            return value.trimmingCharacters(in: .whitespacesAndNewlines)
         } else if result.exitCode == Self.itemNotFoundExitCode {
             return nil
         } else {
