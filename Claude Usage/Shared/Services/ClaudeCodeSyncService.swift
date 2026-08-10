@@ -26,10 +26,17 @@ protocol SecurityCommandRunning {
 
 /// Production runner.
 ///
-/// Both pipes are drained *before* `waitUntilExit()`. Draining afterwards
-/// deadlocks as soon as the child writes more than a pipe buffer, and the
-/// credential blobs on this path routinely run to several kilobytes.
+/// Both pipes are drained *concurrently*, then joined before
+/// `waitUntilExit()`. Draining them one after another deadlocks as soon as
+/// the child fills a pipe buffer, and the credential blobs on this path
+/// routinely run to several kilobytes.
 struct SecurityCLIRunner: SecurityCommandRunning {
+    /// Boxes the stderr read so it can cross the background-queue boundary;
+    /// the `sync` barrier below guarantees exclusive access before it's read.
+    private final class ErrorReadBox: @unchecked Sendable {
+        var data = Data()
+    }
+
     func run(_ arguments: [String]) throws -> SecurityCommandResult {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
@@ -42,14 +49,22 @@ struct SecurityCLIRunner: SecurityCommandRunning {
 
         try process.run()
 
+        // Drain stderr on a background queue while stdout drains on this
+        // thread, so neither pipe's buffer can back up and stall the child.
+        let errorBox = ErrorReadBox()
+        let errorQueue = DispatchQueue(label: "com.claudeusage.securityclirunner.stderr")
+        errorQueue.async {
+            errorBox.data = errorPipe.fileHandleForReading.readDataToEndOfFile()
+        }
+
         let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
-        let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+        errorQueue.sync {}
         process.waitUntilExit()
 
         return SecurityCommandResult(
             exitCode: process.terminationStatus,
             standardOutput: String(data: outputData, encoding: .utf8) ?? "",
-            standardError: String(data: errorData, encoding: .utf8) ?? ""
+            standardError: String(data: errorBox.data, encoding: .utf8) ?? ""
         )
     }
 }
