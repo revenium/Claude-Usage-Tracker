@@ -8,21 +8,80 @@
 import Foundation
 import Security
 
+/// The outcome of one `/usr/bin/security` invocation.
+struct SecurityCommandResult {
+    let exitCode: Int32
+    let standardOutput: String
+    let standardError: String
+}
+
+/// Seam over `/usr/bin/security`.
+///
+/// The credential write path is the one place in this app that can destroy a
+/// user's Claude Code login, so it has to be exercisable in tests without
+/// touching the real login Keychain.
+protocol SecurityCommandRunning {
+    func run(_ arguments: [String]) throws -> SecurityCommandResult
+}
+
+/// Production runner.
+///
+/// Both pipes are drained *before* `waitUntilExit()`. Draining afterwards
+/// deadlocks as soon as the child writes more than a pipe buffer, and the
+/// credential blobs on this path routinely run to several kilobytes.
+struct SecurityCLIRunner: SecurityCommandRunning {
+    func run(_ arguments: [String]) throws -> SecurityCommandResult {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+        process.arguments = arguments
+
+        let outputPipe = Pipe()
+        let errorPipe = Pipe()
+        process.standardOutput = outputPipe
+        process.standardError = errorPipe
+
+        try process.run()
+
+        let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+        let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+
+        return SecurityCommandResult(
+            exitCode: process.terminationStatus,
+            standardOutput: String(data: outputData, encoding: .utf8) ?? "",
+            standardError: String(data: errorData, encoding: .utf8) ?? ""
+        )
+    }
+}
+
 /// Manages synchronization of Claude Code CLI credentials between system Keychain and profiles
 class ClaudeCodeSyncService {
     static let shared = ClaudeCodeSyncService()
 
-    /// Cached resolved keychain service name (cleared per app session)
+    /// Exit code `security` uses for "the item is not in the keychain".
+    private static let itemNotFoundExitCode: Int32 = 44
+
+    /// Exit code `security` uses for "an item with those attributes already exists".
+    private static let duplicateItemExitCode: Int32 = 45
+
+    /// Cached resolved keychain service name (cleared per app session).
+    ///
+    /// Only ever holds a name that was actually *found*. A lookup that finds
+    /// nothing must not be cached: it would pin the whole process lifetime to
+    /// the legacy name even after the CLI writes its real item.
     private var resolvedServiceName: String?
     private let profileStore: ProfileStore
     private let systemCredentialsReader: (() throws -> String?)?
+    private let securityRunner: SecurityCommandRunning
 
     init(
         profileStore: ProfileStore = .shared,
-        systemCredentialsReader: (() throws -> String?)? = nil
+        systemCredentialsReader: (() throws -> String?)? = nil,
+        securityRunner: SecurityCommandRunning = SecurityCLIRunner()
     ) {
         self.profileStore = profileStore
         self.systemCredentialsReader = systemCredentialsReader
+        self.securityRunner = securityRunner
     }
 
     // MARK: - System Credentials Access (Fallback Chain)
@@ -100,43 +159,55 @@ class ClaudeCodeSyncService {
         return nil
     }
 
-    /// Reads Claude Code credentials from system Keychain using security command
-    private func readKeychainCredentials() throws -> String? {
+    /// Reads Claude Code credentials from system Keychain using security command.
+    ///
+    /// This one stays on the `security` CLI rather than `SecItemCopyMatching`:
+    /// the item's ACL trusts `/usr/bin/security`, which wrote it, so reading it
+    /// from inside this app would raise a Keychain access prompt.
+    ///
+    /// Not `private`: `readSystemCredentials` reaches it only after the
+    /// credentials file misses, which on a developer machine depends on
+    /// whether `~/.claude/.credentials.json` happens to exist. Tests address
+    /// it directly so their coverage of the failure codes does not vary by
+    /// machine.
+    func readKeychainCredentials() throws -> String? {
         let serviceName = resolveServiceName()
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
-        process.arguments = [
+        let result = try securityRunner.run([
             "find-generic-password",
             "-s", serviceName,
             "-a", NSUserName(),
             "-w"  // Print password only
-        ]
+        ])
 
-        let outputPipe = Pipe()
-        let errorPipe = Pipe()
-        process.standardOutput = outputPipe
-        process.standardError = errorPipe
-
-        try process.run()
-        process.waitUntilExit()
-
-        let exitCode = process.terminationStatus
-
-        if exitCode == 0 {
-            let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
-            guard let value = String(data: outputData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) else {
-                return nil
-            }
-            return value
-        } else if exitCode == 44 {
-            // Exit code 44 = item not found
+        if result.exitCode == 0 {
+            return result.standardOutput
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        } else if result.exitCode == Self.itemNotFoundExitCode {
             return nil
         } else {
-            let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
-            let errorString = String(data: errorData, encoding: .utf8) ?? "Unknown error"
-            LoggingService.shared.log("Failed to read keychain: \(errorString)")
-            throw ClaudeCodeError.keychainReadFailed(status: OSStatus(exitCode))
+            let message = Self.describe(result)
+            LoggingService.shared.log("Failed to read keychain: \(message)")
+            throw ClaudeCodeError.keychainReadFailed(
+                exitCode: result.exitCode,
+                message: message
+            )
         }
+    }
+
+    /// Renders a failed `security` invocation as something a support
+    /// conversation can act on.
+    ///
+    /// The previous code threw `OSStatus(exitCode)`, which silently retyped a
+    /// *process exit status* as a Security framework status — so every real
+    /// failure surfaced as the uninformative "status: 1" and the CLI's own
+    /// explanation, the only diagnostic that existed, was discarded.
+    private static func describe(_ result: SecurityCommandResult) -> String {
+        let stderr = result.standardError
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !stderr.isEmpty else {
+            return "security exited with code \(result.exitCode)"
+        }
+        return "security exited with code \(result.exitCode): \(stderr)"
     }
 
     /// Extracts accessToken from potentially truncated JSON using regex
@@ -175,61 +246,66 @@ class ClaudeCodeSyncService {
             return hashedName
         }
 
-        // Default to legacy name (will fail gracefully if not found)
-        resolvedServiceName = Self.legacyServiceName
+        // Nothing on this machine yet. Answer with the legacy name so the
+        // caller still has something to try, but deliberately do NOT cache it:
+        // "not found yet" is a transient state, and caching it would keep the
+        // app writing the legacy item for the rest of the process lifetime even
+        // after the CLI creates its real per-config-dir item.
         return Self.legacyServiceName
     }
 
-    /// Checks if a keychain item exists with the given service name
+    /// Checks if a keychain item exists with the given service name.
+    ///
+    /// Attributes only — no `kSecReturnData`, so this cannot raise a Keychain
+    /// access prompt, and it costs no subprocess.
     private func keychainItemExists(serviceName: String) -> Bool {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
-        process.arguments = ["find-generic-password", "-s", serviceName, "-a", NSUserName()]
-        process.standardOutput = Pipe()
-        process.standardError = Pipe()
-        do {
-            try process.run()
-            process.waitUntilExit()
-            return process.terminationStatus == 0
-        } catch {
-            return false
-        }
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: serviceName,
+            kSecAttrAccount as String: NSUserName(),
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
     }
 
-    /// Searches the keychain for a hashed service name matching "Claude Code-credentials-*"
+    /// Searches the keychain for a hashed service name matching
+    /// "Claude Code-credentials-*".
+    ///
+    /// Deliberately not `security dump-keychain`: that dumps the attributes of
+    /// every item in the user's login Keychain — every service name, account,
+    /// and comment they have ever saved — into this process, to learn one
+    /// string. This query is scoped to generic passwords owned by the current
+    /// account and returns attributes only.
     private func findHashedServiceName() -> String? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
-        process.arguments = ["dump-keychain"]
-        let outputPipe = Pipe()
-        process.standardOutput = outputPipe
-        process.standardError = Pipe()
+        let prefix = "Claude Code-credentials-"
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: NSUserName(),
+            kSecMatchLimit as String: kSecMatchLimitAll,
+            kSecReturnAttributes as String: true
+        ]
 
-        do {
-            try process.run()
-            process.waitUntilExit()
-        } catch {
+        var result: AnyObject?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let items = result as? [[String: Any]] else {
             return nil
         }
 
-        guard process.terminationStatus == 0 else { return nil }
+        // Sorted so a machine with several config directories resolves to the
+        // same item on every launch rather than whichever one the Keychain
+        // happened to return first.
+        let matches = items
+            .compactMap { $0[kSecAttrService as String] as? String }
+            .filter { $0.hasPrefix(prefix) }
+            .sorted()
 
-        let output = String(data: outputPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        let prefix = "Claude Code-credentials-"
-
-        // Parse service names from dump-keychain output (format: "svce"<blob>="ServiceName")
-        for line in output.components(separatedBy: "\n") {
-            guard line.contains("\"svce\""), line.contains(prefix) else { continue }
-            // Extract the value between quotes after the =
-            if let equalsRange = line.range(of: "=\""),
-               let endQuoteRange = line.range(of: "\"", range: equalsRange.upperBound..<line.endIndex) {
-                let name = String(line[equalsRange.upperBound..<endQuoteRange.lowerBound])
-                if name.hasPrefix(prefix) {
-                    return name
-                }
-            }
+        if matches.count > 1 {
+            LoggingService.shared.log(
+                "Found \(matches.count) hashed Claude Code keychain items; "
+                    + "using the first by name"
+            )
         }
-        return nil
+        return matches.first
     }
 
     /// Invalidates the cached service name, forcing re-discovery on next access
@@ -237,59 +313,82 @@ class ClaudeCodeSyncService {
         resolvedServiceName = nil
     }
 
-    /// Writes Claude Code credentials to system Keychain using security command
+    /// Writes Claude Code credentials to system Keychain using security command.
+    ///
+    /// The write is a single `add-generic-password -U`, which updates the item
+    /// in place when it already exists. It deliberately does *not* delete first.
+    ///
+    /// The previous implementation ran `delete-generic-password` and only then
+    /// re-added, which opened a window with no CLI login at all: any failure of
+    /// the add — a locked Keychain, a denied ACL, a SecurityAgent prompt the
+    /// user dismisses — left the user logged out of Claude Code, and cost a
+    /// second full atomic rewrite of the login Keychain on every profile
+    /// switch. `-U` was already being passed, so the delete bought nothing.
     func writeSystemCredentials(_ jsonData: String) throws {
         let serviceName = resolveServiceName()
         LoggingService.shared.log("Writing credentials to keychain using security command (service: \(serviceName))")
 
-        // First, delete existing item
-        let deleteProcess = Process()
-        deleteProcess.executableURL = URL(fileURLWithPath: "/usr/bin/security")
-        deleteProcess.arguments = [
+        let result = try addGenericPassword(jsonData, serviceName: serviceName)
+        if result.exitCode == 0 {
+            LoggingService.shared.log("✅ Added Claude Code system credentials successfully using security command")
+            return
+        }
+
+        // `-U` should make this unreachable. If some Keychain state defeats it
+        // anyway, fall back to the old delete-then-add — but only from here, as
+        // recovery from an already-failed write, never on the happy path.
+        guard result.exitCode == Self.duplicateItemExitCode else {
+            let message = Self.describe(result)
+            LoggingService.shared.log("❌ Failed to add credentials: \(message)")
+            throw ClaudeCodeError.keychainWriteFailed(
+                exitCode: result.exitCode,
+                message: message
+            )
+        }
+
+        LoggingService.shared.log(
+            "Update-in-place was refused as a duplicate; retrying via delete"
+        )
+        let deleteResult = try securityRunner.run([
             "delete-generic-password",
             "-s", serviceName,
             "-a", NSUserName()
-        ]
-
-        try deleteProcess.run()
-        deleteProcess.waitUntilExit()
-
-        let deleteExitCode = deleteProcess.terminationStatus
-        if deleteExitCode == 0 {
-            LoggingService.shared.log("Deleted existing keychain item")
-        } else {
-            LoggingService.shared.log("No existing keychain item to delete (or delete failed with code \(deleteExitCode))")
+        ])
+        if deleteResult.exitCode != 0 {
+            LoggingService.shared.log(
+                "No existing keychain item to delete "
+                    + "(\(Self.describe(deleteResult)))"
+            )
         }
 
-        // Add new item using security command
-        let addProcess = Process()
-        addProcess.executableURL = URL(fileURLWithPath: "/usr/bin/security")
-        addProcess.arguments = [
+        let retry = try addGenericPassword(jsonData, serviceName: serviceName)
+        guard retry.exitCode == 0 else {
+            let message = Self.describe(retry)
+            // The delete above already ran, so this path really can leave the
+            // system without a CLI login. Say so plainly in the log.
+            LoggingService.shared.log(
+                "❌ Failed to add credentials after delete; the system has no "
+                    + "Claude Code login until this is retried: \(message)"
+            )
+            throw ClaudeCodeError.keychainWriteFailed(
+                exitCode: retry.exitCode,
+                message: message
+            )
+        }
+        LoggingService.shared.log("✅ Added Claude Code system credentials successfully using security command")
+    }
+
+    private func addGenericPassword(
+        _ jsonData: String,
+        serviceName: String
+    ) throws -> SecurityCommandResult {
+        try securityRunner.run([
             "add-generic-password",
             "-s", serviceName,
             "-a", NSUserName(),
             "-w", jsonData,
             "-U"  // Update if exists
-        ]
-
-        let outputPipe = Pipe()
-        let errorPipe = Pipe()
-        addProcess.standardOutput = outputPipe
-        addProcess.standardError = errorPipe
-
-        try addProcess.run()
-        addProcess.waitUntilExit()
-
-        let exitCode = addProcess.terminationStatus
-
-        if exitCode == 0 {
-            LoggingService.shared.log("✅ Added Claude Code system credentials successfully using security command")
-        } else {
-            let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
-            let errorString = String(data: errorData, encoding: .utf8) ?? "Unknown error"
-            LoggingService.shared.log("❌ Failed to add credentials: \(errorString)")
-            throw ClaudeCodeError.keychainWriteFailed(status: OSStatus(exitCode))
-        }
+        ])
     }
 
     // MARK: - Profile Sync Operations
@@ -448,8 +547,11 @@ class ClaudeCodeSyncService {
 enum ClaudeCodeError: LocalizedError {
     case noCredentialsFound
     case invalidJSON
-    case keychainReadFailed(status: OSStatus)
-    case keychainWriteFailed(status: OSStatus)
+    /// Carries the `security` process exit code plus whatever the CLI wrote to
+    /// stderr. Both are needed: the exit code alone is not an `OSStatus` and
+    /// says almost nothing about why the Keychain refused the operation.
+    case keychainReadFailed(exitCode: Int32, message: String)
+    case keychainWriteFailed(exitCode: Int32, message: String)
     case noProfileCredentials
 
     var errorDescription: String? {
@@ -458,10 +560,10 @@ enum ClaudeCodeError: LocalizedError {
             return "No Claude Code credentials found in system Keychain. Please log in to Claude Code first."
         case .invalidJSON:
             return "Claude Code credentials are corrupted or invalid."
-        case .keychainReadFailed(let status):
-            return "Failed to read credentials from system Keychain (status: \(status))."
-        case .keychainWriteFailed(let status):
-            return "Failed to write credentials to system Keychain (status: \(status))."
+        case .keychainReadFailed(_, let message):
+            return "Failed to read credentials from system Keychain (\(message))."
+        case .keychainWriteFailed(_, let message):
+            return "Failed to write credentials to system Keychain (\(message))."
         case .noProfileCredentials:
             return "This profile has no synced CLI account."
         }
