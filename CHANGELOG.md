@@ -18,7 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   was refused, by a locked Keychain, a denied Keychain permission, or a system
   prompt that got dismissed, you were left logged out of Claude Code with
   nothing to show why. The write is now a single update in place, and your
-  existing login is left untouched if it fails.
+  existing login is left untouched if it fails. One narrow path is kept as a
+  last-resort recovery: if the update is refused because an item already
+  exists, the app still falls back to replacing it, and a failure there can
+  still leave you logged out.
 
 - **Keychain failures now say what actually went wrong.** They previously
   reported a meaningless "status: 1" and discarded the system's own
