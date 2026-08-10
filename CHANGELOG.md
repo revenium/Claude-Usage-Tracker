@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.3.7] - 2026-08-09
+
+### Fixed
+
+- **Switching profiles no longer deletes your Claude Code login before
+  rewriting it.** The app removed the CLI credential from the Keychain and
+  only then wrote the new one, even though the write it used already updates
+  an existing item in place. In between, no login existed — so if the write
+  was refused, by a locked Keychain, a denied Keychain permission, or a system
+  prompt that got dismissed, you were left logged out of Claude Code with
+  nothing to show why. The write is now a single update in place, and your
+  existing login is left untouched if it fails.
+
+- **Keychain failures now say what actually went wrong.** They previously
+  reported a meaningless "status: 1" and discarded the system's own
+  explanation, which was the only diagnostic there was.
+
+- **A Keychain credential that cannot be read is reported as missing rather
+  than corrupt.** An unreadable item asked you to log in again; it had begun
+  claiming your credentials were corrupted instead.
+
+### Changed
+
+- **The app no longer reads your whole login Keychain to find one item.**
+  Locating the Claude Code credential dumped the attributes of every item
+  stored in the Keychain — every service name and account you have ever saved.
+  It now asks for just the items it needs.
+
+- **Profile switching writes to the Keychain once instead of twice**, halving
+  the app's share of a contended system resource.
+
 ## [3.3.6] - 2026-08-09
 
 ### Changed
