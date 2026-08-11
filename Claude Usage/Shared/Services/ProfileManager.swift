@@ -331,6 +331,54 @@ class ProfileManager: ObservableObject {
         LoggingService.shared.log("ProfileManager: Loaded \(profiles.count) profile(s), active: \(activeProfile?.name ?? "none")")
     }
 
+    /// Re-applies the active Codex profile's persisted `linkedHome` to the
+    /// live CODEX_HOME pointer + tmux env, after `loadProfiles()`.
+    ///
+    /// `CodexSwitchService.discardStaleHomeIfMissing()` runs at startup
+    /// (before `loadProfiles()`, see `AppDelegate`) and is deliberately
+    /// aggressive: it clears the persisted pointer + tmux env whenever the
+    /// linked directory doesn't currently exist — e.g. an external or
+    /// network volume that hasn't mounted yet — so a stale pointer never
+    /// survives to hand a new terminal pane a broken CODEX_HOME. That
+    /// self-heal only ever touches the *live* pointer, though. The user's
+    /// actual selection is untouched the whole time: `linkedHome` lives on
+    /// the profile itself, persisted durably via
+    /// `ProfileStore.replaceCodexLinkedHome`, entirely separate from the
+    /// pointer file.
+    ///
+    /// This is the counterpart: once profiles are loaded, if there's an
+    /// active Codex profile with a linked home, put the live pointer back so
+    /// a directory that was merely unmounted at launch costs at most one
+    /// launch instead of being permanently forgotten. `activateProfile(_:)`
+    /// can't repair this on its own — it early-returns when the profile is
+    /// already recorded active, so re-clicking the already-active profile in
+    /// the UI does nothing.
+    ///
+    /// Failure here is non-fatal and deliberately does NOT clear the
+    /// pointer again (contrast `activateProfile`'s own failure handling
+    /// below, which does clear on an actual provider switch): the startup
+    /// self-heal already handled the "still missing" case, so re-clearing
+    /// here would just re-introduce the bug this method exists to fix. If
+    /// the directory is still unavailable, this is simply a no-op until the
+    /// next launch or manual switch.
+    func reapplyActiveCodexHome() {
+        guard let linkedHome = activeCodexProfile?.providerConfiguration
+            .codexConfiguration?.linkedHome else {
+            return
+        }
+        do {
+            try activationCodexEffects.switchToLinkedHome(linkedHome)
+            LoggingService.shared.log(
+                "✓ Re-applied CODEX_HOME to: \(linkedHome.path)"
+            )
+        } catch {
+            LoggingService.shared.logError(
+                "Failed to switch CODEX_HOME (non-fatal)",
+                error: error
+            )
+        }
+    }
+
     /// Resolves the active profile id for one provider: the stored/legacy id
     /// if it still names a live profile of that provider, else that
     /// provider's first live profile, else nil if it has none.

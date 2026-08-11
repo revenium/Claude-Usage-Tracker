@@ -3133,6 +3133,129 @@ final class ProfileProviderCoreTests: HostedAppTestCase {
         )
     }
 
+    /// `reapplyActiveCodexHome()` is the counterpart to the startup
+    /// self-heal (`CodexSwitchService.discardStaleHomeIfMissing()`), which
+    /// discards the live CODEX_HOME pointer whenever its directory doesn't
+    /// currently exist (e.g. an unmounted external volume). The user's
+    /// selection survives in `linkedHome` regardless, so once profiles are
+    /// loaded this should put the live pointer back for whichever Codex
+    /// profile is active — without going through `activateProfile(_:)`,
+    /// which can't help here since it early-returns for an already-active
+    /// profile.
+    @MainActor
+    func testReapplyActiveCodexHomeRestoresPointerForActiveLinkedProfile()
+        throws
+    {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let homeURL = root.appendingPathComponent(
+            "codex-home", isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: homeURL, withIntermediateDirectories: true
+        )
+        let linkedHome = try CodexHomeCanonicalizer()
+            .canonicalize(homeURL.path)
+
+        let defaults = ProviderTestDefaults()
+        let store = retain(ProfileStore(
+            defaults: defaults,
+            secretStore: ProviderSecretStore(),
+            usageFileStore: ProviderUsageStore()
+        ))
+        let codex = Profile(
+            name: "Linked Codex",
+            providerConfiguration: .codex(.init(linkedHome: linkedHome))
+        )
+        try seedProfilesForTesting([codex], in: store)
+        let codexEffects = ProviderCodexEffectCounter()
+        let manager = retain(ProfileManager(
+            profileStore: store,
+            activationClaudeEffects: .noOp,
+            activationCodexEffects: codexEffects.effects
+        ))
+
+        manager.loadProfiles()
+        manager.reapplyActiveCodexHome()
+
+        XCTAssertEqual(codexEffects.switchedHomes, [linkedHome])
+        XCTAssertEqual(codexEffects.clearCount, 0)
+    }
+
+    /// If the linked directory is still unavailable when this runs (e.g.
+    /// the volume is still unmounted), the failure must be swallowed and
+    /// must NOT clear the pointer again — the startup self-heal already
+    /// handled the stale case, and clearing here would defeat the whole
+    /// point of re-applying it.
+    @MainActor
+    func testReapplyActiveCodexHomeSwallowsFailureWithoutClearing() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let defaults = ProviderTestDefaults()
+        let store = retain(ProfileStore(
+            defaults: defaults,
+            secretStore: ProviderSecretStore(),
+            usageFileStore: ProviderUsageStore()
+        ))
+        let linkedHome = try CodexHomeCanonicalizer()
+            .canonicalize(root.path)
+        let codex = Profile(
+            name: "Linked Codex",
+            providerConfiguration: .codex(.init(linkedHome: linkedHome))
+        )
+        try seedProfilesForTesting([codex], in: store)
+        let codexEffects = ProviderCodexEffectCounter()
+        codexEffects.switchToLinkedHomeError = ProviderTestError.expected
+        let manager = retain(ProfileManager(
+            profileStore: store,
+            activationClaudeEffects: .noOp,
+            activationCodexEffects: codexEffects.effects
+        ))
+
+        manager.loadProfiles()
+        manager.reapplyActiveCodexHome()
+
+        XCTAssertTrue(codexEffects.switchedHomes.isEmpty)
+        XCTAssertEqual(
+            codexEffects.clearCount,
+            0,
+            "Re-applying must never clear CODEX_HOME on failure — that "
+                + "would re-discard the pointer the startup self-heal "
+                + "already handled"
+        )
+    }
+
+    /// With no active Codex profile (or an active one with no linked
+    /// home), re-applying must be inert — no switch, no clear.
+    @MainActor
+    func testReapplyActiveCodexHomeIsNoOpWithoutActiveLinkedProfile()
+        throws
+    {
+        let defaults = ProviderTestDefaults()
+        let store = retain(ProfileStore(
+            defaults: defaults,
+            secretStore: ProviderSecretStore(),
+            usageFileStore: ProviderUsageStore()
+        ))
+        let codex = Profile(
+            name: "Unlinked Codex",
+            providerConfiguration: .codex(.init())
+        )
+        try seedProfilesForTesting([codex], in: store)
+        let codexEffects = ProviderCodexEffectCounter()
+        let manager = retain(ProfileManager(
+            profileStore: store,
+            activationClaudeEffects: .noOp,
+            activationCodexEffects: codexEffects.effects
+        ))
+
+        manager.loadProfiles()
+        manager.reapplyActiveCodexHome()
+
+        XCTAssertTrue(codexEffects.switchedHomes.isEmpty)
+        XCTAssertEqual(codexEffects.clearCount, 0)
+    }
+
     private func makeTemporaryDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent(

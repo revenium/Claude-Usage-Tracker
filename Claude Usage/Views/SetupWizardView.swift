@@ -514,24 +514,17 @@ struct CodexSetupWizardView: View {
         )
     }
 
-    /// `~/.codex` is worth prefilling only when it's real and free: it must
-    /// exist, be a directory, and not already be linked to another profile
-    /// — proposing someone else's home would be worse than an empty field.
     /// There's no existing linked home to defer to here (this is initial
     /// setup for a brand-new profile), unlike the equivalent prefill in
-    /// `ProviderAccountSettingsView`.
+    /// `ProviderAccountSettingsView`. See
+    /// `CodexDefaultHomeResolver.prefillCandidate` for the prefill rule
+    /// itself.
     private static func prefillHomePath(
         dependencies: ProviderUIDependencies
     ) -> String {
-        guard let defaultHomePath = CodexDefaultHomeResolver.resolvedPath()
-        else {
-            return ""
-        }
-        let alreadyLinked = dependencies.profileManager.profiles.contains {
-            $0.providerConfiguration.codexConfiguration?
-                .linkedHome?.path == defaultHomePath
-        }
-        return alreadyLinked ? "" : defaultHomePath
+        CodexDefaultHomeResolver.prefillCandidate(
+            profiles: dependencies.profileManager.profiles
+        )
     }
 
     var body: some View {

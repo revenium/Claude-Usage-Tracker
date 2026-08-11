@@ -69,4 +69,35 @@ enum CodexDefaultHomeResolver {
         }
         return home.path
     }
+
+    /// `~/.codex` is worth prefilling only when it's real and free: it must
+    /// exist, be a directory, and not already be linked to another
+    /// profile — proposing someone else's home would be worse than an
+    /// empty field. Returns "" whenever prefilling isn't safe (no resolvable
+    /// default, or some profile already links it); otherwise returns the
+    /// resolved default path. Shared by both Codex home text-field prefills
+    /// (initial setup and per-profile settings) so the rule can't drift
+    /// between them.
+    static func prefillCandidate(profiles: [Profile]) -> String {
+        prefillCandidate(defaultHomePath: resolvedPath(), profiles: profiles)
+    }
+
+    /// Pure matching core behind `prefillCandidate(profiles:)`, split out
+    /// so the "is this default already claimed?" rule is unit-testable on
+    /// its own. `resolvedPath()` always consults the real `~/.codex` with
+    /// no injectable override, so a test that only had the function above
+    /// to call could never deterministically exercise both branches.
+    static func prefillCandidate(
+        defaultHomePath: String?,
+        profiles: [Profile]
+    ) -> String {
+        guard let defaultHomePath else {
+            return ""
+        }
+        let alreadyLinked = profiles.contains {
+            $0.providerConfiguration.codexConfiguration?
+                .linkedHome?.path == defaultHomePath
+        }
+        return alreadyLinked ? "" : defaultHomePath
+    }
 }
