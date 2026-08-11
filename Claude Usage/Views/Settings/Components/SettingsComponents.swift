@@ -8,20 +8,41 @@
 
 import SwiftUI
 
+/// A small pill next to a `SettingsSectionCard` title — e.g. "Optional"/
+/// "Required" on the Codex CLI-switching card — matching the capsule style
+/// already used for `SettingToggle`'s BETA/PRO/NEW badges and the profile
+/// list's "Active" badge, rather than folding the state into the title
+/// string. Not nested inside `SettingsSectionCard` so call sites don't have
+/// to spell out its unrelated `Content` generic parameter to name this type.
+struct SettingsSectionCardBadge {
+    let text: String
+    let color: Color
+
+    init(_ text: String, color: Color) {
+        self.text = text
+        self.color = color
+    }
+}
+
 /// Reusable card container for settings sections
 /// Provides consistent header, divider, content layout with proper styling
 struct SettingsSectionCard<Content: View>: View {
     let title: String
     let subtitle: String?
+    /// Additive and optional: existing call sites that don't pass one are
+    /// unaffected.
+    let titleBadge: SettingsSectionCardBadge?
     let content: Content
 
     init(
         title: String,
         subtitle: String? = nil,
+        titleBadge: SettingsSectionCardBadge? = nil,
         @ViewBuilder content: () -> Content
     ) {
         self.title = title
         self.subtitle = subtitle
+        self.titleBadge = titleBadge
         self.content = content()
     }
 
@@ -29,9 +50,22 @@ struct SettingsSectionCard<Content: View>: View {
         VStack(alignment: .leading, spacing: 0) {
             // Header
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.extraSmall) {
-                Text(title)
-                    .font(DesignTokens.Typography.sectionTitle)
-                    .foregroundColor(.secondary)
+                HStack(spacing: DesignTokens.Spacing.small) {
+                    Text(title)
+                        .font(DesignTokens.Typography.sectionTitle)
+                        .foregroundColor(.secondary)
+
+                    if let titleBadge {
+                        Text(titleBadge.text)
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(
+                                Capsule().fill(titleBadge.color)
+                            )
+                    }
+                }
 
                 if let subtitle = subtitle {
                     Text(subtitle)

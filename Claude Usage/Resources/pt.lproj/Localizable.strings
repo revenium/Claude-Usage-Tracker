@@ -1029,6 +1029,9 @@
 "codex.account.unsupported_short" = "Conta não suportada";
 "codex.cli.missing" = "A CLI do Codex não está disponível. Instale o Codex ou disponibilize seu executável no PATH.";
 "codex.cli_switch.explain" = "Adicione este trecho a %@ uma única vez. Ele se aplica a todos os perfis do Codex vinculados — você não precisa repetir essa etapa para outros perfis.";
+"codex.cli_switch.explain_optional" = "O Codex já usa ~/.codex por padrão, portanto nenhuma configuração de shell é necessária no momento. Adicione este trecho a %@ apenas se você vincular um segundo diretório do Codex ou mover este para fora de ~/.codex.";
+"codex.cli_switch.optional_badge" = "Opcional";
+"codex.cli_switch.required_badge" = "Obrigatório";
 "codex.cli_switch.title" = "Alternância de CLI do Terminal";
 "codex.credentials.owned_by_codex" = "As credenciais permanecem neste diretório e são gerenciadas apenas pelo Codex.";
 "codex.feature_unavailable" = "O suporte ao Codex não está disponível nesta versão.";

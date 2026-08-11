@@ -1027,6 +1027,9 @@
 "codex.account.unsupported_short" = "不受支持的账户";
 "codex.cli.missing" = "Codex CLI 不可用。请安装 Codex，或确保其可执行文件在 PATH 中可用。";
 "codex.cli_switch.explain" = "将此代码片段添加到 %@ 中一次即可。它适用于每个已链接的 Codex 配置文件——无需为其他配置文件重复此步骤。";
+"codex.cli_switch.explain_optional" = "Codex 默认已使用 ~/.codex，因此目前无需进行 shell 设置。仅当您链接第二个 Codex 主目录或将此主目录移到 ~/.codex 之外时，才需要将此代码片段添加到 %@ 中。";
+"codex.cli_switch.optional_badge" = "可选";
+"codex.cli_switch.required_badge" = "必需";
 "codex.cli_switch.title" = "终端 CLI 切换";
 "codex.credentials.owned_by_codex" = "凭据仍保存在此目录中，且仅由 Codex 管理。";
 "codex.feature_unavailable" = "此版本不支持 Codex。";

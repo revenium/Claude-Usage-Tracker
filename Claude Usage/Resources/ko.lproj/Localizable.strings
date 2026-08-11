@@ -1007,6 +1007,9 @@
 "codex.account.unsupported_short" = "지원되지 않는 계정";
 "codex.cli.missing" = "Codex CLI를 사용할 수 없습니다. Codex를 설치하거나 실행 파일을 PATH에서 사용할 수 있도록 하세요.";
 "codex.cli_switch.explain" = "이 코드 조각을 %@에 한 번만 추가하세요. 연결된 모든 Codex 프로필에 적용되며, 다른 프로필에서는 이 단계를 반복할 필요가 없습니다.";
+"codex.cli_switch.explain_optional" = "Codex는 기본적으로 이미 ~/.codex를 사용하므로 지금은 셸 설정이 필요하지 않습니다. 두 번째 Codex 홈을 연결하거나 이 홈을 ~/.codex 밖으로 이동하는 경우에만 이 코드 조각을 %@에 추가하세요.";
+"codex.cli_switch.optional_badge" = "선택 사항";
+"codex.cli_switch.required_badge" = "필수";
 "codex.cli_switch.title" = "터미널 CLI 전환";
 "codex.credentials.owned_by_codex" = "자격 증명은 이 디렉터리에 남아 있으며 Codex에서만 관리합니다.";
 "codex.feature_unavailable" = "이 빌드에서는 Codex 지원을 사용할 수 없습니다.";

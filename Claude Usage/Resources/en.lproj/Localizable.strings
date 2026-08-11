@@ -1057,6 +1057,9 @@
 "codex.account.unsupported_short" = "Unsupported account";
 "codex.cli.missing" = "The Codex CLI is unavailable. Install Codex or make its executable available in PATH.";
 "codex.cli_switch.explain" = "Add this snippet to %@ once. It applies to every linked Codex profile — you do not need to repeat this step for other profiles.";
+"codex.cli_switch.explain_optional" = "Codex already uses ~/.codex by default, so no shell setup is needed right now. Add this snippet to %@ only if you link a second Codex home or move this one outside ~/.codex.";
+"codex.cli_switch.optional_badge" = "Optional";
+"codex.cli_switch.required_badge" = "Required";
 "codex.cli_switch.title" = "Terminal CLI Switching";
 "codex.credentials.owned_by_codex" = "Credentials remain in this directory and are managed only by Codex.";
 "codex.feature_unavailable" = "Codex support is not available in this build.";

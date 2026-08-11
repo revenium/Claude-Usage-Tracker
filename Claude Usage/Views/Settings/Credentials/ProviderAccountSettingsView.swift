@@ -6,6 +6,13 @@ struct ProviderAccountSettingsView: View {
     let profileID: UUID?
     private let dependencies: ProviderUIDependencies
     @StateObject private var viewModel: ProviderAccountViewModel
+    // `ProviderUIDependencies.profileManager` is a plain `let`, so reading
+    // `dependencies.profileManager.profiles` from a computed property is
+    // reading unobserved state — the view never redraws when a profile's
+    // linked home changes elsewhere. Observing the manager directly (same
+    // pattern as `PopoverContentView`) is what makes `cliSwitchRequirement`
+    // below live rather than a first-render snapshot.
+    @ObservedObject private var profileManager: ProfileManager
     @State private var homePath = ""
     @State private var operationMessage: String?
     @State private var showingUnlinkConfirmation = false
@@ -22,6 +29,9 @@ struct ProviderAccountSettingsView: View {
             wrappedValue: ProviderAccountViewModel(
                 dependencies: dependencies
             )
+        )
+        _profileManager = ObservedObject(
+            wrappedValue: dependencies.profileManager
         )
     }
 
@@ -237,19 +247,59 @@ struct ProviderAccountSettingsView: View {
         }
     }
 
+    /// Whether the snippet actually needs to be installed, computed across
+    /// every linked Codex profile app-wide (not just the one being viewed):
+    /// the terminal env question this answers — does a plain shell need help
+    /// following CODEX_HOME — depends on the whole arrangement, not this one
+    /// profile. See `CodexCLISwitchRequirement`.
+    private var cliSwitchRequirement: CodexCLISwitchRequirement {
+        let linkedHomePaths = profileManager.profiles
+            .filter { $0.providerID == .codex }
+            .compactMap { $0.providerConfiguration.codexConfiguration?
+                .linkedHome?.path
+            }
+        return CodexCLISwitchRequirement.determine(
+            linkedHomePaths: linkedHomePaths,
+            defaultCodexHomePath: CodexDefaultHomeResolver.resolvedPath()
+        )
+    }
+
     private func cliSwitchingCard(_ profile: Profile) -> some View {
-        SettingsSectionCard(
-            title: text(
-                "codex.cli_switch.title",
-                "Terminal CLI Switching"
-            ),
-            subtitle: String(
+        let requirement = cliSwitchRequirement
+        // Orange mirrors this file's existing "you should act on this"
+        // color (see the relink-required warning in homeCard below); the
+        // optional state uses a neutral gray since there's nothing to do.
+        let titleBadge = requirement == .optional
+            ? SettingsSectionCardBadge(
+                text("codex.cli_switch.optional_badge", "Optional"),
+                color: .gray
+            )
+            : SettingsSectionCardBadge(
+                text("codex.cli_switch.required_badge", "Required"),
+                color: .orange
+            )
+        let subtitle = requirement == .optional
+            ? String(
+                format: text(
+                    "codex.cli_switch.explain_optional",
+                    "Codex already uses ~/.codex by default, so no shell setup is needed right now. Add this snippet to %@ only if you link a second Codex home or move this one outside ~/.codex."
+                ),
+                shellConfigFile
+            )
+            : String(
                 format: text(
                     "codex.cli_switch.explain",
                     "Add this snippet to %@ once. It applies to every linked Codex profile — you do not need to repeat this step for other profiles."
                 ),
                 shellConfigFile
             )
+        return SettingsSectionCard(
+            title: text(
+                "codex.cli_switch.title",
+                "Terminal CLI Switching"
+            ),
+            subtitle: subtitle,
+            titleBadge: titleBadge
         ) {
             VStack(
                 alignment: .leading,
@@ -591,10 +641,32 @@ struct ProviderAccountSettingsView: View {
     private func selectAndRefresh() {
         viewModel.selectProfile(profileID)
         if let profile {
-            homePath = profile.providerConfiguration
-                .codexConfiguration?.linkedHome?.path ?? ""
+            if let linkedHome = profile.providerConfiguration
+                .codexConfiguration?.linkedHome {
+                homePath = linkedHome.path
+            } else {
+                homePath = prefillHomePathForUnlinkedProfile()
+            }
             viewModel.refresh()
         }
+    }
+
+    /// `~/.codex` is worth prefilling only when it's real and free: it must
+    /// exist, be a directory, and not already be linked to a *different*
+    /// profile — proposing someone else's home would be worse than an empty
+    /// field. Only called when this profile has no linked home yet; an
+    /// existing link always wins in `selectAndRefresh` above.
+    private func prefillHomePathForUnlinkedProfile() -> String {
+        guard let defaultHomePath = CodexDefaultHomeResolver.resolvedPath()
+        else {
+            return ""
+        }
+        let alreadyLinkedElsewhere = profileManager.profiles
+            .contains { candidate in
+                candidate.providerConfiguration.codexConfiguration?
+                    .linkedHome?.path == defaultHomePath
+            }
+        return alreadyLinkedElsewhere ? "" : defaultHomePath
     }
 
     private func chooseHome() {

@@ -1011,6 +1011,9 @@
 "codex.account.unsupported_short" = "Compte non pris en charge";
 "codex.cli.missing" = "La CLI Codex n'est pas disponible. Installez Codex ou rendez son exécutable accessible dans le PATH.";
 "codex.cli_switch.explain" = "Ajoutez cet extrait à %@ une seule fois. Il s'applique à chaque profil Codex lié — vous n'avez pas besoin de répéter cette étape pour les autres profils.";
+"codex.cli_switch.explain_optional" = "Codex utilise déjà ~/.codex par défaut, aucune configuration du shell n'est donc nécessaire pour l'instant. Ajoutez cet extrait à %@ uniquement si vous liez un second répertoire Codex ou déplacez celui-ci en dehors de ~/.codex.";
+"codex.cli_switch.optional_badge" = "Facultatif";
+"codex.cli_switch.required_badge" = "Requis";
 "codex.cli_switch.title" = "Changement de CLI dans le terminal";
 "codex.credentials.owned_by_codex" = "Les identifiants restent dans ce répertoire et sont gérés uniquement par Codex.";
 "codex.feature_unavailable" = "La prise en charge de Codex n'est pas disponible dans cette version.";

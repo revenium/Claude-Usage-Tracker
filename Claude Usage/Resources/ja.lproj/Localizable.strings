@@ -1031,6 +1031,9 @@
 "codex.account.unsupported_short" = "サポートされていないアカウント";
 "codex.cli.missing" = "Codex CLIが利用できません。Codexをインストールするか、実行可能ファイルをPATHで参照できるようにしてください。";
 "codex.cli_switch.explain" = "このスニペットを一度だけ%@に追加してください。リンクされたすべてのCodexプロファイルに適用されるため、他のプロファイルでこの手順を繰り返す必要はありません。";
+"codex.cli_switch.explain_optional" = "Codexはデフォルトですでに~/.codexを使用しているため、現時点ではシェルの設定は必要ありません。2つ目のCodexホームをリンクする場合、またはこのホームを~/.codex以外に移動する場合にのみ、このスニペットを%@に追加してください。";
+"codex.cli_switch.optional_badge" = "任意";
+"codex.cli_switch.required_badge" = "必須";
 "codex.cli_switch.title" = "ターミナルCLIの切り替え";
 "codex.credentials.owned_by_codex" = "認証情報はこのディレクトリに保持され、Codexのみが管理します。";
 "codex.feature_unavailable" = "このビルドではCodexサポートは利用できません。";
