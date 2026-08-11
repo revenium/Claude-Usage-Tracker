@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.4.0] - 2026-08-11
+
+### Changed
+
+- **The Codex shell snippet is only asked for when it would actually do
+  something.** The "Terminal CLI Switching" card told every Codex user to
+  paste a snippet into their shell config. That snippet exists so non-tmux
+  shells can follow whichever profile is active — but if you have one linked
+  home and it is Codex's own `~/.codex` default, it changes nothing, because
+  Codex already uses `~/.codex` when `CODEX_HOME` is unset. The card now
+  reads Optional in that case and Required otherwise, and flips to Required
+  the moment you link a second home or move the one you have outside
+  `~/.codex`.
+
+- **The Codex home field starts with `~/.codex` filled in.** Both initial
+  setup and per-profile settings now prefill it when that directory exists
+  and no other profile has claimed it. You can still type or browse to a
+  different one.
+
+### Fixed
+
+- **A Codex home that disappears no longer strands your terminals on a dead
+  path.** Relinking a home whose directory had been deleted or unmounted
+  could push that missing path into `CODEX_HOME`, so every new terminal
+  failed with "CODEX_HOME points to ... but that path does not exist". The
+  app now revalidates before applying a home, discards a pointer whose
+  directory is gone at startup, and clears it rather than leaving terminals
+  on the previously active profile's home when a switch fails.
+
+- **An unmounted Codex home is no longer forgotten.** If the linked directory
+  lives on an external or network volume that is not mounted at launch, the
+  cleanup above used to drop the selection permanently. Startup now reapplies
+  the active profile's linked home once it is available again, so a volume
+  that is late to mount costs one launch instead of requiring you to switch
+  profiles and back. This also restores `CODEX_HOME` in tmux after the tmux
+  server itself has been restarted.
+
+- **Running the test suite no longer rewrites your real Codex configuration.**
+  This affects people building the app rather than using it: the hosted test
+  target reached the live switching service, so a test that linked a
+  temporary Codex home wrote it into `~/.claude-tokens/.last-codex-home` and
+  the real tmux environment. When the temporary directory was cleaned up,
+  every new terminal inherited a broken `CODEX_HOME`.
+
 ## [3.3.8] - 2026-08-10
 
 ### Fixed
