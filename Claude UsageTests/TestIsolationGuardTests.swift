@@ -191,4 +191,68 @@ final class TestIsolationGuardTests: HostedAppTestCase {
                 + "still pointed at real Application Support"
         )
     }
+
+    /// This is the test that would have caught the original bug. A hosted
+    /// test that reaches `ProfileManager.linkCodexHome`/`activateProfile`
+    /// through one of the ~65 `ProfileManager(...)` call sites that don't
+    /// inject `activationCodexEffects` falls through to `.live`, which
+    /// calls `CodexSwitchService.shared` — and that singleton used to write
+    /// the developer's REAL `~/.claude-tokens/.last-codex-home` pointer
+    /// file and mutate their real tmux server. It's now inert under hosted
+    /// unit tests (see `AppDelegate.isRunningHostedUnitTests` and
+    /// `CodexSwitchService.shared`'s init), so this calls the singleton
+    /// directly and requires the real pointer file to be byte-identical (or
+    /// still absent) before and after.
+    ///
+    /// Deliberately does not redirect `HOME` the way `CodexSwitchServiceTests`
+    /// does: redirecting it would point this test at an isolated file
+    /// instead of the one the original bug actually corrupted. The whole
+    /// point is that `CodexSwitchService.shared` protects the real path on
+    /// its own, unconditionally, during hosted tests — this only reads the
+    /// real path, both before and after.
+    ///
+    /// Non-destructive even if the backstop has regressed: the calls below
+    /// are made against the real path on purpose (that's what makes this
+    /// the test that would have caught the original bug), so if inertness
+    /// ever breaks, they really do write through. A `defer` restores the
+    /// captured `before` bytes unconditionally — including when the
+    /// assertion fails — so a regression is reported, not silently
+    /// re-poisoned into the developer's real pointer file the way the
+    /// original bug did.
+    func testCodexSwitchServiceSharedNeverWritesTheRealPointerFileDuringHostedTests() throws {
+        let realPointerFile = Constants.ClaudePaths.homeDirectory
+            .appendingPathComponent(".claude-tokens")
+            .appendingPathComponent(".last-codex-home")
+        let before = try? Data(contentsOf: realPointerFile)
+        defer {
+            if let before {
+                try? before.write(to: realPointerFile)
+            } else {
+                try? FileManager.default.removeItem(at: realPointerFile)
+            }
+        }
+
+        let tempHomeURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "isolation-guard-codex-home-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        try FileManager.default.createDirectory(
+            at: tempHomeURL, withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: tempHomeURL) }
+        let home = try CodexHomeCanonicalizer().canonicalize(tempHomeURL.path)
+
+        try CodexSwitchService.shared.switchToHome(home)
+        CodexSwitchService.shared.clearHome()
+
+        let after = try? Data(contentsOf: realPointerFile)
+        XCTAssertEqual(
+            before,
+            after,
+            "CodexSwitchService.shared wrote to the developer's real "
+                + "~/.claude-tokens/.last-codex-home pointer file during a "
+                + "hosted unit test run — the inertness backstop regressed"
+        )
+    }
 }

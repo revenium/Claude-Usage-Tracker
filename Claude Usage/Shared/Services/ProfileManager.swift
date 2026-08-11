@@ -1070,6 +1070,12 @@ class ProfileManager: ObservableObject {
                             "Failed to switch CODEX_HOME (non-fatal)",
                             error: error
                         )
+                        // If we cannot honor the newly activated profile's
+                        // home, terminals must fall back to Codex's own
+                        // ~/.codex default rather than keep pointing at the
+                        // PREVIOUS profile's home. Mirrors the failure
+                        // handling in replaceCodexLinkedHome below.
+                        activationCodexEffects.clearHome()
                     }
                 } else {
                     // Activating an unlinked profile must clear any

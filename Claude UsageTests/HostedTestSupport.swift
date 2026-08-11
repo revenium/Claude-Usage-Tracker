@@ -184,14 +184,38 @@ func makeIsolatedProfileStore(
 /// that visible, which is exactly why it keeps happening.
 ///
 /// Scope, stated precisely so the next author is not misled: only
-/// `profileStore` is injected. `historyService`, `cliSyncService` — which
-/// touches `~/.claude/.credentials.json` — `lifecycleEventSink` and the
-/// activation effects still resolve to their shared, live implementations.
-/// Nothing leaks today because the current call sites never activate a
-/// profile, but a test that *does* activate one needs those injected too.
+/// `profileStore` and `activationCodexEffects` are injected here.
+/// `historyService`, `cliSyncService` — which touches
+/// `~/.claude/.credentials.json` — `lifecycleEventSink`, and
+/// `activationClaudeEffects` still resolve to their shared, live
+/// implementations. A test that activates a Codex profile through this
+/// helper is safe from writing the developer's real
+/// `~/.claude-tokens/.last-codex-home` pointer file or mutating their real
+/// tmux server either way: `CodexSwitchService.shared` is independently
+/// inert under hosted unit tests (see `AppDelegate.isRunningHostedUnitTests`
+/// and `CodexSwitchService.shared`'s init). The injection here exists so
+/// codex-activation assertions in this suite don't have to reason about that
+/// backstop — they observe a plain counted no-op instead. A test that
+/// activates a *Claude* profile still needs `activationClaudeEffects`
+/// injected too; nothing here covers it.
 @MainActor
 func makeIsolatedProfileManager() -> ProfileManager {
-    ProfileManager(profileStore: makeIsolatedProfileStore())
+    ProfileManager(
+        profileStore: makeIsolatedProfileStore(),
+        activationCodexEffects: .noOp
+    )
+}
+
+extension ProfileActivationCodexEffects {
+    /// Shared no-op used by hosted tests that don't care about codex
+    /// activation side effects but must not fall through to `.live` (which
+    /// routes to `CodexSwitchService.shared`).
+    static var noOp: ProfileActivationCodexEffects {
+        ProfileActivationCodexEffects(
+            switchToLinkedHome: { _ in },
+            clearHome: {}
+        )
+    }
 }
 
 /// Builds `profiles_v3` data in the **frozen legacy on-disk format**: the v3

@@ -109,4 +109,117 @@ final class CodexSwitchServiceTests: XCTestCase {
 
         XCTAssertNil(service.currentHomePath())
     }
+
+    func testSwitchToHomeRejectsDeletedLinkedHomeWithoutWritingPointer() throws {
+        let linkedHomeURL = temporaryHome.appendingPathComponent(
+            "deleted-codex-home", isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: linkedHomeURL, withIntermediateDirectories: true
+        )
+        let home = try CodexHomeCanonicalizer()
+            .canonicalize(linkedHomeURL.path)
+        try FileManager.default.removeItem(at: linkedHomeURL)
+
+        XCTAssertThrowsError(try service.switchToHome(home)) { error in
+            XCTAssertEqual(error as? CodexHomeCanonicalizationError, .missing)
+        }
+        XCTAssertNil(service.currentHomePath())
+    }
+
+    /// A legacy path-only persisted link (decoded before this app recorded
+    /// filesystem identity, so `filesystemIdentity` is nil) must still be
+    /// switchable. Re-canonicalizing always produces a non-nil identity, and
+    /// `switchToHome` must not compare against one the caller never verified
+    /// — see the comment at its identity check.
+    func testSwitchToHomeAcceptsLegacyPathOnlyHome() throws {
+        let linkedHomeURL = temporaryHome.appendingPathComponent(
+            "legacy-codex-home", isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: linkedHomeURL, withIntermediateDirectories: true
+        )
+        let legacyPayload = try JSONEncoder().encode(
+            ["path": linkedHomeURL.path]
+        )
+        let legacyHome = try JSONDecoder().decode(
+            CanonicalCodexHome.self, from: legacyPayload
+        )
+        XCTAssertNil(legacyHome.filesystemIdentity)
+
+        try service.switchToHome(legacyHome)
+
+        XCTAssertEqual(service.currentHomePath(), legacyHome.path)
+    }
+
+    /// A home whose verified identity no longer matches the directory at
+    /// that path (deleted and replaced, e.g. by unmounting and recreating a
+    /// volume) must be rejected — even though the path itself still exists
+    /// and canonicalizes successfully.
+    func testSwitchToHomeRejectsIdentityMismatchWithoutWritingPointer() throws {
+        let linkedHomeURL = temporaryHome.appendingPathComponent(
+            "replaced-codex-home", isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: linkedHomeURL, withIntermediateDirectories: true
+        )
+        let verifiedHome = try CodexHomeCanonicalizer()
+            .canonicalize(linkedHomeURL.path)
+        XCTAssertNotNil(verifiedHome.filesystemIdentity)
+
+        // Replace the directory at the same path with a new one so the
+        // filesystem identity (device + file ID) differs, while the path
+        // itself still resolves and canonicalizes cleanly.
+        try FileManager.default.removeItem(at: linkedHomeURL)
+        try FileManager.default.createDirectory(
+            at: linkedHomeURL, withIntermediateDirectories: true
+        )
+
+        XCTAssertThrowsError(try service.switchToHome(verifiedHome)) { error in
+            XCTAssertEqual(
+                error as? CodexHomeCanonicalizationError,
+                .changedSinceVerification
+            )
+        }
+        XCTAssertNil(service.currentHomePath())
+    }
+
+    /// This is the self-heal the app runs at startup: a pointer naming a
+    /// directory that's gone must be discarded so a new tmux pane doesn't
+    /// inherit a CODEX_HOME that immediately fails.
+    func testDiscardStaleHomeIfMissingRemovesPointerToDeletedDirectory() throws {
+        let linkedHomeURL = temporaryHome.appendingPathComponent(
+            "vanishing-codex-home", isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: linkedHomeURL, withIntermediateDirectories: true
+        )
+        let home = try CodexHomeCanonicalizer()
+            .canonicalize(linkedHomeURL.path)
+        try service.switchToHome(home)
+        try FileManager.default.removeItem(at: linkedHomeURL)
+        XCTAssertNotNil(service.currentHomePath())
+
+        service.discardStaleHomeIfMissing()
+
+        XCTAssertNil(service.currentHomePath())
+    }
+
+    /// The self-heal must not touch a pointer whose directory still exists
+    /// — it is a targeted cleanup for unusable state, not a general reset.
+    func testDiscardStaleHomeIfMissingPreservesPointerToExistingDirectory() throws {
+        let linkedHomeURL = temporaryHome.appendingPathComponent(
+            "still-here-codex-home", isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: linkedHomeURL, withIntermediateDirectories: true
+        )
+        let home = try CodexHomeCanonicalizer()
+            .canonicalize(linkedHomeURL.path)
+        try service.switchToHome(home)
+
+        service.discardStaleHomeIfMissing()
+
+        XCTAssertEqual(service.currentHomePath(), home.path)
+    }
 }

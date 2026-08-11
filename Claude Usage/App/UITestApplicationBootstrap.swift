@@ -100,6 +100,10 @@ enum UITestApplicationBootstrap {
                 applyProfileCredentials: { _ in },
                 switchAccountAndSync: { _ in }
             ),
+            activationCodexEffects: ProfileActivationCodexEffects(
+                switchToLinkedHome: { _ in },
+                clearHome: {}
+            ),
             lifecycleEventSink: ProfileLifecycleEventSink(
                 deletionStarted: { _ in },
                 deletionCleanup: { _ in },

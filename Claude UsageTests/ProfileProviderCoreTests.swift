@@ -3083,6 +3083,56 @@ final class ProfileProviderCoreTests: HostedAppTestCase {
         XCTAssertEqual(codexEffects.switchedHomes, [linkedHome])
     }
 
+    /// If activation cannot honor the newly activated profile's linked
+    /// home — e.g. the directory was deleted since it was linked — the
+    /// terminal must fall back to Codex's own `~/.codex` default rather
+    /// than keep pointing at the PREVIOUS profile's home. That fallback is
+    /// `activationCodexEffects.clearHome()`, mirrored from what
+    /// `replaceCodexLinkedHome` already does on the same failure.
+    @MainActor
+    func testActivatingCodexProfileClearsHomeWhenSwitchFails() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let homeURL = root.appendingPathComponent(
+            "codex-home", isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: homeURL, withIntermediateDirectories: true
+        )
+        let linkedHome = try CodexHomeCanonicalizer()
+            .canonicalize(homeURL.path)
+
+        let defaults = ProviderTestDefaults()
+        let store = retain(ProfileStore(
+            defaults: defaults,
+            secretStore: ProviderSecretStore(),
+            usageFileStore: ProviderUsageStore()
+        ))
+        let codex = Profile(
+            name: "Linked Codex",
+            providerConfiguration: .codex(.init(linkedHome: linkedHome))
+        )
+        try seedProfilesForTesting([codex], in: store)
+        let codexEffects = ProviderCodexEffectCounter()
+        codexEffects.switchToLinkedHomeError = ProviderTestError.expected
+        let manager = retain(ProfileManager(
+            profileStore: store,
+            activationClaudeEffects: .noOp,
+            activationCodexEffects: codexEffects.effects
+        ))
+        manager.profiles = [codex]
+
+        await manager.activateProfile(codex.id)
+
+        XCTAssertTrue(codexEffects.switchedHomes.isEmpty)
+        XCTAssertEqual(
+            codexEffects.clearCount,
+            1,
+            "Activation must clear CODEX_HOME when it fails to switch to "
+                + "the newly activated profile's linked home"
+        )
+    }
+
     private func makeTemporaryDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent(
@@ -3290,10 +3340,17 @@ private final class ProviderEffectCounter {
 private final class ProviderCodexEffectCounter {
     private(set) var switchedHomes: [CanonicalCodexHome] = []
     private(set) var clearCount = 0
+    /// Set to make `switchToLinkedHome` throw instead of recording, for
+    /// tests that assert on the failure path (e.g. that activation falls
+    /// back to clearing the home when it cannot honor the new one).
+    var switchToLinkedHomeError: Error?
 
     var effects: ProfileActivationCodexEffects {
         ProfileActivationCodexEffects(
             switchToLinkedHome: { [weak self] home in
+                if let error = self?.switchToLinkedHomeError {
+                    throw error
+                }
                 self?.switchedHomes.append(home)
             },
             clearHome: { [weak self] in
