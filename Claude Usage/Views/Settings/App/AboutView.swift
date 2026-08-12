@@ -190,8 +190,12 @@ struct AboutView: View {
                         .font(DesignTokens.Typography.caption)
                         .foregroundColor(.secondary)
 
-                    // Static, not computed from the system clock, so it stays
-                    // in sync with the copyright year in the root LICENSE file.
+                    // Deliberately static: a copyright year denotes the
+                    // year of authorship, not "today", so this must not be
+                    // computed from the system clock. It mirrors the year in
+                    // the root LICENSE file as an independent literal — there
+                    // is no automated link between them, so update both by
+                    // hand together if the copyright year ever changes.
                     Text("about.copyright".localized)
                         .font(DesignTokens.Typography.caption)
                         .foregroundColor(.secondary)

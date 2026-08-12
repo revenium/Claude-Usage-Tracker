@@ -169,11 +169,11 @@
 "about.send_feedback" = "フィードバックを送信";
 "about.mit_license" = "MITライセンス • オープンソース";
 "about.copyright" = "© 2025 Hamed Elfayome";
-"about.view_licenses" = "View Licenses";
-"about.licenses_title" = "Licenses";
+"about.view_licenses" = "ライセンスを表示";
+"about.licenses_title" = "ライセンス";
 "about.licenses_app_section" = "Claude Usage Tracker";
-"about.licenses_sparkle_section" = "Sparkle (Auto-Update Framework)";
-"about.licenses_unavailable" = "License text unavailable.";
+"about.licenses_sparkle_section" = "Sparkle（自動アップデートフレームワーク）";
+"about.licenses_unavailable" = "ライセンステキストを利用できません。";
 
 /* ==================== */
 /* MARK: - Updates Settings */

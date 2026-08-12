@@ -168,11 +168,11 @@
 "about.send_feedback" = "Envoyer des Commentaires";
 "about.mit_license" = "Licence MIT • Open Source";
 "about.copyright" = "© 2025 Hamed Elfayome";
-"about.view_licenses" = "View Licenses";
-"about.licenses_title" = "Licenses";
+"about.view_licenses" = "Voir les Licences";
+"about.licenses_title" = "Licences";
 "about.licenses_app_section" = "Claude Usage Tracker";
-"about.licenses_sparkle_section" = "Sparkle (Auto-Update Framework)";
-"about.licenses_unavailable" = "License text unavailable.";
+"about.licenses_sparkle_section" = "Sparkle (Framework de Mise à Jour Automatique)";
+"about.licenses_unavailable" = "Texte de la licence non disponible.";
 
 /* ==================== */
 /* MARK: - Icon Styles */

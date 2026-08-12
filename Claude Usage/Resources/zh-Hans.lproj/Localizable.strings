@@ -169,11 +169,11 @@
 "about.send_feedback" = "发送反馈";
 "about.mit_license" = "MIT 许可证 • 开源";
 "about.copyright" = "© 2025 Hamed Elfayome";
-"about.view_licenses" = "View Licenses";
-"about.licenses_title" = "Licenses";
+"about.view_licenses" = "查看许可证";
+"about.licenses_title" = "许可证";
 "about.licenses_app_section" = "Claude Usage Tracker";
-"about.licenses_sparkle_section" = "Sparkle (Auto-Update Framework)";
-"about.licenses_unavailable" = "License text unavailable.";
+"about.licenses_sparkle_section" = "Sparkle (自动更新框架)";
+"about.licenses_unavailable" = "许可证文本不可用。";
 
 /* ==================== */
 /* MARK: - Updates Settings */

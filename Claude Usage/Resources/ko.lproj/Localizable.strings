@@ -461,11 +461,11 @@
 "about.check_updates" = "업데이트 확인";
 "about.copyright" = "© 2025 Hamed Elfayome";
 "about.mit_license" = "MIT 라이선스 • 오픈 소스";
-"about.view_licenses" = "View Licenses";
-"about.licenses_title" = "Licenses";
+"about.view_licenses" = "라이선스 보기";
+"about.licenses_title" = "라이선스";
 "about.licenses_app_section" = "Claude Usage Tracker";
-"about.licenses_sparkle_section" = "Sparkle (Auto-Update Framework)";
-"about.licenses_unavailable" = "License text unavailable.";
+"about.licenses_sparkle_section" = "Sparkle (자동 업데이트 프레임워크)";
+"about.licenses_unavailable" = "라이선스 텍스트를 사용할 수 없습니다.";
 "about.run_setup_wizard" = "설정 마법사 실행";
 
 /* ==================== */
