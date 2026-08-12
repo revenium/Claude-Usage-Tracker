@@ -190,12 +190,16 @@ struct AboutView: View {
                         .font(DesignTokens.Typography.caption)
                         .foregroundColor(.secondary)
 
-                    // Deliberately static: a copyright year denotes the
-                    // year of authorship, not "today", so this must not be
-                    // computed from the system clock. It mirrors the year in
-                    // the root LICENSE file as an independent literal — there
-                    // is no automated link between them, so update both by
-                    // hand together if the copyright year ever changes.
+                    // Deliberately static: a copyright notice states the
+                    // year(s) of authorship, not "today", so this must not
+                    // be computed from the system clock. The holder
+                    // ("Claude Usage Tracker Contributors") and the year
+                    // range mirror the root LICENSE file as independent
+                    // literals — there is no automated link between them
+                    // (see scripts/validate_distribution.sh for the guard
+                    // that keeps the vendored LICENSE copy in sync; it does
+                    // not cover this string), so update all three by hand
+                    // together if the copyright holder or year ever changes.
                     Text("about.copyright".localized)
                         .font(DesignTokens.Typography.caption)
                         .foregroundColor(.secondary)

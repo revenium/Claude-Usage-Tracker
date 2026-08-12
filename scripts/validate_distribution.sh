@@ -69,6 +69,21 @@ contains "static let appGroupIdentifier = \"$expected_app_group\"" \
     'Claude Usage/Shared/Utilities/Constants.swift' \
     || fail 'legacy preference/app-group identity changed'
 
+# The vendored copy under Resources/Licenses ships inside the app bundle so
+# every distributed copy carries the MIT permission notice and warranty
+# disclaimer, as MIT requires (a hosted unit test can assert the resource is
+# present in the built app, but it cannot see this repo's root LICENSE to
+# compare against, so that check belongs here instead). The two files must
+# never drift: regenerate the vendored copy with `cp`, never hand-edit it.
+license_path='LICENSE'
+vendored_license_path='Claude Usage/Resources/Licenses/Claude-Usage-Tracker-LICENSE.txt'
+[[ -r $license_path ]] \
+    || fail "root license is not readable: $license_path"
+[[ -r $vendored_license_path ]] \
+    || fail "vendored license is not readable: $vendored_license_path"
+cmp -s "$license_path" "$vendored_license_path" \
+    || fail "vendored license has drifted from root LICENSE; regenerate it with: cp '$license_path' '$vendored_license_path'"
+
 blocked_owner=$(printf '%s' 'hamed' '-elfayome')
 blocked_worker=$(printf '%s' 'hamed' 'elfayome')
 blocked_tap=$(printf '%s' 'ggf' 'evans')
