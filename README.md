@@ -371,9 +371,10 @@ services. Comment the non-obvious, not the obvious.
 
 ## About this fork
 
-Claude Usage Tracker began as [hamed-elfayome's project](https://github.com/hamed-elfayome/Claude-Usage-Tracker),
-which built the menu bar app, the profile system, the setup wizard, code signing, automatic
-updates, and the nine-language localization this version still rests on.
+Claude Usage Tracker began as an independent open-source project, which built the menu bar app,
+the profile system, the setup wizard, code signing, automatic updates, and the nine-language
+localization this version still rests on. Its copyright notice is preserved in
+[LICENSE](LICENSE).
 
 Revenium forked it at v3.0.3 to solve a problem the original didn't target: monitoring **many**
 accounts across **two** providers, with the command line following along. Codex support,

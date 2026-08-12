@@ -835,19 +835,6 @@
 /* ==================== */
 /* MARK: - Mobile App (Coming Soon) */
 /* ==================== */
-"section.mobile_app_title" = "App Mobile";
-"section.mobile_app_desc" = "App mobile in arrivo";
-"mobile.title" = "App Mobile";
-"mobile.subtitle" = "Monitora il tuo utilizzo di Claude ovunque";
-"mobile.coming_soon_badge" = "IN ARRIVO";
-"mobile.cta_message" = "Interessato? Faccelo sapere e ti avviseremo quando sarà pronto.";
-"mobile.notify_me" = "Avvisami";
-"mobile.submitting" = "Invio...";
-"mobile.notified" = "Sei nella lista!";
-"mobile.notified_desc" = "Ti informeremo quando l'app mobile sarà disponibile.";
-"mobile.privacy_note" = "Nessun dato personale viene raccolto. Questo registra solo il tuo interesse.";
-"mobile.error_title" = "Richiesta fallita";
-"mobile.error_message" = "Impossibile registrare il tuo interesse. Controlla la connessione internet e riprova.";
 
 /* ==================== */
 /* MARK: - Popover Settings */

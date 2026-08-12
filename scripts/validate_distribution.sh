@@ -81,7 +81,6 @@ active_paths=(
     'Claude Usage/Shared/Services/UpdateManager.swift'
     'Claude Usage/Shared/Utilities/Constants.swift'
     'Claude Usage/Views/FeedbackPromptView.swift'
-    'Claude Usage/Views/Settings/App/MobileAppView.swift'
     'Claude Usage/Views/Settings/App/SupportView.swift'
     'CONTRIBUTING.md'
     'README.md'
