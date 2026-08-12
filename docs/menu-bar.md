@@ -32,7 +32,7 @@ separate icons.
 
 ## Icon styles and appearance
 
-Five styles, set per profile in Settings → **Appearance**:
+Set per profile in Settings → **Appearance**:
 
 | Style | |
 |---|---|
@@ -42,11 +42,11 @@ Five styles, set per profile in Settings → **Appearance**:
 | **Icon with Bar** | Claude icon plus progress |
 | **Compact** | Space-efficient |
 
-Three color modes: **Multi-Color** (threshold-based), **Greyscale** (follows system appearance),
+Color modes: **Multi-Color** (threshold-based), **Greyscale** (follows system appearance),
 and **Single Color** (a hex value you choose).
 
 **Pace markers** put a colored marker on progress bars showing whether you're on track to
-exhaust the window before it resets, across six tiers from comfortable to runaway.
+exhaust the window before it resets, graded from comfortable to runaway.
 
 **Percentage direction** toggles between "75% used" and "25% remaining". Color coding follows
 the meaning, not the number.

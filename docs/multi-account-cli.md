@@ -26,7 +26,7 @@ switching to it. Activation is only ever the explicit **Make Active** button. Th
 because checking whether another account has headroom is something you do all the time, and it
 must not move your CLI out from under a session that's mid-task.
 
-Activating a profile does up to three things, depending on what that profile has linked:
+Activating a profile does the following, depending on what that profile has linked:
 
 1. Selects its credentials for usage fetching.
 2. Points the CLI at its config directory or home, if one is linked.

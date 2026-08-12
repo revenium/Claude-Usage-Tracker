@@ -25,7 +25,6 @@
   ![macOS](https://img.shields.io/badge/macOS-14.0+-black?style=flat-square&logo=apple)
   ![Swift](https://img.shields.io/badge/Swift-5.0+-orange?style=flat-square&logo=swift)
   ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
-  ![Languages](https://img.shields.io/badge/languages-9-purple?style=flat-square)
 
   <sub>🇬🇧 English • 🇪🇸 Español • 🇫🇷 Français • 🇩🇪 Deutsch • 🇮🇹 Italiano • 🇵🇹 Português • 🇯🇵 日本語 • 🇰🇷 한국어 • 🇨🇳 简体中文</sub>
 
@@ -186,7 +185,7 @@ Show one account or all of them (Settings → Manage Profiles → display mode).
 icon, its own style, and its own refresh interval, and clicking any of them opens that account's
 usage.
 
-Past a certain number, they stop fitting. Three collapse modes:
+Past a certain number, they stop fitting. Collapse modes:
 
 | Mode | Behaviour |
 |---|---|
@@ -200,9 +199,9 @@ collapsing on top of it would hide accounts behind an extra click. Settings tell
 manager was detected so the change in behaviour reads as deliberate. Your menu bar arrangement
 also survives app restarts and updates, so you don't re-place items after every release.
 
-Five icon styles, three color modes, optional provider glyphs and background tints to tell
-Claude and Codex apart at a glance, and pace markers showing whether you're on track to burn
-through the window.
+Several icon styles, a choice of color modes, optional provider glyphs and background tints to
+tell Claude and Codex apart at a glance, and pace markers showing whether you're on track to
+burn through the window.
 
 → **[Menu bar behaviour](docs/menu-bar.md)** — overflow modes in detail, manager interaction,
 icon styles, and what to check when an item goes missing.
@@ -218,7 +217,7 @@ icon styles, and what to check when an item goes missing.
   profile when one hits its limit.
 - **Global shortcuts** — system-wide hotkeys that need no Accessibility permission.
 - **Headless-friendly** — works on Macs driven over Remote Desktop.
-- **Nine languages**, switchable live.
+- **Localized interface**, switchable live.
 
 ---
 
@@ -271,7 +270,7 @@ Credentials and profile settings apply to the selected profile. App settings are
 | **Popover** | Reset time display, time format |
 | **App Settings** | Launch at login and other global behaviour |
 | **Shortcuts** | Global hotkeys |
-| **Language** | Nine languages, applied live |
+| **Language** | Interface language, applied live |
 | **Updates** | Automatic checks, release notes, one-click install |
 | **Debug** | Timed network capture with request/response detail |
 | **Support**, **Mobile App**, **About** | Links, credits, version |
@@ -354,8 +353,7 @@ xcodebuild test -project "Claude Usage.xcodeproj" \
   -destination "platform=macOS,arch=arm64"
 ```
 
-Any user-visible string must exist in all nine locales — `validate_localizations.sh` enforces
-it. The UI suite runs against a temporary store, a temporary `CODEX_HOME`, and a deterministic
+Any user-visible string must exist in every locale — `validate_localizations.sh` enforces it. The UI suite runs against a temporary store, a temporary `CODEX_HOME`, and a deterministic
 fake Codex app-server; it needs no account and no network, but local runs do require UI
 automation authorization. If Xcode stalls at `enabling automation mode`, enable Developer Mode
 and grant Accessibility permission to the launching process in System Settings, then rerun.
@@ -372,8 +370,8 @@ services. Comment the non-obvious, not the obvious.
 ## About this fork
 
 Claude Usage Tracker began as an independent open-source project, which built the menu bar app,
-the profile system, the setup wizard, code signing, automatic updates, and the nine-language
-localization this version still rests on. Its copyright notice is preserved in
+the profile system, the setup wizard, code signing, automatic updates, and the localization
+this version still rests on. Its copyright notice is preserved in
 [LICENSE](LICENSE).
 
 Revenium forked it at v3.0.3 to solve a problem the original didn't target: monitoring **many**

@@ -69,13 +69,10 @@ Nothing outside these paths is written. The app does not edit your shell configu
 
 ## Usage history
 
-History is recorded per profile and used for the charts and the JSON/CSV export. It is capped:
-
-| Record type | Cap |
-|---|---|
-| Session | 1,000 (roughly 7 days at 10-minute intervals) |
-| Weekly | 500 (roughly 6 weeks at 2-hour intervals) |
-| Billing cycle | 500 |
+History is recorded per profile and used for the charts and the JSON/CSV export. Each record type
+is capped and pruned automatically, so history stays bounded without any attention from you —
+roughly a week of session history and several weeks of weekly history are retained. The exact
+caps live in `HistoryRetentionPolicy`.
 
 ### The one-time repair on upgrade
 
@@ -143,7 +140,7 @@ See [Codex subscription support](codex-subscriptions.md) for what is and isn't r
 
 - **No telemetry.** No analytics, no crash reporting, no usage statistics, no phone-home.
 - **No cloud sync.** Everything stays on your machine.
-- **No third-party services.** The only hosts contacted are the four listed above.
+- **No third-party services.** The only hosts contacted are the ones listed above.
 - **No credential exfiltration.** Credentials go to the provider that issued them, over HTTPS,
   and nowhere else.
 - **No account access beyond reading usage.** The app cannot send messages, spend credits, or
