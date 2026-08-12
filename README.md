@@ -1,7 +1,7 @@
 # Claude Usage Tracker
 
-![Revenium Labs](https://img.shields.io/badge/Revenium-Labs-6f42c1?style=for-the-badge)
-![Status: Beta](https://img.shields.io/badge/status-beta%20(best--effort)-f0a020?style=for-the-badge)
+[![Revenium Labs](https://img.shields.io/badge/Revenium-Labs-6f42c1?style=for-the-badge)](https://github.com/revenium/.github/blob/main/LABS.md)
+[![Status: Beta](https://img.shields.io/badge/status-beta%20(best--effort)-f0a020?style=for-the-badge)](https://github.com/revenium/.github/blob/main/LABS.md)
 
 > ### 🧪 This is a Revenium Labs project
 > **Revenium Labs** projects are field-developed, best-effort solutions. They are working,
@@ -22,9 +22,7 @@
   **A native macOS menu bar app for people running more than one Claude or Codex account**
 
   [![Release](https://img.shields.io/github/v/release/revenium/Claude-Usage-Tracker?style=flat-square)](https://github.com/revenium/Claude-Usage-Tracker/releases/latest)
-  ![macOS](https://img.shields.io/badge/macOS-14.0+-black?style=flat-square&logo=apple)
-  ![Swift](https://img.shields.io/badge/Swift-5.0+-orange?style=flat-square&logo=swift)
-  ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
+  [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
 
   <sub>🇬🇧 English • 🇪🇸 Español • 🇫🇷 Français • 🇩🇪 Deutsch • 🇮🇹 Italiano • 🇵🇹 Português • 🇯🇵 日本語 • 🇰🇷 한국어 • 🇨🇳 简体中文</sub>
 
