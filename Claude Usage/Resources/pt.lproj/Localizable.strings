@@ -833,10 +833,6 @@
 "shortcuts.info_desc" = "Os atalhos funcionam em qualquer aplicativo. Cada atalho deve incluir pelo menos uma tecla modificadora (Command, Option, Control ou Shift). Evite conflitos com atalhos do sistema.";
 
 /* ==================== */
-/* MARK: - Mobile App (Coming Soon) */
-/* ==================== */
-
-/* ==================== */
 /* MARK: - Popover Settings */
 /* ==================== */
 "section.popover_title" = "Popover";

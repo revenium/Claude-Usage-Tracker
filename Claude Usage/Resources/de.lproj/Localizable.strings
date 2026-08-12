@@ -835,10 +835,6 @@
 "shortcuts.info_desc" = "Kurzbefehle funktionieren aus jeder Anwendung. Jeder Kurzbefehl muss mindestens eine Modifikatortaste enthalten (Befehl, Option, Steuerung oder Umschalt). Konflikte mit Systemkurzbefehlen vermeiden.";
 
 /* ==================== */
-/* MARK: - Mobile App (Coming Soon) */
-/* ==================== */
-
-/* ==================== */
 /* MARK: - Popover Settings */
 /* ==================== */
 "section.popover_title" = "Popover";

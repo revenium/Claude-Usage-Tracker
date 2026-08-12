@@ -818,10 +818,6 @@
 "shortcuts.info_desc" = "Los atajos funcionan desde cualquier aplicación. Cada atajo debe incluir al menos una tecla modificadora (Comando, Opción, Control o Mayúsculas). Evita conflictos con atajos del sistema.";
 
 /* ==================== */
-/* MARK: - Mobile App (Coming Soon) */
-/* ==================== */
-
-/* ==================== */
 /* MARK: - Popover Settings */
 /* ==================== */
 "section.popover_title" = "Popover";

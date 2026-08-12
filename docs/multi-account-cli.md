@@ -48,8 +48,9 @@ The app creates `~/.claude-accounts/<name>/` for the active profile and shows yo
 login command to run against it. Log in there, and the profile now owns its own credentials
 independent of `~/.claude`.
 
-An existing directory for that name is reused rather than replaced, so relinking a profile you
-previously unlinked picks up the login it already had.
+An existing directory for that name is reused rather than replaced. Note that unlinking deletes
+the directory outright, so relinking afterwards starts from a clean directory and needs a fresh
+`claude login`.
 
 ### What activation writes
 

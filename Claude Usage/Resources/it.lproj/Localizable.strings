@@ -833,10 +833,6 @@
 "shortcuts.info_desc" = "Le scorciatoie funzionano da qualsiasi applicazione. Ogni scorciatoia deve includere almeno un tasto modificatore (Comando, Opzione, Controllo o Maiuscolo). Evita conflitti con le scorciatoie di sistema.";
 
 /* ==================== */
-/* MARK: - Mobile App (Coming Soon) */
-/* ==================== */
-
-/* ==================== */
 /* MARK: - Popover Settings */
 /* ==================== */
 "section.popover_title" = "Popover";

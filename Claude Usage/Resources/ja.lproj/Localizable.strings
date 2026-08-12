@@ -835,10 +835,6 @@
 "shortcuts.info_desc" = "ショートカットはどのアプリからでも使用できます。各ショートカットには修飾キー（Command、Option、Control、Shift）が1つ以上必要です。システムショートカットとの競合にご注意ください。";
 
 /* ==================== */
-/* MARK: - Mobile App (Coming Soon) */
-/* ==================== */
-
-/* ==================== */
 /* MARK: - Popover Settings */
 /* ==================== */
 "section.popover_title" = "ポップオーバー";

@@ -273,7 +273,7 @@ Credentials and profile settings apply to the selected profile. App settings are
 | **Language** | Interface language, applied live |
 | **Updates** | Automatic checks, release notes, one-click install |
 | **Debug** | Timed network capture with request/response detail |
-| **Support**, **Mobile App**, **About** | Links, credits, version |
+| **Support**, **About** | Links, credits, version |
 
 ---
 
@@ -343,6 +343,7 @@ Before opening a PR, run the full gate — CI runs the same set:
 ```bash
 swift test --package-path Packages/UsageKit
 ./scripts/validate_localizations.sh
+./scripts/tests/test_validate_localizations.sh
 ./scripts/validate_distribution.sh
 
 xcodebuild test -project "Claude Usage.xcodeproj" -scheme "Claude Usage" \

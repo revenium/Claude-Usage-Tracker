@@ -833,10 +833,6 @@
 "shortcuts.info_desc" = "快捷键可在任何应用中使用。每个快捷键必须包含至少一个修饰键（Command、Option、Control 或 Shift）。请避免与系统快捷键冲突。";
 
 /* ==================== */
-/* MARK: - Mobile App (Coming Soon) */
-/* ==================== */
-
-/* ==================== */
 /* MARK: - Popover Settings */
 /* ==================== */
 "section.popover_title" = "弹出窗口";

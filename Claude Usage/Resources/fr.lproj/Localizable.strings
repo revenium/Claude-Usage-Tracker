@@ -815,10 +815,6 @@
 "shortcuts.info_desc" = "Les raccourcis fonctionnent depuis n'importe quelle application. Chaque raccourci doit inclure au moins une touche de modification (Commande, Option, Contrôle ou Majuscule). Évitez les conflits avec les raccourcis système.";
 
 /* ==================== */
-/* MARK: - Mobile App (Coming Soon) */
-/* ==================== */
-
-/* ==================== */
 /* MARK: - Popover Settings */
 /* ==================== */
 "section.popover_title" = "Popover";
