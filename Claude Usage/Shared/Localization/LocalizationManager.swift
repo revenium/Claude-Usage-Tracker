@@ -120,6 +120,11 @@ enum LocalizationKey: String {
     case sendFeedback = "about.send_feedback"
     case mitLicense = "about.mit_license"
     case copyright = "about.copyright"
+    case viewLicenses = "about.view_licenses"
+    case licensesTitle = "about.licenses_title"
+    case licensesAppSection = "about.licenses_app_section"
+    case licensesSparkleSection = "about.licenses_sparkle_section"
+    case licensesUnavailable = "about.licenses_unavailable"
 
     // MARK: - Notification Messages
     case notifSessionWarningTitle = "notification.session_warning.title"

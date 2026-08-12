@@ -16,6 +16,7 @@ struct AboutView: View {
     @State private var contributorsError: String?
     @State private var showResetConfirmation = false
     @State private var showFeedbackForm = false
+    @State private var showLicenses = false
 
     private var appVersion: String {
         if let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String {
@@ -158,6 +159,10 @@ struct AboutView: View {
                             showFeedbackForm = true
                         }
 
+                        LinkButton(title: "about.view_licenses".localized, icon: "doc.text") {
+                            showLicenses = true
+                        }
+
                         Divider()
 
                         LinkButton(title: "about.run_setup_wizard".localized, icon: "wand.and.stars") {
@@ -185,7 +190,9 @@ struct AboutView: View {
                         .font(DesignTokens.Typography.caption)
                         .foregroundColor(.secondary)
 
-                    Text("© \(String(Calendar.current.component(.year, from: Date()))) Hamed Elfayome")
+                    // Static, not computed from the system clock, so it stays
+                    // in sync with the copyright year in the root LICENSE file.
+                    Text("about.copyright".localized)
                         .font(DesignTokens.Typography.caption)
                         .foregroundColor(.secondary)
                 }
@@ -217,6 +224,9 @@ struct AboutView: View {
                     showFeedbackForm = false
                 }
             )
+        }
+        .sheet(isPresented: $showLicenses) {
+            LicensesView()
         }
     }
 

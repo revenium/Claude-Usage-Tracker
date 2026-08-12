@@ -135,6 +135,11 @@
 "about.send_feedback" = "Enviar Comentarios";
 "about.mit_license" = "Licencia MIT • Código Abierto";
 "about.copyright" = "© 2025 Hamed Elfayome";
+"about.view_licenses" = "View Licenses";
+"about.licenses_title" = "Licenses";
+"about.licenses_app_section" = "Claude Usage Tracker";
+"about.licenses_sparkle_section" = "Sparkle (Auto-Update Framework)";
+"about.licenses_unavailable" = "License text unavailable.";
 
 /* ==================== */
 /* MARK: - Notification Messages */

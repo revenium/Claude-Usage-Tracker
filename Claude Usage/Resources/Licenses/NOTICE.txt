@@ -1,0 +1,26 @@
+Provenance of vendored license texts in this directory
+========================================================
+
+These files are bundled verbatim into the app's Resources so that the MIT
+permission notice and warranty disclaimer travel with every distributed
+copy of the app, as MIT requires. Neither file's text (including
+whitespace) has been altered from its source.
+
+Claude-Usage-Tracker-LICENSE.txt
+    Exact copy of the repository's own /LICENSE (MIT). Keep these two
+    files in sync manually if /LICENSE ever changes; nothing enforces
+    that automatically.
+
+Sparkle-LICENSE.txt
+    License for the Sparkle.framework dependency (embedded in the app
+    bundle via Swift Package Manager). Fetched verbatim from the exact
+    commit SwiftPM has pinned for this project, per
+    "Claude Usage.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved":
+
+        Sparkle version: 2.9.4
+        Pinned revision: b6496a74a087257ef5e6da1c5b29a447a60f5bd7
+        Source:          https://raw.githubusercontent.com/sparkle-project/Sparkle/b6496a74a087257ef5e6da1c5b29a447a60f5bd7/LICENSE
+        Fetched:          2026-08-12
+
+    If the Sparkle dependency is upgraded, re-fetch this file from the
+    LICENSE at the newly pinned revision and update the details above.

@@ -461,6 +461,11 @@
 "about.check_updates" = "업데이트 확인";
 "about.copyright" = "© 2025 Hamed Elfayome";
 "about.mit_license" = "MIT 라이선스 • 오픈 소스";
+"about.view_licenses" = "View Licenses";
+"about.licenses_title" = "Licenses";
+"about.licenses_app_section" = "Claude Usage Tracker";
+"about.licenses_sparkle_section" = "Sparkle (Auto-Update Framework)";
+"about.licenses_unavailable" = "License text unavailable.";
 "about.run_setup_wizard" = "설정 마법사 실행";
 
 /* ==================== */
