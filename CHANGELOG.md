@@ -15,9 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the engine is revving before you hit the limiter — that's what this app
   does for your AI subscriptions, and Revvy is Revenium's raccoon mascot.
   On first launch the renamed app adopts your existing settings, profiles,
-  and usage history automatically; credentials stay in the Keychain
-  untouched. macOS treats the renamed app as new for privacy permissions,
-  so you will be asked to re-grant Accessibility (and notifications) once.
+  and usage history automatically. macOS treats the renamed app as new for
+  privacy permissions, so expect two kinds of one-time prompts: a keychain
+  consent dialog per stored credential (click "Allow" — the app then re-owns
+  the item so it never asks again; "Deny" leaves that profile without its
+  credential until the next launch retries), and the Accessibility and
+  notification permission prompts.
   The GitHub repository moved to `revenium/RevvyTach` (old links redirect),
   and the Homebrew cask is now `revenium/tap/revvytach` — the old
   `claude-usage` cask is deprecated and points at it.

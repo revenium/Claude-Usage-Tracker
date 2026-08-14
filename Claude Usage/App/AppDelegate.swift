@@ -87,6 +87,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         // identifier actually changes (see AppIdentity).
         LegacyIdentityMigrationService.shared.migrateIfNeeded()
 
+        // Re-own file-Keychain credential items the pre-rename app created,
+        // so macOS stops showing a per-item consent dialog on every launch.
+        // Runs after the defaults import above (it records completion in the
+        // migrated domain) and is likewise a no-op until the bundle
+        // identifier changes.
+        KeychainOwnershipAdoptionService.shared.adoptIfNeeded()
+
         // Disable window restoration for menu bar app
         UserDefaults.standard.set(false, forKey: "NSQuitAlwaysKeepsWindows")
 
