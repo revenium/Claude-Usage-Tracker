@@ -23,10 +23,14 @@ import Foundation
 ///
 /// Behavior is additive and idempotent: legacy preference keys are imported
 /// only where the current domain has no value, legacy files are copied only
-/// where the destination file does not exist, and the legacy data is left in
-/// place (a later release may clean it up). Completion is recorded in the
-/// current domain only after both imports succeed, so a partial failure
-/// retries on the next launch.
+/// where the destination does not already exist, and the legacy data is left
+/// in place (a later release may clean it up). When a legacy entry and its
+/// destination exist but disagree on kind (a file where a directory is
+/// expected, or vice versa), the destination wins, the conflict is logged,
+/// and — because that outcome is deliberate and already handled, not a
+/// failure — it is treated as verified rather than retried forever.
+/// Completion is recorded in the current domain only after both imports
+/// succeed, so a partial failure retries on the next launch.
 ///
 /// While the running bundle identifier still equals the legacy identifier —
 /// i.e. until the rename actually ships — `migrateIfNeeded()` returns
@@ -176,9 +180,16 @@ nonisolated final class LegacyIdentityMigrationService {
         }
     }
 
-    /// Recursively copies `source` into `destination`, skipping any file that
-    /// already exists at the destination. Per-file granularity keeps a retry
-    /// after a partially failed copy from being blocked by its own debris.
+    /// Recursively copies `source` into `destination`, skipping any entry
+    /// that already exists at the destination. Per-entry granularity keeps a
+    /// retry after a partially failed copy from being blocked by its own
+    /// debris.
+    ///
+    /// A kind conflict (the destination exists but is a file where the
+    /// legacy entry is a directory, or vice versa) is never clobbered: the
+    /// destination — whatever the renamed app or AppKit already put there —
+    /// always wins, and the conflict is logged so it is visible without
+    /// blocking the migration.
     private func mergeCopy(from source: URL, to destination: URL) throws {
         if !fileManager.fileExists(atPath: destination.path) {
             try fileManager.createDirectory(
@@ -186,26 +197,96 @@ nonisolated final class LegacyIdentityMigrationService {
                 withIntermediateDirectories: true
             )
         }
-        for entry in try fileManager.contentsOfDirectory(
-            at: source,
-            includingPropertiesForKeys: [.isDirectoryKey]
-        ) {
-            let target = destination
-                .appendingPathComponent(entry.lastPathComponent)
-            let entryIsDirectory =
-                (try? entry.resourceValues(forKeys: [.isDirectoryKey])
-                    .isDirectory) ?? false
-            if entryIsDirectory {
-                try mergeCopy(from: entry, to: target)
-            } else if !fileManager.fileExists(atPath: target.path) {
-                try fileManager.copyItem(at: entry, to: target)
+        _ = try walkLegacyTree(from: source, to: destination) { entry in
+            switch entry.destination {
+            case .absent where entry.isDirectory:
+                try fileManager.createDirectory(
+                    at: entry.target,
+                    withIntermediateDirectories: true
+                )
+            case .absent:
+                try fileManager.copyItem(at: entry.source, to: entry.target)
+            case .sameKind:
+                break
+            case .kindConflict:
+                LoggingService.shared.logWarning(
+                    "Legacy identity migration found a "
+                        + (entry.isDirectory ? "directory" : "file")
+                        + " at \(entry.target.path) shadowed by a"
+                        + " destination entry of the other kind;"
+                        + " keeping the destination entry as-is"
+                )
+            }
+            return true
+        }
+    }
+
+    /// Recursively confirms every legacy entry was adopted, treating a
+    /// logged kind conflict as a settled, verified outcome — not a failure —
+    /// so completion is recorded and the migration does not retry forever
+    /// over a conflict `mergeCopy` has already resolved (destination wins).
+    /// Only a genuinely absent destination withholds the completion marker.
+    private func verifyEveryLegacyFileExists(
+        from source: URL,
+        at destination: URL
+    ) throws -> Bool {
+        try walkLegacyTree(from: source, to: destination) { entry in
+            switch entry.destination {
+            case .sameKind, .kindConflict:
+                return true
+            case .absent:
+                return false
             }
         }
     }
 
-    private func verifyEveryLegacyFileExists(
+    /// How a legacy entry relates to whatever already occupies its
+    /// destination.
+    private enum DestinationState {
+        case absent
+        case sameKind
+        case kindConflict
+    }
+
+    private struct LegacyEntry {
+        let source: URL
+        let target: URL
+        let isDirectory: Bool
+        let destination: DestinationState
+    }
+
+    /// Kind-aware destination probe: distinguishes "nothing there" from
+    /// "something there of the same kind" from "something there of the
+    /// other kind," which a bare `fileExists(atPath:)` check cannot.
+    private func destinationState(
+        for target: URL,
+        legacyIsDirectory: Bool
+    ) -> DestinationState {
+        var targetIsDirectory: ObjCBool = false
+        guard fileManager.fileExists(
+            atPath: target.path,
+            isDirectory: &targetIsDirectory
+        ) else {
+            return .absent
+        }
+        return targetIsDirectory.boolValue == legacyIsDirectory
+            ? .sameKind
+            : .kindConflict
+    }
+
+    /// The single recursive walk shared by `mergeCopy` and
+    /// `verifyEveryLegacyFileExists`, so the two passes can never drift
+    /// against each other. `visit` returns `false` to abandon the walk
+    /// early (the walk then also returns `false`).
+    ///
+    /// A directory is descended into only when its destination is absent or
+    /// is itself a directory. A legacy directory shadowed by a destination
+    /// file is a kind conflict with nowhere to descend into — it is
+    /// surfaced to `visit` once and not walked further.
+    private func walkLegacyTree(
         from source: URL,
-        at destination: URL
+        to destination: URL,
+        visit: (LegacyEntry) throws -> Bool
     ) throws -> Bool {
         for entry in try fileManager.contentsOfDirectory(
             at: source,
@@ -213,20 +294,31 @@ nonisolated final class LegacyIdentityMigrationService {
         ) {
             let target = destination
                 .appendingPathComponent(entry.lastPathComponent)
-            let entryIsDirectory =
+            let isDirectory =
                 (try? entry.resourceValues(forKeys: [.isDirectoryKey])
                     .isDirectory) ?? false
-            if entryIsDirectory {
-                guard
-                    try verifyEveryLegacyFileExists(
-                        from: entry,
-                        at: target
-                    )
-                else {
+            let entryState = destinationState(
+                for: target,
+                legacyIsDirectory: isDirectory
+            )
+            guard try visit(
+                LegacyEntry(
+                    source: entry,
+                    target: target,
+                    isDirectory: isDirectory,
+                    destination: entryState
+                )
+            ) else {
+                return false
+            }
+            if isDirectory, entryState != .kindConflict {
+                guard try walkLegacyTree(
+                    from: entry,
+                    to: target,
+                    visit: visit
+                ) else {
                     return false
                 }
-            } else if !fileManager.fileExists(atPath: target.path) {
-                return false
             }
         }
         return true

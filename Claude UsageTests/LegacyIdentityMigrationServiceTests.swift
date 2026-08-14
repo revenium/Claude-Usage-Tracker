@@ -225,6 +225,117 @@ final class LegacyIdentityMigrationServiceTests: XCTestCase {
         )
     }
 
+    /// The opposite orientation of the conflict below, and the one that
+    /// actually regressed: before the shared kind-aware walk, a legacy
+    /// *directory* shadowed by a destination *file* made `mergeCopy` descend
+    /// into the legacy folder and try to copy its children underneath a file
+    /// path. That throws, so the completion marker was withheld and the
+    /// migration retried — and failed again — on every single launch.
+    func testLegacyDirectoryShadowedByDestinationFileCompletesWithoutRetrying()
+        throws
+    {
+        try writeLegacyFile("profile-data/usage.json", contents: "legacy")
+        try writeLegacyFile("network_logs.json", contents: "logs")
+
+        // A file sits where the legacy migration expects a directory.
+        let conflictDestination = currentDirectory
+            .appendingPathComponent("profile-data")
+        try FileManager.default.createDirectory(
+            at: currentDirectory,
+            withIntermediateDirectories: true
+        )
+        try "occupied".write(
+            to: conflictDestination, atomically: true, encoding: .utf8
+        )
+
+        makeService().migrateIfNeeded()
+
+        // The destination file is kept as-is, never replaced by the folder.
+        var isDirectory: ObjCBool = true
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: conflictDestination.path,
+                isDirectory: &isDirectory
+            )
+        )
+        XCTAssertFalse(isDirectory.boolValue)
+        XCTAssertEqual(
+            try String(contentsOf: conflictDestination, encoding: .utf8),
+            "occupied"
+        )
+
+        // The conflict is settled, not fatal: the marker is written so the
+        // migration does not re-run and re-fail on every launch.
+        XCTAssertTrue(
+            defaults.bool(
+                forKey: LegacyIdentityMigrationService.migrationCompletedKey
+            )
+        )
+
+        // Siblings outside the conflicting subtree were still adopted.
+        XCTAssertEqual(
+            try String(
+                contentsOf: currentDirectory
+                    .appendingPathComponent("network_logs.json"),
+                encoding: .utf8
+            ),
+            "logs"
+        )
+    }
+
+    func testLegacyFileShadowedByDestinationDirectoryCompletesWithoutClobbering()
+        throws
+    {
+        try writeLegacyFile("profile-data/usage.json", contents: "legacy")
+        try writeLegacyFile("network_logs.json", contents: "logs")
+
+        // A directory sits where the legacy migration expects a file.
+        let conflictDestination = currentDirectory
+            .appendingPathComponent("profile-data/usage.json")
+        try FileManager.default.createDirectory(
+            at: conflictDestination,
+            withIntermediateDirectories: true
+        )
+        let sentinel = conflictDestination
+            .appendingPathComponent("sentinel.txt")
+        try "sentinel".write(
+            to: sentinel, atomically: true, encoding: .utf8
+        )
+
+        makeService().migrateIfNeeded()
+
+        // The destination directory and its contents are untouched.
+        var isDirectory: ObjCBool = false
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: conflictDestination.path,
+                isDirectory: &isDirectory
+            )
+        )
+        XCTAssertTrue(isDirectory.boolValue)
+        XCTAssertEqual(
+            try String(contentsOf: sentinel, encoding: .utf8), "sentinel"
+        )
+
+        // A kind conflict is a settled, verified outcome — the migration
+        // completes and does not retry forever.
+        XCTAssertTrue(
+            defaults.bool(
+                forKey: LegacyIdentityMigrationService.migrationCompletedKey
+            )
+        )
+
+        // Other, non-conflicting legacy files were still adopted.
+        XCTAssertEqual(
+            try String(
+                contentsOf: currentDirectory
+                    .appendingPathComponent("network_logs.json"),
+                encoding: .utf8
+            ),
+            "logs"
+        )
+    }
+
     func testIdenticalFolderNamesSkipFileMigration() {
         legacyDefaults.set("value", forKey: "importedKey")
 
