@@ -1,6 +1,6 @@
 /*
    Localizable.strings
-   Claude Usage Tracker
+   RevvyTach
 
    Japanese (日本語)
    Created by Claude Code on 2026-01-05.
@@ -9,10 +9,10 @@
 /* ==================== */
 /* MARK: - App Info */
 /* ==================== */
-"app.name" = "Claude使用状況トラッカー";
-"app.window.main" = "Claude使用状況";
+"app.name" = "RevvyTach";
+"app.window.main" = "RevvyTach";
 "app.window.settings" = "設定";
-"app.window.github_prompt" = "Claude使用状況トラッカーをサポート";
+"app.window.github_prompt" = "RevvyTachをサポート";
 
 /* ==================== */
 /* MARK: - Common Actions */
@@ -87,7 +87,7 @@
 /* MARK: - General Settings */
 /* ==================== */
 "general.launch_at_login" = "ログイン時に起動";
-"general.launch_at_login.description" = "Macにログインすると自動的にClaude使用状況トラッカーを起動します";
+"general.launch_at_login.description" = "Macにログインすると自動的にRevvyTachを起動します";
 "general.refresh_interval" = "更新間隔";
 "general.refresh_interval.description" = "短い間隔はよりリアルタイムなデータを提供しますが、バッテリー寿命に影響を与える可能性があります";
 "general.check_overage_limit" = "追加使用制限を確認";
@@ -133,7 +133,7 @@
 /* ==================== */
 /* MARK: - Setup Wizard */
 /* ==================== */
-"setup.welcome.title" = "Claude使用状況トラッカーへようこそ";
+"setup.welcome.title" = "RevvyTachへようこそ";
 "setup.welcome.subtitle" = "APIアクセスを構成して使用状況の追跡を開始";
 "setup.step.get_session_key" = "セッションキーを取得";
 "setup.step.get_session_key.description" = "claude.aiからセッションキーを抽出する必要があります";
@@ -168,10 +168,10 @@
 "about.report_issue" = "問題を報告";
 "about.send_feedback" = "フィードバックを送信";
 "about.mit_license" = "MITライセンス • オープンソース";
-"about.copyright" = "© 2025-2026 Claude Usage Tracker Contributors";
+"about.copyright" = "© 2025-2026 RevvyTach Contributors";
 "about.view_licenses" = "ライセンスを表示";
 "about.licenses_title" = "ライセンス";
-"about.licenses_app_section" = "Claude Usage Tracker";
+"about.licenses_app_section" = "RevvyTach";
 "about.licenses_sparkle_section" = "Sparkle（自動アップデートフレームワーク）";
 "about.licenses_unavailable" = "ライセンステキストを利用できません。";
 
@@ -285,7 +285,7 @@
 /* ==================== */
 /* MARK: - GitHub Star Prompt */
 /* ==================== */
-"github.enjoy_app" = "Claude使用状況トラッカーを楽しんでいますか？";
+"github.enjoy_app" = "RevvyTachを楽しんでいますか？";
 "github.star_description" = "このアプリが役に立った場合は、GitHubでスターを付けることを検討してください！他の人がプロジェクトを発見するのに役立ち、継続的な開発の動機になります。";
 "github.star_button" = "GitHubでスター";
 "github.maybe_later" = "後で";
@@ -771,7 +771,7 @@
 "history.export.json" = "JSONでエクスポート";
 "history.export.csv" = "CSVでエクスポート";
 "support.title" = "プロジェクトを支援";
-"support.subtitle" = "Claude使用状況トラッカーは無料でオープンソースです";
+"support.subtitle" = "RevvyTachは無料でオープンソースです";
 "support.all_features_free" = "すべての機能が無料";
 "support.all_features_desc" = "このアプリのすべての機能は完全に無料です。プレミアム層、ペイウォール、サブスクリプションはありません。";
 "support.open_source" = "オープンソース";
@@ -914,8 +914,8 @@
 
 "error.storage_write_failed" = "使用状況データを保存できません";
 "error.storage_write_failed.suggestion" = "もう一度お試しください。問題が解決しない場合は、アプリにデータフォルダへの書き込み権限があることを確認してください。";
-"error.credential_storage_unavailable" = "Claude Usage Tracker は macOS キーチェーンを使用できません";
-"error.credential_storage_unavailable.suggestion" = "この Claude Usage Tracker はキーチェーンアクセスグループで署名されていないため、macOS が認証情報の保存をブロックしています。プロジェクトの Releases ページから署名済み版をインストールして、もう一度お試しください。";
+"error.credential_storage_unavailable" = "RevvyTach は macOS キーチェーンを使用できません";
+"error.credential_storage_unavailable.suggestion" = "この RevvyTach はキーチェーンアクセスグループで署名されていないため、macOS が認証情報の保存をブロックしています。プロジェクトの Releases ページから署名済み版をインストールして、もう一度お試しください。";
 "error.credential_storage_failed" = "セッションキーを macOS キーチェーンに保存できませんでした";
 "error.credential_storage_failed.suggestion" = "既存の設定は変更されていません。キーチェーンアクセスでログインキーチェーンのロックが解除されていることを確認して、もう一度お試しください。";
 "popover.banner.credentials_not_saved" = "認証情報が保存されていません (%d)";

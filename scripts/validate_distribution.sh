@@ -44,7 +44,7 @@ contains '<string>\$\(REVENIUM_UPDATE_CHANNEL\)</string>' "$info_plist" \
     || fail 'Info.plist must use the injected update channel build setting'
 
 project='Claude Usage.xcodeproj/project.pbxproj'
-bundle_id_count=$(count_matches "PRODUCT_BUNDLE_IDENTIFIER = \"$release_bundle_identifier\";" "$project")
+bundle_id_count=$(count_matches "PRODUCT_BUNDLE_IDENTIFIER = $release_bundle_identifier;" "$project")
 [[ $bundle_id_count -eq 2 ]] \
     || fail 'application bundle identifier changed or is not present in both configurations'
 contains 'MACOSX_DEPLOYMENT_TARGET = 14\.0;' "$project" \
@@ -76,7 +76,7 @@ contains "static let appGroupIdentifier = \"$expected_app_group\"" \
 # compare against, so that check belongs here instead). The two files must
 # never drift: regenerate the vendored copy with `cp`, never hand-edit it.
 license_path='LICENSE'
-vendored_license_path='Claude Usage/Resources/Licenses/Claude-Usage-Tracker-LICENSE.txt'
+vendored_license_path='Claude Usage/Resources/Licenses/RevvyTach-LICENSE.txt'
 [[ -r $license_path ]] \
     || fail "root license is not readable: $license_path"
 [[ -r $vendored_license_path ]] \
@@ -115,15 +115,15 @@ fi
 
 constants='Claude Usage/Shared/Utilities/Constants.swift'
 [[ $release_repository_url == \
-    'https://github.com/revenium/Claude-Usage-Tracker' ]] \
+    'https://github.com/revenium/RevvyTach' ]] \
     || fail 'shared release repository does not match the trusted origin'
 contains 'productionFeedURL = URL\(string: Constants\.GitHub\.appcastURL\)!' \
     'Claude Usage/Shared/Services/UpdateManager.swift' \
     || fail 'runtime production feed does not use the application repository constants'
 contains 'static let owner = "revenium"' "$constants" \
     || fail 'application repository owner is not Revenium'
-contains 'static let repo = "Claude-Usage-Tracker"' "$constants" \
-    || fail 'application repository name is not Claude-Usage-Tracker'
+contains 'static let repo = "RevvyTach"' "$constants" \
+    || fail 'application repository name is not RevvyTach'
 contains_fixed 'static let repoURL = "https://github.com/\(owner)/\(repo)"' \
     "$constants" \
     || fail 'application repository URL does not derive from its trusted identity'
@@ -132,7 +132,7 @@ contains_fixed 'static let releasesURL = "\(repoURL)/releases"' "$constants" \
 contains_fixed 'static let appcastURL = "\(releasesURL)/latest/download/appcast.xml"' \
     "$constants" \
     || fail 'application appcast path does not target the latest release asset'
-contains 'repos/revenium/homebrew-tap/contents/Casks/claude-usage\.rb' \
+contains 'repos/revenium/homebrew-tap/contents/Casks/revvytach\.rb' \
     '.github/workflows/update-homebrew-cask.yml' \
     || fail 'Homebrew workflow does not target the Revenium tap'
 homebrew_workflow='.github/workflows/update-homebrew-cask.yml'
@@ -248,13 +248,13 @@ if (( ${#keychain_entitlement_files[@]} > 0 )); then
         || fail "keychain-access-groups declared in ${keychain_entitlement_files[*]} but the release workflow never embeds a provisioning profile; the signed app will fail to launch (launchctl error 163)"
 fi
 
-rendered_cask=$(mktemp "${TMPDIR:-/tmp}/claude-usage-cask.XXXXXX.rb")
+rendered_cask=$(mktemp "${TMPDIR:-/tmp}/revvytach-cask.XXXXXX.rb")
 trap 'rm -f "$rendered_cask"' EXIT
 "$script_dir/render_homebrew_cask.sh" \
     '99.99.99' \
     '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' \
     "$rendered_cask" >/dev/null
-contains_fixed "$release_repository_url/releases/download/v#{version}/Claude-Usage.dmg" "$rendered_cask" \
+contains_fixed "$release_repository_url/releases/download/v#{version}/RevvyTach.dmg" "$rendered_cask" \
     || fail 'rendered cask URL is not the version-pinned Revenium release asset'
 contains 'depends_on macos: ">= :sonoma"' "$rendered_cask" \
     || fail 'rendered cask does not preserve the macOS 14 minimum'

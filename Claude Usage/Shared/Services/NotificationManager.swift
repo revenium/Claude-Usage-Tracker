@@ -962,7 +962,7 @@ class NotificationManager: NotificationServiceProtocol {
 
         // Create notification content
         let content = UNMutableNotificationContent()
-        content.title = "Claude Usage Updated"
+        content.title = "RevvyTach Updated"
         content.body = "Successfully loaded usage data"
         // Silent notification (no sound)
         content.categoryIdentifier = "SUCCESS_ALERT"

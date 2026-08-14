@@ -33,7 +33,7 @@ enum AppBuildVariant {
 /// `legacyAppSupportFolderName` the migration service is a production no-op.
 enum AppIdentity {
     /// Current Application Support folder name (before the UAT path suffix).
-    static let appSupportFolderName = "Claude Usage"
+    static let appSupportFolderName = "RevvyTach"
 
     /// Bundle identifier base every pre-rename release shipped under
     /// (the UAT variant appends ".uat"). Frozen; never edit.
@@ -220,7 +220,7 @@ enum Constants {
     // GitHub Repository Info
     enum GitHub {
         static let owner = "revenium"
-        static let repo = "Claude-Usage-Tracker"
+        static let repo = "RevvyTach"
         static let repoURL = "https://github.com/\(owner)/\(repo)"
         static let issuesURL = "\(repoURL)/issues"
         static let newFeedbackIssueURL = "\(issuesURL)/new"

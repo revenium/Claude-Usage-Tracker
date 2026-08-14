@@ -6,7 +6,7 @@ permission notice and warranty disclaimer travel with every distributed
 copy of the app, as MIT requires. Neither file's text (including
 whitespace) has been altered from its source.
 
-Claude-Usage-Tracker-LICENSE.txt
+RevvyTach-LICENSE.txt
     Exact copy of the repository's own /LICENSE (MIT). Keep these two
     files in sync manually if /LICENSE ever changes; nothing enforces
     that automatically.

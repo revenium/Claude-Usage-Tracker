@@ -1,6 +1,6 @@
 /*
    Localizable.strings
-   Claude Usage Tracker
+   RevvyTach
 
    English (Base Language)
    Created by Claude Code on 2025-12-27.
@@ -9,10 +9,10 @@
 /* ==================== */
 /* MARK: - App Info */
 /* ==================== */
-"app.name" = "Claude Usage Tracker";
-"app.window.main" = "Claude Usage";
+"app.name" = "RevvyTach";
+"app.window.main" = "RevvyTach";
 "app.window.settings" = "Settings";
-"app.window.github_prompt" = "Support Claude Usage Tracker";
+"app.window.github_prompt" = "Support RevvyTach";
 
 /* ==================== */
 /* MARK: - Common Actions */
@@ -93,7 +93,7 @@
 /* MARK: - General Settings */
 /* ==================== */
 "general.launch_at_login" = "Launch at login";
-"general.launch_at_login.description" = "Automatically start Claude Usage Tracker when you log in to your Mac";
+"general.launch_at_login.description" = "Automatically start RevvyTach when you log in to your Mac";
 "general.refresh_interval" = "Refresh Interval";
 "general.refresh_interval.description" = "Shorter intervals provide more real-time data but may impact battery life";
 "general.check_overage_limit" = "Check Extra Usage Limit";
@@ -139,7 +139,7 @@
 /* ==================== */
 /* MARK: - Setup Wizard */
 /* ==================== */
-"setup.welcome.title" = "Welcome to Claude Usage Tracker";
+"setup.welcome.title" = "Welcome to RevvyTach";
 "setup.welcome.subtitle" = "Configure your API access to start tracking usage";
 "setup.step.get_session_key" = "Get Your Session Key";
 "setup.step.get_session_key.description" = "You'll need to extract your session key from claude.ai";
@@ -175,10 +175,10 @@
 "about.report_issue" = "Report Issue";
 "about.send_feedback" = "Send Feedback";
 "about.mit_license" = "MIT License • Open Source";
-"about.copyright" = "© 2025-2026 Claude Usage Tracker Contributors";
+"about.copyright" = "© 2025-2026 RevvyTach Contributors";
 "about.view_licenses" = "View Licenses";
 "about.licenses_title" = "Licenses";
-"about.licenses_app_section" = "Claude Usage Tracker";
+"about.licenses_app_section" = "RevvyTach";
 "about.licenses_sparkle_section" = "Sparkle (Auto-Update Framework)";
 "about.licenses_unavailable" = "License text unavailable.";
 
@@ -292,7 +292,7 @@
 /* ==================== */
 /* MARK: - GitHub Star Prompt */
 /* ==================== */
-"github.enjoy_app" = "Enjoying Claude Usage Tracker?";
+"github.enjoy_app" = "Enjoying RevvyTach?";
 "github.star_description" = "If this app has been helpful, please consider starring it on GitHub! It helps others discover the project and motivates continued development.";
 "github.star_button" = "Star on GitHub";
 "github.maybe_later" = "Maybe Later";
@@ -859,7 +859,7 @@
 /* MARK: - Support View */
 /* ==================== */
 "support.title" = "Support the Project";
-"support.subtitle" = "Claude Usage Tracker is free and open source";
+"support.subtitle" = "RevvyTach is free and open source";
 "support.all_features_free" = "All Features Are Free";
 "support.all_features_desc" = "Every feature in this app is completely free to use. No premium tiers, no paywalls, no subscriptions.";
 "support.open_source" = "Open Source";
@@ -1006,8 +1006,8 @@
 
 "error.storage_write_failed" = "Unable to save usage data";
 "error.storage_write_failed.suggestion" = "Please try again. If the problem continues, check that the app has permission to write to its data folder.";
-"error.credential_storage_unavailable" = "Claude Usage Tracker isn’t allowed to use the macOS Keychain";
-"error.credential_storage_unavailable.suggestion" = "This copy of Claude Usage Tracker isn’t signed with a Keychain access group, so macOS blocks it from storing credentials. Install the signed release from the project’s Releases page, then try again.";
+"error.credential_storage_unavailable" = "RevvyTach isn’t allowed to use the macOS Keychain";
+"error.credential_storage_unavailable.suggestion" = "This copy of RevvyTach isn’t signed with a Keychain access group, so macOS blocks it from storing credentials. Install the signed release from the project’s Releases page, then try again.";
 "error.credential_storage_failed" = "Your session key couldn’t be saved to the macOS Keychain";
 "error.credential_storage_failed.suggestion" = "Your existing settings were left unchanged. Make sure your login keychain is unlocked in Keychain Access, then try again.";
 "popover.banner.credentials_not_saved" = "Credentials not saved (%d)";

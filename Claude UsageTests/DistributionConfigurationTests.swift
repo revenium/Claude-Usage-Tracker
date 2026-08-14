@@ -6,7 +6,7 @@ final class DistributionConfigurationTests: XCTestCase {
     private var validProductionInfo: [String: Any] {
         [
             "ReveniumUpdateChannel": "production",
-            "CFBundleIdentifier": "HamedElfayome.Claude-Usage",
+            "CFBundleIdentifier": "com.revenium.RevvyTach",
             "SUFeedURL": SparkleUpdateConfiguration.productionFeedURL.absoluteString,
             "SUPublicEDKey": Data(repeating: 7, count: 32).base64EncodedString()
         ]
@@ -69,7 +69,7 @@ final class DistributionConfigurationTests: XCTestCase {
 
     func testProductionBuildRejectsChangedBundleIdentity() {
         var info = validProductionInfo
-        info["CFBundleIdentifier"] = "io.revenium.Claude-Usage"
+        info["CFBundleIdentifier"] = "io.revenium.RevvyTach"
 
         XCTAssertFalse(
             SparkleUpdateConfiguration.evaluate(infoDictionary: info).isEnabled
@@ -107,7 +107,7 @@ final class DistributionConfigurationTests: XCTestCase {
     func testUpgradeIdentityRemainsStable() {
         XCTAssertEqual(
             SparkleUpdateConfiguration.productionBundleIdentifier,
-            "HamedElfayome.Claude-Usage"
+            "com.revenium.RevvyTach"
         )
         XCTAssertEqual(
             Constants.appGroupIdentifier,

@@ -47,16 +47,18 @@ because the item's access control trusts that binary rather than this app.
 
 | Path | Contents | Secrets? |
 |---|---|---|
-| `~/Library/Application Support/Claude Usage/profile-data/<profile-uuid>/current-v1.json` | Latest usage snapshot for that profile | No |
-| `~/Library/Application Support/Claude Usage/profile-data/<profile-uuid>/history-v1.json` | Usage history for that profile | No |
-| `~/Library/Preferences/HamedElfayome.Claude-Usage.plist` | Every setting and preference | No |
+| `~/Library/Application Support/RevvyTach/profile-data/<profile-uuid>/current-v1.json` | Latest usage snapshot for that profile | No |
+| `~/Library/Application Support/RevvyTach/profile-data/<profile-uuid>/history-v1.json` | Usage history for that profile | No |
+| `~/Library/Preferences/com.revenium.RevvyTach.plist` | Every setting and preference | No |
 | macOS Keychain | Session keys, API keys | Yes |
 | `~/.claude-accounts/<name>/` | A Claude Code config directory, created only for profiles you explicitly link | Yes — the CLI's own |
 | `~/.claude-tokens/.last-account` | Name of the active Claude account directory | No |
 | `~/.claude-tokens/.last-codex-home` | Absolute path of the active Codex home | No |
 
-The preferences file keeps the upstream project's bundle identifier (`HamedElfayome.Claude-Usage`)
-so that upgrading from the original app preserves your settings.
+On first launch after the RevvyTach rename, the app imports settings from the pre-rename
+preferences domain (`HamedElfayome.Claude-Usage`) and copies the old `Claude Usage`
+Application Support folder, so upgrading preserves everything. The legacy files are left in
+place and can be deleted once you're satisfied with the upgrade.
 
 Writes to the JSON stores are atomic — written to a temporary file, then renamed — with a `.bak`
 alongside, because an interrupted write on a large history file is not hypothetical. Stale

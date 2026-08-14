@@ -1,4 +1,4 @@
-# Claude Usage Tracker
+# RevvyTach
 
 [![Revenium Labs](https://img.shields.io/badge/Revenium-Labs-6f42c1?style=for-the-badge)](https://github.com/revenium/.github/blob/main/LABS.md)
 [![Status: Beta](https://img.shields.io/badge/status-beta%20(best--effort)-f0a020?style=for-the-badge)](https://github.com/revenium/.github/blob/main/LABS.md)
@@ -17,16 +17,22 @@
 > → **[What is Revenium Labs?](https://github.com/revenium/.github/blob/main/LABS.md)**
 
 <div align="center">
-  <img src=".github/cover.jpg" alt="Claude Usage Tracker" width="100%">
+  <img src=".github/cover.jpg" alt="RevvyTach" width="100%">
 
   **A native macOS menu bar app for people running more than one Claude or Codex account**
 
-  [![Release](https://img.shields.io/github/v/release/revenium/Claude-Usage-Tracker?style=flat-square)](https://github.com/revenium/Claude-Usage-Tracker/releases/latest)
+  <sub>**Why "RevvyTach"?** A tachometer tells you how hard the engine is revving and how close
+  you are to redline. That's what this app does for your AI coding subscriptions — it sits in
+  the menu bar showing how hard you're running each account and warns you before you hit the
+  limiter. Revvy is <a href="https://revenium.io">Revenium</a>'s raccoon mascot, who kindly
+  lent his name to a gauge.</sub>
+
+  [![Release](https://img.shields.io/github/v/release/revenium/RevvyTach?style=flat-square)](https://github.com/revenium/RevvyTach/releases/latest)
   [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
 
   <sub>🇬🇧 English • 🇪🇸 Español • 🇫🇷 Français • 🇩🇪 Deutsch • 🇮🇹 Italiano • 🇵🇹 Português • 🇯🇵 日本語 • 🇰🇷 한국어 • 🇨🇳 简体中文</sub>
 
-  ### [Download Latest Release](https://github.com/revenium/Claude-Usage-Tracker/releases/latest/download/Claude-Usage.dmg)
+  ### [Download Latest Release](https://github.com/revenium/RevvyTach/releases/latest/download/RevvyTach.dmg)
 
   <sub>macOS 14.0+ (Sonoma) · Native Swift/SwiftUI · Signed and notarized</sub>
 </div>
@@ -66,14 +72,14 @@ or CLI state.
 ### Homebrew
 
 ```bash
-brew install --cask revenium/tap/claude-usage
+brew install --cask revenium/tap/revvytach
 ```
 
-Update with `brew upgrade --cask claude-usage`, remove with `brew uninstall --cask claude-usage`.
+Update with `brew upgrade --cask revvytach`, remove with `brew uninstall --cask revvytach`.
 
 ### Direct download
 
-**[Download `Claude-Usage.dmg`](https://github.com/revenium/Claude-Usage-Tracker/releases/latest/download/Claude-Usage.dmg)**,
+**[Download `RevvyTach.dmg`](https://github.com/revenium/RevvyTach/releases/latest/download/RevvyTach.dmg)**,
 open it, drag the app to Applications, and launch it. Releases ship a single notarized disk
 image — signed with an Apple Developer ID, so there are no Gatekeeper workarounds to perform.
 
@@ -82,8 +88,8 @@ The app updates itself (Settings → Updates) via Sparkle, over HTTPS with signa
 ### Build from source
 
 ```bash
-git clone https://github.com/revenium/Claude-Usage-Tracker.git
-cd Claude-Usage-Tracker
+git clone https://github.com/revenium/RevvyTach.git
+cd RevvyTach
 open "Claude Usage.xcodeproj"   # then ⌘R
 ```
 
@@ -231,8 +237,8 @@ nothing is persisted. Anything left in cleartext by an older version is migrated
 
 | Path | What |
 |---|---|
-| `~/Library/Application Support/Claude Usage/profile-data/<uuid>/` | Per-profile current usage and history JSON |
-| `~/Library/Preferences/HamedElfayome.Claude-Usage.plist` | Settings — no secrets |
+| `~/Library/Application Support/RevvyTach/profile-data/<uuid>/` | Per-profile current usage and history JSON |
+| `~/Library/Preferences/com.revenium.RevvyTach.plist` | Settings — no secrets |
 | `~/.claude-accounts/<name>/` | Claude Code config directories, only for profiles you explicitly link |
 | `~/.claude-tokens/.last-account`, `.last-codex-home` | Pointers your shell reads, only if you use CLI switching |
 
@@ -368,15 +374,17 @@ services. Comment the non-obvious, not the obvious.
 
 ## About this fork
 
-Claude Usage Tracker began as an independent open-source project, which built the menu bar app,
-the profile system, the setup wizard, code signing, automatic updates, and the localization
-this version still rests on. Its copyright notice is preserved in
+RevvyTach began as an independent open-source project called Claude Usage Tracker, which built
+the menu bar app, the profile system, the setup wizard, code signing, automatic updates, and
+the localization this version still rests on. Its copyright notice is preserved in
 [LICENSE](LICENSE).
 
 Revenium forked it at v3.0.3 to solve a problem the original didn't target: monitoring **many**
 accounts across **two** providers, with the command line following along. Codex support,
 per-provider active profiles, CLI account switching, and the menu bar work all come from this
-fork. Full history is in [CHANGELOG.md](CHANGELOG.md).
+fork. Once the app was tracking Codex as much as Claude, the old name both undersold it and
+leaned on someone else's trademark, so the project was renamed RevvyTach. Full history is in
+[CHANGELOG.md](CHANGELOG.md).
 
 Thanks to everyone who contributed upstream, whose work is still in here:
 

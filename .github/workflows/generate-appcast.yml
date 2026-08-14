@@ -60,7 +60,7 @@ jobs:
           gh release download "$RELEASE_TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --dir release \
-            --pattern 'Claude-Usage.dmg' \
+            --pattern 'RevvyTach.dmg' \
             --pattern 'appcast.xml'
 
       - name: Verify release source provenance
@@ -104,8 +104,8 @@ jobs:
             -configuration Release \
             -showBuildSettings)
           build=$(awk '/ CURRENT_PROJECT_VERSION = / { print $3; exit }' <<< "$build_settings")
-          sha256=$(shasum -a 256 release/Claude-Usage.dmg | awk '{ print $1 }')
-          artifact_url="$release_repository_url/releases/download/$RELEASE_TAG/Claude-Usage.dmg"
+          sha256=$(shasum -a 256 release/RevvyTach.dmg | awk '{ print $1 }')
+          artifact_url="$release_repository_url/releases/download/$RELEASE_TAG/RevvyTach.dmg"
 
           # GitHub computes the per-asset digest asynchronously after upload, so
           # it can be empty immediately after the release is published. Poll
@@ -116,13 +116,13 @@ jobs:
             expected_digest=$(gh release view "$RELEASE_TAG" \
               --repo "$GITHUB_REPOSITORY" \
               --json assets \
-              --jq '.assets[] | select(.name == "Claude-Usage.dmg") | .digest')
+              --jq '.assets[] | select(.name == "RevvyTach.dmg") | .digest')
             [[ -n $expected_digest ]] && break
             echo 'Waiting for GitHub to publish the release asset digest...' >&2
             sleep 5
           done
           [[ -n $expected_digest ]] || {
-            echo 'GitHub never published a digest for Claude-Usage.dmg after 60s.' >&2
+            echo 'GitHub never published a digest for RevvyTach.dmg after 60s.' >&2
             exit 1
           }
           [[ $expected_digest == "sha256:$sha256" ]] || {
@@ -153,7 +153,7 @@ jobs:
           ./scripts/verify_release_artifacts.sh \
             --require-developer-id \
             --require-notarization \
-            release/Claude-Usage.dmg \
+            release/RevvyTach.dmg \
             release/appcast.xml \
             release/release-metadata.json
 
@@ -161,9 +161,9 @@ jobs:
           mkdir -p "$mount_point"
           cleanup_mount() { hdiutil detach "$mount_point" -quiet -force 2>/dev/null || true; }
           trap cleanup_mount EXIT
-          hdiutil attach -nobrowse -readonly -mountpoint "$mount_point" release/Claude-Usage.dmg >/dev/null
+          hdiutil attach -nobrowse -readonly -mountpoint "$mount_point" release/RevvyTach.dmg >/dev/null
           embedded_key=$(defaults read \
-            "$mount_point/Claude Usage.app/Contents/Info.plist" \
+            "$mount_point/RevvyTach.app/Contents/Info.plist" \
             SUPublicEDKey)
           [[ $embedded_key == "$SPARKLE_PUBLIC_ED_KEY" ]] || {
             echo 'Published app key does not match the protected Revenium variable.' >&2
@@ -177,7 +177,7 @@ jobs:
           printf '%s' "$SPARKLE_PRIVATE_KEY" | "$sign_update" \
             --verify \
             --ed-key-file - \
-            release/Claude-Usage.dmg \
+            release/RevvyTach.dmg \
             "$signature"
 
           echo 'Published appcast and release unit verified.'

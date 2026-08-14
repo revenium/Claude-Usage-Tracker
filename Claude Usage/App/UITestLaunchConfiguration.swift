@@ -38,7 +38,7 @@ nonisolated struct UITestLaunchConfiguration: Equatable, Sendable {
     static let surfaceEnvironmentKey = "UI_TEST_SURFACE"
     static let localeEnvironmentKey = "UI_TEST_LOCALE"
     static let uiTestRunnerBundleIdentifier =
-        "com.revenium.Claude-UsageUITests.xctrunner"
+        "com.revenium.RevvyTachUITests.xctrunner"
 
     static let supportedLocales = [
         "en", "de", "es", "fr", "it", "ja", "ko", "pt", "zh-Hans"

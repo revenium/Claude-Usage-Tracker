@@ -1,14 +1,14 @@
 # Release Process
 
-Claude Usage is distributed by Revenium as one cohesive release unit:
+RevvyTach is distributed by Revenium as one cohesive release unit:
 
-- A universal `Claude Usage.app` preserving bundle ID
-  `HamedElfayome.Claude-Usage`
-- `Claude-Usage.dmg` — the only downloadable artifact; a Developer ID signed,
+- A universal `RevvyTach.app` with bundle ID
+  `com.revenium.RevvyTach`
+- `RevvyTach.dmg` — the only downloadable artifact; a Developer ID signed,
   notarized, stapled disk image containing the app plus an `Applications`
   symlink
 - `appcast.xml`
-- A generated `revenium/tap/claude-usage` Homebrew cask
+- A generated `revenium/tap/revvytach` Homebrew cask
 
 Published assets are exactly the two listed above. `release-metadata.json`
 (tag, commit, version/build, identity, URL, checksum) is still generated
@@ -23,17 +23,20 @@ it. It refuses to replace an existing release.
 
 ## Distribution identity
 
-The operational owner changed; the application identity did not.
+The app was renamed to RevvyTach in v4.0.0; on first launch the renamed app
+adopts the legacy identity's preferences and Application Support data via
+`LegacyIdentityMigrationService` (Keychain items use bundle-ID-independent
+service names and need no migration).
 
 | Property | Required value | Reason |
 | --- | --- | --- |
-| App name | `Claude Usage` | Product and on-disk compatibility |
-| Bundle ID / preference domain | `HamedElfayome.Claude-Usage` | Preserve profiles, preferences, update identity, and Keychain behavior |
+| App name | `RevvyTach` | Product identity |
+| Bundle ID / preference domain | `com.revenium.RevvyTach` | Update identity; legacy `HamedElfayome.Claude-Usage` data is adopted by first-launch migration |
 | App group | `group.com.claudeusagetracker.shared` | Preserve legacy migration access |
 | Minimum macOS | `14.0` | Existing support contract |
-| Source repository | `revenium/Claude-Usage-Tracker` | Current operational ownership |
-| Sparkle feed | `https://github.com/revenium/Claude-Usage-Tracker/releases/latest/download/appcast.xml` | Stable Revenium-owned HTTPS endpoint |
-| Homebrew cask | `revenium/tap/claude-usage` | Existing Revenium tap |
+| Source repository | `revenium/RevvyTach` | Current operational ownership |
+| Sparkle feed | `https://github.com/revenium/RevvyTach/releases/latest/download/appcast.xml` | Stable Revenium-owned HTTPS endpoint; pre-rename installs reach it through the GitHub repo-rename redirect |
+| Homebrew cask | `revenium/tap/revvytach` | Existing Revenium tap |
 
 The Developer ID team and Sparkle key are distribution credentials, not bundle
 identity. They are injected by the protected release environment and must not
@@ -46,7 +49,7 @@ explicitly from the `APPLE_TEAM_ID` Actions variable into a runner-local copy
 of the entitlements immediately before signing.
 
 The same rule applies to the `UAT` build configuration (bundle ID
-`HamedElfayome.Claude-Usage.uat`, used to run this app's own feature work
+`com.revenium.RevvyTach.uat`, used to run this app's own feature work
 against a real menu bar without touching a real installation's Keychain
 items or preferences — see `KeychainBuildVariant`/`AppBuildVariant` in
 `Claude Usage/Shared/Services/KeychainService.swift` and
@@ -165,7 +168,7 @@ that the configured identity is the intended long-term Revenium signer.
 
 ### 4. Configure the Revenium Homebrew tap
 
-`revenium/homebrew-tap` contains `Casks/claude-usage.rb` (created by the
+`revenium/homebrew-tap` contains `Casks/revvytach.rb` (created by the
 v3.1.0 release). The workflow authenticates with the `HOMEBREW_TAP_TOKEN`
 repository secret: a fine-grained token with resource owner `revenium` and
 Contents write access to only that repository. The current token
@@ -207,7 +210,7 @@ Use interactive prompts or standard input so secrets do not appear in shell
 history:
 
 ```bash
-REPO="revenium/Claude-Usage-Tracker"
+REPO="revenium/RevvyTach"
 
 gh variable set SPARKLE_PUBLIC_ED_KEY --repo "$REPO"
 gh variable set DEVELOPER_ID_APPLICATION --repo "$REPO"
@@ -287,7 +290,7 @@ CLI (works for the initial run and for any `gh run rerun`, which pauses on the
 same gate again):
 
 ```bash
-REPO="revenium/Claude-Usage-Tracker"
+REPO="revenium/RevvyTach"
 RUN_ID=$(gh run list --repo "$REPO" --workflow Release --limit 1 --json databaseId --jq '.[0].databaseId')
 ENV_ID=$(gh api "repos/$REPO/actions/runs/$RUN_ID/pending_deployments" --jq '.[0].environment.id')
 gh api "repos/$REPO/actions/runs/$RUN_ID/pending_deployments" \
@@ -298,7 +301,7 @@ gh api "repos/$REPO/actions/runs/$RUN_ID/pending_deployments" \
 Monitor:
 
 ```text
-https://github.com/revenium/Claude-Usage-Tracker/actions
+https://github.com/revenium/RevvyTach/actions
 ```
 
 The workflow performs, in order:
@@ -324,10 +327,10 @@ Download the two published assets:
 
 ```bash
 TAG="vX.Y.Z"
-mkdir -p /tmp/claude-usage-release
+mkdir -p /tmp/revvytach-release
 gh release download "$TAG" \
-  --repo revenium/Claude-Usage-Tracker \
-  --dir /tmp/claude-usage-release
+  --repo revenium/RevvyTach \
+  --dir /tmp/revvytach-release
 ```
 
 `release-metadata.json` is generated during release for cohesion checking but
@@ -343,26 +346,26 @@ version=${TAG#v}
 build=$(xcodebuild -project 'Claude Usage.xcodeproj' -target 'Claude Usage' \
   -configuration Release -showBuildSettings \
   | awk '/ CURRENT_PROJECT_VERSION = / { print $3; exit }')
-sha256=$(shasum -a 256 /tmp/claude-usage-release/Claude-Usage.dmg | awk '{ print $1 }')
+sha256=$(shasum -a 256 /tmp/revvytach-release/RevvyTach.dmg | awk '{ print $1 }')
 
 jq -n \
   --arg tag "$TAG" --arg version "$version" --arg build "$build" \
   --arg commit "$(git rev-parse HEAD)" \
-  --arg bundleIdentifier 'HamedElfayome.Claude-Usage' \
+  --arg bundleIdentifier 'com.revenium.RevvyTach' \
   --arg minimumSystemVersion '14.0' \
-  --arg artifactURL "https://github.com/revenium/Claude-Usage-Tracker/releases/download/$TAG/Claude-Usage.dmg" \
+  --arg artifactURL "https://github.com/revenium/RevvyTach/releases/download/$TAG/RevvyTach.dmg" \
   --arg sha256 "$sha256" \
   '{tag: $tag, version: $version, build: $build, commit: $commit,
     bundleIdentifier: $bundleIdentifier, minimumSystemVersion: $minimumSystemVersion,
     artifactURL: $artifactURL, sha256: $sha256}' \
-  > /tmp/claude-usage-release/release-metadata.json
+  > /tmp/revvytach-release/release-metadata.json
 
 ./scripts/verify_release_artifacts.sh \
   --require-developer-id \
   --require-notarization \
-  /tmp/claude-usage-release/Claude-Usage.dmg \
-  /tmp/claude-usage-release/appcast.xml \
-  /tmp/claude-usage-release/release-metadata.json
+  /tmp/revvytach-release/RevvyTach.dmg \
+  /tmp/revvytach-release/appcast.xml \
+  /tmp/revvytach-release/release-metadata.json
 ```
 
 The manual **Verify Published Appcast** workflow repeats this check and also
@@ -373,16 +376,16 @@ verifies the DMG's Sparkle signature with the protected signing key.
 ```bash
 brew update
 brew tap revenium/tap
-brew audit --cask --strict revenium/tap/claude-usage
-brew fetch --cask --force revenium/tap/claude-usage
-brew install --cask --dry-run --require-sha revenium/tap/claude-usage
+brew audit --cask --strict revenium/tap/revvytach
+brew fetch --cask --force revenium/tap/revvytach
+brew install --cask --dry-run --require-sha revenium/tap/revvytach
 ```
 
 On a disposable clean-machine test account, perform one real install and
 launch:
 
 ```bash
-brew install --cask revenium/tap/claude-usage
+brew install --cask revenium/tap/revvytach
 open -a "Claude Usage"
 ```
 
@@ -430,7 +433,7 @@ Do not describe a local or ad-hoc artifact as notarized.
 
 ## Provenance
 
-The binding between a published `Claude-Usage.dmg` and the commit it was built
+The binding between a published `RevvyTach.dmg` and the commit it was built
 from is established **at release time**, not by any post-hoc check:
 
 - The release builds from a fresh clone of the exact approved commit, then signs

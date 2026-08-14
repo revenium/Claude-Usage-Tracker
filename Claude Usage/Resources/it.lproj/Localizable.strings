@@ -1,6 +1,6 @@
 /*
    Localizable.strings
-   Claude Usage Tracker
+   RevvyTach
 
    Italian (Italiano)
    Created by Claude Code on 2025-12-27.
@@ -9,10 +9,10 @@
 /* ==================== */
 /* MARK: - App Info */
 /* ==================== */
-"app.name" = "Claude Usage Tracker";
-"app.window.main" = "Utilizzo di Claude";
+"app.name" = "RevvyTach";
+"app.window.main" = "RevvyTach";
 "app.window.settings" = "Impostazioni";
-"app.window.github_prompt" = "Supporta Claude Usage Tracker";
+"app.window.github_prompt" = "Supporta RevvyTach";
 
 /* ==================== */
 /* MARK: - Common Actions */
@@ -85,7 +85,7 @@
 /* MARK: - General Settings */
 /* ==================== */
 "general.launch_at_login" = "Avvia all'accesso";
-"general.launch_at_login.description" = "Avvia automaticamente Claude Usage Tracker quando accedi al tuo Mac";
+"general.launch_at_login.description" = "Avvia automaticamente RevvyTach quando accedi al tuo Mac";
 "general.refresh_interval" = "Intervallo di Aggiornamento";
 "general.refresh_interval.description" = "Intervalli più brevi forniscono dati più in tempo reale ma possono influire sulla durata della batteria";
 "general.check_overage_limit" = "Verifica Limite Utilizzo Extra";
@@ -131,7 +131,7 @@
 /* ==================== */
 /* MARK: - Setup Wizard */
 /* ==================== */
-"setup.welcome.title" = "Benvenuto in Claude Usage Tracker";
+"setup.welcome.title" = "Benvenuto in RevvyTach";
 "setup.welcome.subtitle" = "Configura l'accesso API per iniziare a monitorare l'utilizzo";
 "setup.step.get_session_key" = "Ottieni la Tua Chiave di Sessione";
 "setup.step.get_session_key.description" = "Dovrai estrarre la tua chiave di sessione da claude.ai";
@@ -165,10 +165,10 @@
 "about.report_issue" = "Segnala Problema";
 "about.send_feedback" = "Invia Feedback";
 "about.mit_license" = "Licenza MIT • Open Source";
-"about.copyright" = "© 2025-2026 Claude Usage Tracker Contributors";
+"about.copyright" = "© 2025-2026 RevvyTach Contributors";
 "about.view_licenses" = "Visualizza Licenze";
 "about.licenses_title" = "Licenze";
-"about.licenses_app_section" = "Claude Usage Tracker";
+"about.licenses_app_section" = "RevvyTach";
 "about.licenses_sparkle_section" = "Sparkle (Framework di Aggiornamento Automatico)";
 "about.licenses_unavailable" = "Testo della licenza non disponibile.";
 
@@ -269,7 +269,7 @@
 /* ==================== */
 /* MARK: - GitHub Star Prompt */
 /* ==================== */
-"github.enjoy_app" = "Ti piace Claude Usage Tracker?";
+"github.enjoy_app" = "Ti piace RevvyTach?";
 "github.star_description" = "Se questa app è stata utile, considera di metterle una stella su GitHub! Aiuta gli altri a scoprire il progetto e motiva lo sviluppo continuo.";
 "github.star_button" = "Stella su GitHub";
 "github.maybe_later" = "Forse Più Tardi";
@@ -769,7 +769,7 @@
 "history.export.json" = "Esporta come JSON";
 "history.export.csv" = "Esporta come CSV";
 "support.title" = "Supporta il Progetto";
-"support.subtitle" = "Claude Usage Tracker è gratuito e open source";
+"support.subtitle" = "RevvyTach è gratuito e open source";
 "support.all_features_free" = "Tutte le Funzionalità Sono Gratuite";
 "support.all_features_desc" = "Ogni funzionalità in questa app è completamente gratuita. Nessun livello premium, nessun paywall, nessun abbonamento.";
 "support.open_source" = "Open Source";
@@ -912,8 +912,8 @@
 
 "error.storage_write_failed" = "Impossibile salvare i dati di utilizzo";
 "error.storage_write_failed.suggestion" = "Riprova. Se il problema persiste, verifica che l'app disponga dell'autorizzazione per scrivere nella cartella dei dati.";
-"error.credential_storage_unavailable" = "Claude Usage Tracker non può usare il portachiavi di macOS";
-"error.credential_storage_unavailable.suggestion" = "Questa copia di Claude Usage Tracker non è firmata con un gruppo di accesso al portachiavi, quindi macOS le impedisce di salvare le credenziali. Installa la versione firmata dalla pagina Releases del progetto e riprova.";
+"error.credential_storage_unavailable" = "RevvyTach non può usare il portachiavi di macOS";
+"error.credential_storage_unavailable.suggestion" = "Questa copia di RevvyTach non è firmata con un gruppo di accesso al portachiavi, quindi macOS le impedisce di salvare le credenziali. Installa la versione firmata dalla pagina Releases del progetto e riprova.";
 "error.credential_storage_failed" = "Impossibile salvare la chiave di sessione nel portachiavi di macOS";
 "error.credential_storage_failed.suggestion" = "Le impostazioni esistenti non sono state modificate. Verifica che il portachiavi di accesso sia sbloccato in Accesso Portachiavi e riprova.";
 "popover.banner.credentials_not_saved" = "Credenziali non salvate (%d)";

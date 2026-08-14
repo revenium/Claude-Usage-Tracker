@@ -1,6 +1,6 @@
 # Codex subscription support
 
-Claude Usage Tracker can monitor Claude and Codex profiles side by side. Codex
+RevvyTach can monitor Claude and Codex profiles side by side. Codex
 profiles use the official Codex app-server interface and the authentication
 state already owned by a linked `CODEX_HOME`.
 
@@ -47,13 +47,13 @@ The app shows the data Codex makes available for the linked subscription:
 - Provider-reported summary metrics and daily token buckets.
 - Local usage history and JSON/CSV export.
 
-Reset credits are display-only. Claude Usage Tracker cannot redeem, consume,
+Reset credits are display-only. RevvyTach cannot redeem, consume,
 or modify them. Missing optional fields are shown as unavailable rather than
 inferred. Codex API Platform billing is intentionally excluded.
 
 ## Privacy and process boundary
 
-Claude Usage Tracker never reads, parses, copies, uploads, or stores
+RevvyTach never reads, parses, copies, uploads, or stores
 `CODEX_HOME/auth.json` or any Codex access token. For each operation it:
 
 1. Resolves one absolute `codex` executable.

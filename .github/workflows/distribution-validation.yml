@@ -80,7 +80,7 @@ jobs:
               CODE_SIGNING_REQUIRED=NO \
               CODE_SIGNING_ALLOWED=NO
 
-            info="build-$configuration/Build/Products/$configuration/Claude Usage.app/Contents/Info.plist"
+            info="build-$configuration/Build/Products/$configuration/RevvyTach.app/Contents/Info.plist"
             [[ $(defaults read "$PWD/$info" SUFeedURL) == '' ]]
             [[ $(defaults read "$PWD/$info" SUPublicEDKey) == '' ]]
             expected_channel=$(tr '[:upper:]' '[:lower:]' <<< "$configuration")

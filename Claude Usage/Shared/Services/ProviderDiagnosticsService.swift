@@ -42,7 +42,7 @@ struct ProviderDiagnosticSnapshot: Codable, Equatable, Sendable {
 
     var supportText: String {
         var lines = [
-            "Claude Usage diagnostics",
+            "RevvyTach diagnostics",
             "Generated: \(generatedAt.ISO8601Format())",
             "App version: \(appVersion)",
             "App build: \(appBuild ?? "unknown")",

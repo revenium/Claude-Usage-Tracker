@@ -126,10 +126,10 @@ feed/key defaults.
 8. Create or recover only the workflow-owned, commit-provenance-marked draft
 9. Upload, re-download, and verify the draft's exact two-asset release unit
 10. Publish that verified draft without changing its assets
-11. Audit and update `revenium/homebrew-tap/Casks/claude-usage.rb` only after publication
+11. Audit and update `revenium/homebrew-tap/Casks/revvytach.rb` only after publication
 
 **Outputs:**
-- `Claude-Usage.dmg` — the only downloadable artifact: a Developer ID signed,
+- `RevvyTach.dmg` — the only downloadable artifact: a Developer ID signed,
   notarized, stapled disk image containing the app plus an `Applications`
   symlink
 - `appcast.xml` — Sparkle feed with the disk image's Ed25519 signature
@@ -161,7 +161,7 @@ published artifacts.
 **Trigger:** Called only by a successful protected `release.yml` job; retry the
 failed reusable job from the original release run
 
-Creates/updates `Casks/claude-usage.rb` in `revenium/homebrew-tap` from the
+Creates/updates `Casks/revvytach.rb` in `revenium/homebrew-tap` from the
 published DMG's checksum, verified against the digest GitHub reports for that
 asset. It requires the checked-out tag commit to be an ancestor of `main`,
 renders and audits before exposing the tap token, then uses one
@@ -185,7 +185,7 @@ protected workflow verifies and publishes it.
 | PR builds use no code signing | Signing credentials are isolated to the protected release environment |
 | Debug build before tests | Test target needs `TEST_HOST` from Debug build |
 | 20-min timeout | Prevents hung builds from consuming minutes |
-| Bundle ID remains `HamedElfayome.Claude-Usage` | Preserves preferences, profiles, Keychain behavior, and update compatibility |
+| Bundle ID is `com.revenium.RevvyTach` | Legacy `HamedElfayome.Claude-Usage` data is adopted by first-launch migration; Keychain service names are bundle-ID-independent |
 | Local feed/key defaults are empty | Prevents development builds from consuming a production feed |
 | Production appcast is a GitHub Release asset | Keeps source, artifact, checksum, signature, and feed under Revenium ownership |
 

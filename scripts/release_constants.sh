@@ -8,6 +8,6 @@ if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
     exit 64
 fi
 
-readonly release_repository_url='https://github.com/revenium/Claude-Usage-Tracker'
+readonly release_repository_url='https://github.com/revenium/RevvyTach'
 readonly release_feed_url="$release_repository_url/releases/latest/download/appcast.xml"
-readonly release_bundle_identifier='HamedElfayome.Claude-Usage'
+readonly release_bundle_identifier='com.revenium.RevvyTach'

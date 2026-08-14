@@ -22,7 +22,7 @@ fi
 
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd "$script_dir/.." && pwd)
-template="$repo_root/distribution/homebrew/claude-usage.rb.template"
+template="$repo_root/distribution/homebrew/revvytach.rb.template"
 
 if [[ ! -f $template ]]; then
     echo "error: cask template not found: $template" >&2

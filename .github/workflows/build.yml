@@ -80,12 +80,12 @@ jobs:
       - name: Create App Bundle Artifact
         run: |
           mkdir -p artifacts
-          cp -R "build/Build/Products/Release/Claude Usage.app" artifacts/
+          cp -R "build/Build/Products/Release/RevvyTach.app" artifacts/
 
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Claude-Usage-${{ github.sha }}
+          name: RevvyTach-${{ github.sha }}
           path: artifacts/
           retention-days: 7
 

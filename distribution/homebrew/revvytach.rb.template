@@ -1,11 +1,11 @@
-cask "claude-usage" do
+cask "revvytach" do
   version "__VERSION__"
   sha256 "__SHA256__"
 
-  url "https://github.com/revenium/Claude-Usage-Tracker/releases/download/v#{version}/Claude-Usage.dmg"
-  name "Claude Usage"
+  url "https://github.com/revenium/RevvyTach/releases/download/v#{version}/RevvyTach.dmg"
+  name "RevvyTach"
   desc "Monitor Claude and Codex subscription usage from the menu bar"
-  homepage "https://github.com/revenium/Claude-Usage-Tracker"
+  homepage "https://github.com/revenium/RevvyTach"
 
   livecheck do
     url :url
@@ -15,5 +15,5 @@ cask "claude-usage" do
   auto_updates true
   depends_on macos: ">= :sonoma"
 
-  app "Claude Usage.app"
+  app "RevvyTach.app"
 end

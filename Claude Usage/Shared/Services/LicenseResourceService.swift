@@ -29,7 +29,7 @@ enum LicenseResourceService {
         BundledLicense(
             id: "app",
             sectionTitleKey: "about.licenses_app_section",
-            resourceName: "Claude-Usage-Tracker-LICENSE",
+            resourceName: "RevvyTach-LICENSE",
             resourceExtension: "txt"
         ),
         BundledLicense(

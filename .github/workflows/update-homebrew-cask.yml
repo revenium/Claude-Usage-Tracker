@@ -54,12 +54,12 @@ jobs:
           gh release download "$RELEASE_TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --dir release \
-            --pattern 'Claude-Usage.dmg'
+            --pattern 'RevvyTach.dmg'
 
           # release-metadata.json is generated during release but not published
           # (see RELEASING.md); GitHub's own per-asset digest is the integrity
           # check for the downloaded DMG instead of an unsigned sidecar file.
-          actual_sha=$(shasum -a 256 release/Claude-Usage.dmg | awk '{ print $1 }')
+          actual_sha=$(shasum -a 256 release/RevvyTach.dmg | awk '{ print $1 }')
 
           # GitHub computes the per-asset digest asynchronously after upload, so
           # it can be empty immediately after the release is published. Poll
@@ -69,13 +69,13 @@ jobs:
             expected_digest=$(gh release view "$RELEASE_TAG" \
               --repo "$GITHUB_REPOSITORY" \
               --json assets \
-              --jq '.assets[] | select(.name == "Claude-Usage.dmg") | .digest')
+              --jq '.assets[] | select(.name == "RevvyTach.dmg") | .digest')
             [[ -n $expected_digest ]] && break
             echo 'Waiting for GitHub to publish the release asset digest...' >&2
             sleep 5
           done
           [[ -n $expected_digest ]] || {
-            echo 'GitHub never published a digest for Claude-Usage.dmg after 60s.' >&2
+            echo 'GitHub never published a digest for RevvyTach.dmg after 60s.' >&2
             exit 1
           }
           [[ $expected_digest == "sha256:$actual_sha" ]] || {
@@ -99,7 +99,7 @@ jobs:
           ./source/scripts/render_homebrew_cask.sh \
             "$version" \
             "$RELEASE_SHA256" \
-            "$RUNNER_TEMP/claude-usage.rb"
+            "$RUNNER_TEMP/revvytach.rb"
 
       - name: Audit cask and resolve release artifact
         run: |
@@ -107,22 +107,22 @@ jobs:
           brew tap revenium/tap
           audit_tap=$(brew --repository revenium/tap)
           mkdir -p "$audit_tap/Casks"
-          cp "$RUNNER_TEMP/claude-usage.rb" "$audit_tap/Casks/claude-usage.rb"
+          cp "$RUNNER_TEMP/revvytach.rb" "$audit_tap/Casks/revvytach.rb"
 
-          brew audit --cask --strict revenium/tap/claude-usage
-          brew fetch --cask --force revenium/tap/claude-usage
-          brew install --cask --dry-run --require-sha revenium/tap/claude-usage
+          brew audit --cask --strict revenium/tap/revvytach
+          brew fetch --cask --force revenium/tap/revvytach
+          brew install --cask --dry-run --require-sha revenium/tap/revvytach
 
       - name: Publish cask with an optimistic SHA guard
         env:
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
           set -euo pipefail
-          endpoint='repos/revenium/homebrew-tap/contents/Casks/claude-usage.rb'
+          endpoint='repos/revenium/homebrew-tap/contents/Casks/revvytach.rb'
           current=$(gh api "$endpoint?ref=main" 2>/dev/null || true)
           current_sha=$(jq -r '.sha // empty' <<< "$current")
           current_content=$(jq -r '.content // empty' <<< "$current" | tr -d '\n')
-          desired_content=$(base64 < "$RUNNER_TEMP/claude-usage.rb" | tr -d '\n')
+          desired_content=$(base64 < "$RUNNER_TEMP/revvytach.rb" | tr -d '\n')
 
           if [[ -n $current_content && $current_content == "$desired_content" ]]; then
             echo 'Cask already matches this release.'
@@ -132,7 +132,7 @@ jobs:
           request=(
             --method PUT
             "$endpoint"
-            -f "message=Update claude-usage to $RELEASE_TAG"
+            -f "message=Update revvytach to $RELEASE_TAG"
             -f "content=$desired_content"
             -f 'branch=main'
           )
@@ -147,7 +147,7 @@ jobs:
             echo '## Revenium Homebrew cask updated'
             echo
             echo "- Release: \`$RELEASE_TAG\`"
-            echo '- Cask: `revenium/tap/claude-usage`'
+            echo '- Cask: `revenium/tap/revvytach`'
             echo '- SHA-256: `'"$RELEASE_SHA256"'`'
             echo '- `brew audit`, `brew fetch`, and dry-run install passed'
           } >> "$GITHUB_STEP_SUMMARY"

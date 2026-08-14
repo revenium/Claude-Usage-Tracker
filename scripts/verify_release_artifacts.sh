@@ -66,7 +66,7 @@ done
 
 actual_sha=$(shasum -a 256 "$dmg_path" | awk '{ print $1 }')
 
-work_dir=$(mktemp -d "${TMPDIR:-/tmp}/claude-usage-release-verify.XXXXXX")
+work_dir=$(mktemp -d "${TMPDIR:-/tmp}/revvytach-release-verify.XXXXXX")
 mount_point="$work_dir/mount"
 mkdir -p "$mount_point"
 attached=false
@@ -81,19 +81,19 @@ trap cleanup EXIT
 hdiutil attach -nobrowse -readonly -mountpoint "$mount_point" "$dmg_path" >/dev/null
 attached=true
 
-app_path="$mount_point/Claude Usage.app"
+app_path="$mount_point/RevvyTach.app"
 info_plist="$app_path/Contents/Info.plist"
 [[ -d $app_path && -f $info_plist ]] || {
-    echo 'error: DMG does not contain Claude Usage.app at its root' >&2
+    echo 'error: DMG does not contain RevvyTach.app at its root' >&2
     exit 65
 }
 
 if find "$mount_point" -mindepth 1 -maxdepth 1 \
-    ! -name 'Claude Usage.app' \
+    ! -name 'RevvyTach.app' \
     ! -name 'Applications' \
     ! -name '.*' \
     | grep -q .; then
-    echo 'error: DMG contains files outside Claude Usage.app and the Applications symlink' >&2
+    echo 'error: DMG contains files outside RevvyTach.app and the Applications symlink' >&2
     exit 65
 fi
 
@@ -142,7 +142,7 @@ printf '%s' "$public_key" | openssl base64 -d -A > "$work_dir/public-key.bin"
     exit 65
 }
 
-executable="$app_path/Contents/MacOS/Claude Usage"
+executable="$app_path/Contents/MacOS/RevvyTach"
 architectures=$(lipo -archs "$executable")
 [[ " $architectures " == *' arm64 '* && " $architectures " == *' x86_64 '* ]] || {
     echo "error: release executable is not universal: $architectures" >&2
@@ -160,7 +160,7 @@ enclosure_url=$(xpath_string '//*[local-name()="enclosure"]/@url')
 enclosure_length=$(xpath_string '//*[local-name()="enclosure"]/@length')
 signature=$(xpath_string '//*[local-name()="enclosure"]/@*[local-name()="edSignature"]')
 
-expected_download_url="$release_repository_url/releases/download/v$version/Claude-Usage.dmg"
+expected_download_url="$release_repository_url/releases/download/v$version/RevvyTach.dmg"
 actual_length=$(stat -f%z "$dmg_path")
 
 [[ $appcast_version == "$version" ]] || {

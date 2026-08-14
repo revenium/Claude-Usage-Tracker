@@ -1,6 +1,6 @@
 /*
    Localizable.strings
-   Claude Usage Tracker
+   RevvyTach
 
    简体中文 (zh-Hans)
    Created by Claude Code on 2026-01-27.
@@ -9,10 +9,10 @@
 /* ==================== */
 /* MARK: - App Info */
 /* ==================== */
-"app.name" = "Claude Usage Tracker";
-"app.window.main" = "Claude Usage";
+"app.name" = "RevvyTach";
+"app.window.main" = "RevvyTach";
 "app.window.settings" = "设置";
-"app.window.github_prompt" = "支持 Claude Usage Tracker";
+"app.window.github_prompt" = "支持 RevvyTach";
 
 /* ==================== */
 /* MARK: - Common Actions */
@@ -87,7 +87,7 @@
 /* MARK: - General Settings */
 /* ==================== */
 "general.launch_at_login" = "登录时启动";
-"general.launch_at_login.description" = "登录 Mac 时自动启动 Claude Usage Tracker";
+"general.launch_at_login.description" = "登录 Mac 时自动启动 RevvyTach";
 "general.refresh_interval" = "刷新间隔";
 "general.refresh_interval.description" = "较短的间隔提供更实时的数据，但可能影响电池寿命";
 "general.check_overage_limit" = "检查额外使用限制";
@@ -133,7 +133,7 @@
 /* ==================== */
 /* MARK: - Setup Wizard */
 /* ==================== */
-"setup.welcome.title" = "欢迎使用 Claude Usage Tracker";
+"setup.welcome.title" = "欢迎使用 RevvyTach";
 "setup.welcome.subtitle" = "配置您的 API 访问以开始跟踪使用情况";
 "setup.step.get_session_key" = "获取您的会话密钥";
 "setup.step.get_session_key.description" = "您需要从 claude.ai 提取您的会话密钥";
@@ -168,10 +168,10 @@
 "about.report_issue" = "报告问题";
 "about.send_feedback" = "发送反馈";
 "about.mit_license" = "MIT 许可证 • 开源";
-"about.copyright" = "© 2025-2026 Claude Usage Tracker Contributors";
+"about.copyright" = "© 2025-2026 RevvyTach Contributors";
 "about.view_licenses" = "查看许可证";
 "about.licenses_title" = "许可证";
-"about.licenses_app_section" = "Claude Usage Tracker";
+"about.licenses_app_section" = "RevvyTach";
 "about.licenses_sparkle_section" = "Sparkle (自动更新框架)";
 "about.licenses_unavailable" = "许可证文本不可用。";
 
@@ -285,7 +285,7 @@
 /* ==================== */
 /* MARK: - GitHub Star Prompt */
 /* ==================== */
-"github.enjoy_app" = "喜欢 Claude Usage Tracker 吗？";
+"github.enjoy_app" = "喜欢 RevvyTach 吗？";
 "github.star_description" = "如果这个应用对您有帮助，请在 GitHub 上给它标星！这有助于其他人发现项目并激励持续开发。";
 "github.star_button" = "在 GitHub 上标星";
 "github.maybe_later" = "稍后再说";
@@ -769,7 +769,7 @@
 "history.export.json" = "导出为JSON";
 "history.export.csv" = "导出为CSV";
 "support.title" = "支持项目";
-"support.subtitle" = "Claude使用量跟踪器是免费和开源的";
+"support.subtitle" = "RevvyTach是免费和开源的";
 "support.all_features_free" = "所有功能都是免费的";
 "support.all_features_desc" = "此应用中的每个功能都是完全免费的。没有高级层、没有付费墙、没有订阅。";
 "support.open_source" = "开源";
@@ -912,8 +912,8 @@
 
 "error.storage_write_failed" = "无法保存使用情况数据";
 "error.storage_write_failed.suggestion" = "请重试。如果问题仍然存在，请检查应用是否有权限写入其数据文件夹。";
-"error.credential_storage_unavailable" = "Claude Usage Tracker 无法使用 macOS 钥匙串";
-"error.credential_storage_unavailable.suggestion" = "此 Claude Usage Tracker 副本未使用钥匙串访问组签名，因此 macOS 阻止其保存凭据。请从项目的 Releases 页面安装已签名的版本，然后重试。";
+"error.credential_storage_unavailable" = "RevvyTach 无法使用 macOS 钥匙串";
+"error.credential_storage_unavailable.suggestion" = "此 RevvyTach 副本未使用钥匙串访问组签名，因此 macOS 阻止其保存凭据。请从项目的 Releases 页面安装已签名的版本，然后重试。";
 "error.credential_storage_failed" = "无法将会话密钥保存到 macOS 钥匙串";
 "error.credential_storage_failed.suggestion" = "现有设置未被更改。请在“钥匙串访问”中确认登录钥匙串已解锁，然后重试。";
 "popover.banner.credentials_not_saved" = "凭据未保存 (%d)";

@@ -309,7 +309,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         LoggingService.shared.log("AppDelegate: Created hosting controller")
 
         let window = NSWindow(contentViewController: hostingController)
-        window.title = "Claude Usage Tracker Setup"
+        window.title = "RevvyTach Setup"
         window.styleMask = [.titled, .closable, .fullSizeContentView]
         window.center()
         window.isReleasedWhenClosed = false

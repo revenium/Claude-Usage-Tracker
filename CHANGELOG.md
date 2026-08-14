@@ -1,11 +1,26 @@
 # Changelog
 
-All notable changes to Claude Usage Tracker will be documented in this file.
+All notable changes to RevvyTach (formerly Claude Usage Tracker) will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+### Changed
+
+- **The app is now RevvyTach.** Same app, new name: it has tracked Codex
+  alongside Claude for a while, so "Claude Usage Tracker" both undersold it
+  and leaned on someone else's trademark. A tachometer tells you how hard
+  the engine is revving before you hit the limiter — that's what this app
+  does for your AI subscriptions, and Revvy is Revenium's raccoon mascot.
+  On first launch the renamed app adopts your existing settings, profiles,
+  and usage history automatically; credentials stay in the Keychain
+  untouched. macOS treats the renamed app as new for privacy permissions,
+  so you will be asked to re-grant Accessibility (and notifications) once.
+  The GitHub repository moved to `revenium/RevvyTach` (old links redirect),
+  and the Homebrew cask is now `revenium/tap/revvytach` — the old
+  `claude-usage` cask is deprecated and points at it.
 
 ## [3.4.0] - 2026-08-11
 

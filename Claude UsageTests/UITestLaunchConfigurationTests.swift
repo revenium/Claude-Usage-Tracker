@@ -173,7 +173,7 @@ final class UITestLaunchConfigurationTests: XCTestCase {
             .appendingPathComponent("Library", isDirectory: true)
             .appendingPathComponent("Containers", isDirectory: true)
             .appendingPathComponent(
-                "com.revenium.Claude-UsageUITests.xctrunner",
+                "com.revenium.RevvyTachUITests.xctrunner",
                 isDirectory: true
             )
             .appendingPathComponent("Data", isDirectory: true)

@@ -1,6 +1,6 @@
-# Contributing to Claude Usage Tracker
+# Contributing to RevvyTach
 
-First off, thank you for considering contributing to Claude Usage Tracker! 🎉
+First off, thank you for considering contributing to RevvyTach! 🎉
 
 This document provides guidelines and information about contributing to this project. We welcome contributions of all kinds: bug reports, feature requests, documentation improvements, and code contributions.
 
@@ -54,13 +54,13 @@ Before you begin, ensure you have the following installed:
 
 2. **Clone your fork**
    ```bash
-   git clone https://github.com/YOUR_USERNAME/Claude-Usage-Tracker.git
-   cd Claude-Usage-Tracker
+   git clone https://github.com/YOUR_USERNAME/RevvyTach.git
+   cd RevvyTach
    ```
 
 3. **Add upstream remote**
    ```bash
-   git remote add upstream https://github.com/revenium/Claude-Usage-Tracker.git
+   git remote add upstream https://github.com/revenium/RevvyTach.git
    ```
 
 4. **Open in Xcode**
@@ -118,7 +118,7 @@ Claude Usage/
 ### Reporting Bugs
 
 Before submitting a bug report:
-1. Check existing [issues](https://github.com/revenium/Claude-Usage-Tracker/issues) to avoid duplicates
+1. Check existing [issues](https://github.com/revenium/RevvyTach/issues) to avoid duplicates
 2. Ensure you're running the latest version
 
 **When reporting a bug, include:**
@@ -127,7 +127,7 @@ Before submitting a bug report:
 - Steps to reproduce the issue
 - Expected behavior vs. actual behavior
 - Screenshots if applicable
-- Relevant Console.app logs (filter by "Claude Usage")
+- Relevant Console.app logs (filter by "RevvyTach")
 
 ### Suggesting Features
 
@@ -327,8 +327,8 @@ notarized, appcast, and Homebrew release gates, and
 
 ## Getting Help
 
-- **Questions?** Open an [Issue](https://github.com/revenium/Claude-Usage-Tracker/issues)
-- **Found a bug?** Open an [Issue](https://github.com/revenium/Claude-Usage-Tracker/issues)
+- **Questions?** Open an [Issue](https://github.com/revenium/RevvyTach/issues)
+- **Found a bug?** Open an [Issue](https://github.com/revenium/RevvyTach/issues)
 - **Need product support?** Email [support@revenium.io](mailto:support@revenium.io)
 
 ---
@@ -340,4 +340,4 @@ Contributors are recognized in:
 - Release notes for significant contributions
 - README acknowledgments for major features
 
-Thank you for helping make Claude Usage Tracker better! 🙏
+Thank you for helping make RevvyTach better! 🙏

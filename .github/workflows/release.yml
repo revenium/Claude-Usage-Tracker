@@ -13,10 +13,10 @@ permissions:
   contents: write
 
 env:
-  PRODUCT_NAME: Claude Usage
-  PRODUCT_BUNDLE_ID: HamedElfayome.Claude-Usage
-  RELEASE_ASSET: Claude-Usage.dmg
-  SPARKLE_FEED_URL: https://github.com/revenium/Claude-Usage-Tracker/releases/latest/download/appcast.xml
+  PRODUCT_NAME: RevvyTach
+  PRODUCT_BUNDLE_ID: com.revenium.RevvyTach
+  RELEASE_ASSET: RevvyTach.dmg
+  SPARKLE_FEED_URL: https://github.com/revenium/RevvyTach/releases/latest/download/appcast.xml
 
 jobs:
   release:
@@ -158,7 +158,7 @@ jobs:
           SIGNING_IDENTITY: ${{ vars.DEVELOPER_ID_APPLICATION }}
         run: |
           set -euo pipefail
-          keychain_path="$RUNNER_TEMP/claude-usage-signing.keychain-db"
+          keychain_path="$RUNNER_TEMP/revvytach-signing.keychain-db"
           keychain_password=$(uuidgen)
           certificate_path="$RUNNER_TEMP/developer-id.p12"
 
@@ -224,7 +224,7 @@ jobs:
           # phases, but signing here is a bare `codesign` call, so it is
           # resolved explicitly from the APPLE_TEAM_ID Actions variable into
           # a runner-local copy immediately before use.
-          resolved_entitlements="$RUNNER_TEMP/claude-usage-release.entitlements"
+          resolved_entitlements="$RUNNER_TEMP/revvytach-release.entitlements"
           sed "s/\$(DEVELOPMENT_TEAM)/${APPLE_TEAM_ID}/g" \
             'Claude Usage/Claude UsageRelease.entitlements' \
             > "$resolved_entitlements"
@@ -266,7 +266,7 @@ jobs:
         run: |
           set -euo pipefail
           app_path="build/Build/Products/Release/$PRODUCT_NAME.app"
-          notarization_zip="$RUNNER_TEMP/claude-usage-notarization.zip"
+          notarization_zip="$RUNNER_TEMP/revvytach-notarization.zip"
 
           ditto -c -k --keepParent "$app_path" "$notarization_zip"
           xcrun notarytool submit "$notarization_zip" \
@@ -289,7 +289,7 @@ jobs:
           app_path="build/Build/Products/Release/$PRODUCT_NAME.app"
           version=${GITHUB_REF_NAME#v}
 
-          stage_dir=$(mktemp -d "$RUNNER_TEMP/claude-usage-dmg-stage.XXXXXX")
+          stage_dir=$(mktemp -d "$RUNNER_TEMP/revvytach-dmg-stage.XXXXXX")
           cp -R "$app_path" "$stage_dir/"
           ln -s /Applications "$stage_dir/Applications"
 
@@ -348,7 +348,7 @@ jobs:
               -e 's/>/\&gt;/g' \
               release-notes.md
             printf '</pre></body></html>\n'
-          } > appcast-input/Claude-Usage.html
+          } > appcast-input/RevvyTach.html
 
       - name: Generate and verify Sparkle appcast
         env:
@@ -362,8 +362,8 @@ jobs:
 
           printf '%s' "$SPARKLE_PRIVATE_KEY" | "$generate_appcast" \
             --ed-key-file - \
-            --download-url-prefix "https://github.com/revenium/Claude-Usage-Tracker/releases/download/$GITHUB_REF_NAME/" \
-            --link "https://github.com/revenium/Claude-Usage-Tracker/releases/tag/$GITHUB_REF_NAME" \
+            --download-url-prefix "https://github.com/revenium/RevvyTach/releases/download/$GITHUB_REF_NAME/" \
+            --link "https://github.com/revenium/RevvyTach/releases/tag/$GITHUB_REF_NAME" \
             --embed-release-notes \
             --maximum-deltas 0 \
             --maximum-versions 1 \
@@ -388,7 +388,7 @@ jobs:
             "$PWD/build/Build/Products/Release/$PRODUCT_NAME.app/Contents/Info.plist" \
             CFBundleVersion)
           sha256=$(shasum -a 256 "release/$RELEASE_ASSET" | awk '{ print $1 }')
-          artifact_url="https://github.com/revenium/Claude-Usage-Tracker/releases/download/$GITHUB_REF_NAME/$RELEASE_ASSET"
+          artifact_url="https://github.com/revenium/RevvyTach/releases/download/$GITHUB_REF_NAME/$RELEASE_ASSET"
 
           jq -n \
             --arg tag "$GITHUB_REF_NAME" \
@@ -471,7 +471,7 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --json isDraft,assets \
             --jq 'select(.isDraft == true) | [.assets[].name] | sort | join("\n")')
-          expected_names=$'Claude-Usage.dmg\nappcast.xml'
+          expected_names=$'RevvyTach.dmg\nappcast.xml'
           [[ $asset_names == "$expected_names" ]] || {
             echo 'Draft release does not contain the exact cohesive asset set.' >&2
             exit 1

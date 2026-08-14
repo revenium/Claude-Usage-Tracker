@@ -2,10 +2,10 @@
 
 ## Supported versions
 
-Revenium provides security fixes for the latest stable release of Claude Usage.
+Revenium provides security fixes for the latest stable release of RevvyTach.
 Install the current version from:
 
-- [Revenium GitHub Releases](https://github.com/revenium/Claude-Usage-Tracker/releases/latest)
+- [Revenium GitHub Releases](https://github.com/revenium/RevvyTach/releases/latest)
 - [Revenium Homebrew tap](https://github.com/revenium/homebrew-tap)
 
 ## Report a vulnerability privately
@@ -13,7 +13,7 @@ Install the current version from:
 Do not open a public issue for a suspected vulnerability.
 
 Use the repository's
-[private security advisory form](https://github.com/revenium/Claude-Usage-Tracker/security/advisories/new).
+[private security advisory form](https://github.com/revenium/RevvyTach/security/advisories/new).
 If GitHub advisories are unavailable, email
 [support@revenium.io](mailto:support@revenium.io) with:
 
@@ -28,7 +28,7 @@ and credit the reporter when requested and appropriate.
 
 ## Sensitive data
 
-Claude Usage handles account credentials and local usage state:
+RevvyTach handles account credentials and local usage state:
 
 - Claude and API secrets are stored in macOS Keychain.
 - Codex authentication files are read through supported local tooling; the app
@@ -59,7 +59,7 @@ Official releases are:
 The production Sparkle feed is:
 
 ```text
-https://github.com/revenium/Claude-Usage-Tracker/releases/latest/download/appcast.xml
+https://github.com/revenium/RevvyTach/releases/latest/download/appcast.xml
 ```
 
 Debug and ordinary local Release builds contain no feed or Sparkle public key,
@@ -69,15 +69,15 @@ See [RELEASING.md](RELEASING.md) for the executable verification checklist.
 
 ## Verify a downloaded release
 
-Download `Claude-Usage.dmg` from the release, then:
+Download `RevvyTach.dmg` from the release, then:
 
 1. Compare its checksum to the digest GitHub reports for that asset (shown on
    the release page, or via `gh release view <tag> --json assets`):
 
    ```bash
-   shasum -a 256 Claude-Usage.dmg
-   gh release view vX.Y.Z --repo revenium/Claude-Usage-Tracker \
-     --json assets --jq '.assets[] | select(.name == "Claude-Usage.dmg") | .digest'
+   shasum -a 256 RevvyTach.dmg
+   gh release view vX.Y.Z --repo revenium/RevvyTach \
+     --json assets --jq '.assets[] | select(.name == "RevvyTach.dmg") | .digest'
    ```
 
    The two SHA-256 values must match.
@@ -88,13 +88,13 @@ Download `Claude-Usage.dmg` from the release, then:
    verify the container, not just its payload:
 
    ```bash
-   xcrun stapler validate Claude-Usage.dmg
+   xcrun stapler validate RevvyTach.dmg
    spctl --assess --type open --context context:primary-signature \
-     --verbose=4 Claude-Usage.dmg
+     --verbose=4 RevvyTach.dmg
 
-   mount_point=$(hdiutil attach -nobrowse -readonly Claude-Usage.dmg \
+   mount_point=$(hdiutil attach -nobrowse -readonly RevvyTach.dmg \
      | awk -F'\t' '/\/Volumes\// { print $NF; exit }')
-   app_path="$mount_point/Claude Usage.app"
+   app_path="$mount_point/RevvyTach.app"
 
    codesign --verify --deep --strict --verbose=2 "$app_path"
    xcrun stapler validate "$app_path"
@@ -106,4 +106,4 @@ Download `Claude-Usage.dmg` from the release, then:
    All five checks must pass before you trust and launch the app.
 
 For non-security bugs, use
-[Revenium GitHub Issues](https://github.com/revenium/Claude-Usage-Tracker/issues).
+[Revenium GitHub Issues](https://github.com/revenium/RevvyTach/issues).

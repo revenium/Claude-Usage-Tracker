@@ -1,6 +1,6 @@
 /*
    Localizable.strings
-   Claude Usage Tracker
+   RevvyTach
 
    Korean (한국어)
    Created by Claude Code on 2026-01-11.
@@ -9,10 +9,10 @@
 /* ==================== */
 /* MARK: - App Info */
 /* ==================== */
-"app.name" = "Claude 사용량 추적기";
-"app.window.main" = "Claude 사용량";
+"app.name" = "RevvyTach";
+"app.window.main" = "RevvyTach";
 "app.window.settings" = "설정";
-"app.window.github_prompt" = "Claude Usage Tracker 지원하기";
+"app.window.github_prompt" = "RevvyTach 지원하기";
 
 /* ==================== */
 /* MARK: - Common Actions */
@@ -427,7 +427,7 @@
 /* ==================== */
 /* MARK: - GitHub Star Prompt */
 /* ==================== */
-"github.enjoy_app" = "Claude 사용량 추적기가 마음에 드시나요?";
+"github.enjoy_app" = "RevvyTach가 마음에 드시나요?";
 "github.star_description" = "이 앱이 도움이 되었다면 GitHub에서 스타를 주는 것을 고려해주세요! 다른 사람들이 프로젝트를 발견하는 데 도움이 되며 지속적인 개발의 동기가 됩니다.";
 "github.star_button" = "GitHub에서 스타 주기";
 "github.maybe_later" = "나중에";
@@ -459,11 +459,11 @@
 "about.report_issue" = "이슈 신고";
 "about.send_feedback" = "피드백 보내기";
 "about.check_updates" = "업데이트 확인";
-"about.copyright" = "© 2025-2026 Claude Usage Tracker Contributors";
+"about.copyright" = "© 2025-2026 RevvyTach Contributors";
 "about.mit_license" = "MIT 라이선스 • 오픈 소스";
 "about.view_licenses" = "라이선스 보기";
 "about.licenses_title" = "라이선스";
-"about.licenses_app_section" = "Claude Usage Tracker";
+"about.licenses_app_section" = "RevvyTach";
 "about.licenses_sparkle_section" = "Sparkle (자동 업데이트 프레임워크)";
 "about.licenses_unavailable" = "라이선스 텍스트를 사용할 수 없습니다.";
 "about.run_setup_wizard" = "설정 마법사 실행";
@@ -489,7 +489,7 @@
 /* ==================== */
 /* MARK: - Setup Wizard (Additional) */
 /* ==================== */
-"setup.welcome.title" = "Claude 사용량 추적기에 오신 것을 환영합니다";
+"setup.welcome.title" = "RevvyTach에 오신 것을 환영합니다";
 "setup.welcome.subtitle" = "사용량 추적을 시작하려면 API 액세스를 구성하세요";
 "setup.step.get_session_key" = "세션 키 받기";
 "setup.step.get_session_key.description" = "claude.ai에서 세션 키를 추출해야 합니다";
@@ -543,7 +543,7 @@
 /* MARK: - General Settings (Additional) */
 /* ==================== */
 "general.launch_at_login" = "로그인 시 실행";
-"general.launch_at_login.description" = "Mac에 로그인할 때 자동으로 Claude 사용량 추적기 시작";
+"general.launch_at_login.description" = "Mac에 로그인할 때 자동으로 RevvyTach 시작";
 "general.refresh_interval" = "새로고침 간격";
 "general.refresh_interval.description" = "짧은 간격은 실시간 데이터를 제공하지만 배터리 수명에 영향을 줄 수 있습니다";
 "general.check_overage_limit" = "추가 사용량 한도 확인";
@@ -749,7 +749,7 @@
 "history.export.json" = "JSON으로 내보내기";
 "history.export.csv" = "CSV로 내보내기";
 "support.title" = "프로젝트 지원";
-"support.subtitle" = "Claude 사용량 추적기는 무료이며 오픈 소스입니다";
+"support.subtitle" = "RevvyTach는 무료이며 오픈 소스입니다";
 "support.all_features_free" = "모든 기능이 무료";
 "support.all_features_desc" = "이 앱의 모든 기능은 완전히 무료입니다. 프리미엄 계층, 유료 장벽, 구독이 없습니다.";
 "support.open_source" = "오픈 소스";
@@ -892,8 +892,8 @@
 
 "error.storage_write_failed" = "사용량 데이터를 저장할 수 없음";
 "error.storage_write_failed.suggestion" = "다시 시도하세요. 문제가 계속되면 앱에 데이터 폴더 쓰기 권한이 있는지 확인하세요.";
-"error.credential_storage_unavailable" = "Claude Usage Tracker가 macOS 키체인을 사용할 수 없습니다";
-"error.credential_storage_unavailable.suggestion" = "이 Claude Usage Tracker 사본은 키체인 접근 그룹으로 서명되지 않아 macOS가 자격 증명 저장을 차단합니다. 프로젝트의 Releases 페이지에서 서명된 버전을 설치한 후 다시 시도하세요.";
+"error.credential_storage_unavailable" = "RevvyTach가 macOS 키체인을 사용할 수 없습니다";
+"error.credential_storage_unavailable.suggestion" = "이 RevvyTach 사본은 키체인 접근 그룹으로 서명되지 않아 macOS가 자격 증명 저장을 차단합니다. 프로젝트의 Releases 페이지에서 서명된 버전을 설치한 후 다시 시도하세요.";
 "error.credential_storage_failed" = "세션 키를 macOS 키체인에 저장하지 못했습니다";
 "error.credential_storage_failed.suggestion" = "기존 설정은 변경되지 않았습니다. 키체인 접근에서 로그인 키체인이 잠금 해제되어 있는지 확인한 후 다시 시도하세요.";
 "popover.banner.credentials_not_saved" = "자격 증명이 저장되지 않음 (%d)";
