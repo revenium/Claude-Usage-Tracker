@@ -159,6 +159,30 @@ final class KeychainOwnershipAdoptionServiceTests: XCTestCase {
         XCTAssertTrue(store.accountsIn(backupService).isEmpty)
         XCTAssertTrue(markerSet)
     }
+
+    func testInterruptedSwapRestoreFailurePreservesBackupAndRetries() {
+        // A previous launch crashed after delete but before re-add, and the
+        // restore itself now fails too: the backup is the only surviving
+        // copy and must not be deleted.
+        store.seed(service: backupService, account: "a", value: "recovered")
+        store.failAddsToServices = [service]
+
+        makeService().adoptIfNeeded()
+
+        XCTAssertEqual(
+            store.value(service: backupService, account: "a"), "recovered"
+        )
+        XCTAssertFalse(markerSet)
+
+        // Next launch, with the Keychain healthy again, finishes the
+        // restore.
+        store.failAddsToServices = []
+        makeService().adoptIfNeeded()
+
+        XCTAssertEqual(store.value(service: service, account: "a"), "recovered")
+        XCTAssertTrue(store.accountsIn(backupService).isEmpty)
+        XCTAssertTrue(markerSet)
+    }
 }
 
 // MARK: - Fake store

@@ -90,7 +90,20 @@ nonisolated final class KeychainOwnershipAdoptionService {
                 service: service, account: account
             )) ?? nil
             if original == nil {
-                try? store.add(value, service: service, account: account)
+                do {
+                    try store.add(value, service: service, account: account)
+                } catch {
+                    // The backup is the only surviving copy; keep it and
+                    // retry on the next launch rather than deleting it.
+                    allAdopted = false
+                    LoggingService.shared.logError(
+                        "Keychain ownership adoption could not restore an"
+                            + " interrupted swap; the backup is kept for"
+                            + " the next launch",
+                        error: error
+                    )
+                    continue
+                }
             }
             try? store.delete(service: backupService, account: account)
         }
