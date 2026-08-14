@@ -162,6 +162,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             // Initialize menu bar with active profile
             menuBarManager = makeMenuBarManager()
             menuBarManager?.setup()
+            // A menu-bar-only launch must not be silent: briefly confirm the
+            // app started and point the user at the menu bar.
+            LaunchSplashPresenter.shared.show()
         } else {
             showSetupWizardManually()
             // Mark that wizard has been shown once
@@ -230,6 +233,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         return environment["XCTestConfigurationFilePath"] != nil
             || environment["XCTestBundlePath"] != nil
             || NSClassFromString("XCTestCase") != nil
+    }
+
+    /// Double-clicking the app while it is already running must not be
+    /// silent either: with no window to bring forward, re-show the launch
+    /// card so the user is pointed back at the menu bar.
+    func applicationShouldHandleReopen(
+        _ sender: NSApplication,
+        hasVisibleWindows flag: Bool
+    ) -> Bool {
+        if !flag, setupWindow == nil, menuBarManager != nil {
+            LaunchSplashPresenter.shared.show()
+        }
+        return true
     }
 
     private func requestNotificationPermissions() {
@@ -337,6 +353,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
                     self?.menuBarManager =
                         self?.makeMenuBarManager()
                     self?.menuBarManager?.setup()
+                    // The wizard just closed and the status item has only
+                    // now appeared — point the user at it.
+                    LaunchSplashPresenter.shared.show()
                 }
             }
         }

@@ -1233,3 +1233,6 @@
 "profiles.accessibility.inactive" = "Inactif";
 "profiles.rename_failed_message" = "Impossible de renommer ce profil. Réessayez.";
 "profiles.delete_failed_message" = "Impossible de supprimer ce profil. Réessayez.";
+
+// Launch splash
+"launch.splash.running" = "En cours d'exécution dans la barre de menus";

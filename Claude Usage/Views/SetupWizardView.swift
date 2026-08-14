@@ -365,20 +365,23 @@ struct SetupProviderChoiceView: View {
     let onSelectCodex: () -> Void
 
     var body: some View {
-        VStack(spacing: 24) {
+        VStack(spacing: 0) {
+            Spacer(minLength: 28)
+
             Image("WizardLogo")
                 .resizable()
                 .aspectRatio(contentMode: .fit)
-                .frame(width: 80, height: 80)
+                .frame(width: 128, height: 128)
+                .padding(.bottom, 30)
 
-            VStack(spacing: 8) {
+            VStack(spacing: 10) {
                 Text(
                     ProviderUILocalization.text(
                         "setup.provider.title",
                         fallback: "Choose a Usage Provider"
                     )
                 )
-                .font(.system(size: 24, weight: .semibold))
+                .font(.system(size: 27, weight: .semibold))
                 Text(
                     ProviderUILocalization.text(
                         "setup.provider.subtitle",
@@ -386,12 +389,14 @@ struct SetupProviderChoiceView: View {
                             "Profiles keep provider accounts and usage separate. You can add both Claude and Codex profiles."
                     )
                 )
-                .font(.system(size: 13))
+                .font(.system(size: 14))
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
+                .frame(maxWidth: 430)
             }
+            .padding(.bottom, 36)
 
-            HStack(spacing: 16) {
+            HStack(spacing: 20) {
                 providerButton(
                     title: ProviderUILocalization.text(
                         "setup.provider.claude_title",
@@ -437,12 +442,15 @@ struct SetupProviderChoiceView: View {
                 )
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
+                .padding(.top, 16)
                 .accessibilityIdentifier(
                     ProviderUIAccessibility.capabilityDisabled
                 )
             }
+
+            Spacer(minLength: 28)
         }
-        .padding(40)
+        .padding(.horizontal, 40)
         .frame(width: 580, height: 680)
     }
 
@@ -454,24 +462,67 @@ struct SetupProviderChoiceView: View {
         identifier: String,
         action: @escaping () -> Void
     ) -> some View {
+        ProviderChoiceCard(
+            title: title,
+            subtitle: subtitle,
+            icon: icon,
+            enabled: enabled,
+            identifier: identifier,
+            action: action
+        )
+    }
+}
+
+/// One provider card in the setup wizard's provider-choice screen. A struct
+/// rather than a builder function so each card can hold its own hover state.
+private struct ProviderChoiceCard: View {
+    let title: String
+    let subtitle: String
+    let icon: String
+    let enabled: Bool
+    let identifier: String
+    let action: () -> Void
+
+    @State private var isHovering = false
+
+    var body: some View {
         Button(action: action) {
-            VStack(spacing: 12) {
+            VStack(spacing: 14) {
                 Image(systemName: icon)
-                    .font(.system(size: 30))
+                    .font(.system(size: 36, weight: .medium))
+                    .frame(height: 42)
                 Text(title)
-                    .font(.system(size: 17, weight: .semibold))
+                    .font(.system(size: 20, weight: .semibold))
                 Text(subtitle)
-                    .font(.system(size: 11))
+                    .font(.system(size: 12))
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 18)
             }
-            .frame(width: 205, height: 150)
+            .frame(width: 240, height: 210)
             .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color.primary.opacity(0.05))
+                RoundedRectangle(cornerRadius: 14)
+                    .fill(
+                        Color.primary.opacity(
+                            isHovering && enabled ? 0.10 : 0.05
+                        )
+                    )
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 14)
+                    .strokeBorder(
+                        Color.accentColor.opacity(
+                            isHovering && enabled ? 0.8 : 0
+                        ),
+                        lineWidth: 1.5
+                    )
             )
         }
         .buttonStyle(.plain)
+        .contentShape(RoundedRectangle(cornerRadius: 14))
+        .onHover { isHovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: isHovering)
         .disabled(!enabled)
         .opacity(enabled ? 1 : 0.55)
         .accessibilityIdentifier(identifier)

@@ -1249,3 +1249,6 @@
 "profiles.accessibility.inactive" = "非活跃";
 "profiles.rename_failed_message" = "无法重命名此配置文件。请重试。";
 "profiles.delete_failed_message" = "无法删除此配置文件。请重试。";
+
+// Launch splash
+"launch.splash.running" = "正在菜单栏中运行";

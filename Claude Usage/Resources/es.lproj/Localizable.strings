@@ -1236,3 +1236,6 @@
 "profiles.accessibility.inactive" = "Inactivo";
 "profiles.rename_failed_message" = "No se pudo cambiar el nombre de este perfil. Inténtalo de nuevo.";
 "profiles.delete_failed_message" = "No se pudo eliminar este perfil. Inténtalo de nuevo.";
+
+// Launch splash
+"launch.splash.running" = "Ejecutándose en la barra de menús";
