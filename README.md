@@ -17,7 +17,7 @@
 > → **[What is Revenium Labs?](https://github.com/revenium/.github/blob/main/LABS.md)**
 
 <div align="center">
-  <img src=".github/cover.jpg" alt="RevvyTach" width="100%">
+  <img src=".github/revvytach-icon.png" alt="RevvyTach — Revvy the raccoon at the hub of a rev-counter gauge" width="200">
 
   **A native macOS menu bar app for people running more than one Claude or Codex account**
 
