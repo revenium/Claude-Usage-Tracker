@@ -17,14 +17,86 @@ struct Contributor: Codable, Identifiable {
     }
 }
 
-/// Service for fetching GitHub repository contributors
+/// Service for fetching GitHub repository contributors.
+///
+/// Contributor lists barely change, but the anonymous GitHub API allows only
+/// 60 requests/hour per IP — a rate-limited 403 used to surface as "Could not
+/// load contributors" in the About screen. Successful fetches are therefore
+/// cached in `UserDefaults`; a fresh cache (under 24h) short-circuits the
+/// network entirely, and when the network fails a stale cache of any age is
+/// shown instead of an error. Only a failure with no cache at all still
+/// surfaces as one.
 class GitHubService {
     static let shared = GitHubService()
 
-    private init() {}
+    static let cacheKey = "githubContributorsCache.v1"
+    static let cacheTimestampKey = "githubContributorsCacheTimestamp.v1"
+    private static let cacheLifetime: TimeInterval = 24 * 60 * 60
 
-    /// Fetches contributors from the GitHub repository
+    private let defaults: UserDefaults
+    private let remoteFetch: () async throws -> [Contributor]
+    private let now: () -> Date
+
+    /// Internal for deterministic tests; production uses `shared`.
+    init(
+        defaults: UserDefaults = .standard,
+        remoteFetch: (() async throws -> [Contributor])? = nil,
+        now: @escaping () -> Date = Date.init
+    ) {
+        self.defaults = defaults
+        self.remoteFetch = remoteFetch ?? Self.fetchContributorsFromAPI
+        self.now = now
+    }
+
+    /// Fetches contributors, preferring a fresh cache and falling back to a
+    /// stale one when the network or the API quota fails.
     func fetchContributors() async throws -> [Contributor] {
+        if let cached = cachedContributors(maxAge: Self.cacheLifetime) {
+            return cached
+        }
+        do {
+            let contributors = try await remoteFetch()
+            storeCache(contributors)
+            return contributors
+        } catch {
+            if let stale = cachedContributors(maxAge: nil) {
+                return stale
+            }
+            throw error
+        }
+    }
+
+    private func cachedContributors(maxAge: TimeInterval?) -> [Contributor]? {
+        guard let data = defaults.data(forKey: Self.cacheKey),
+            let contributors = try? JSONDecoder()
+                .decode([Contributor].self, from: data),
+            !contributors.isEmpty
+        else {
+            return nil
+        }
+        if let maxAge {
+            let stamp = defaults.double(forKey: Self.cacheTimestampKey)
+            guard stamp > 0,
+                now().timeIntervalSince1970 - stamp <= maxAge
+            else {
+                return nil
+            }
+        }
+        return contributors
+    }
+
+    private func storeCache(_ contributors: [Contributor]) {
+        guard let data = try? JSONEncoder().encode(contributors) else {
+            return
+        }
+        defaults.set(data, forKey: Self.cacheKey)
+        defaults.set(
+            now().timeIntervalSince1970,
+            forKey: Self.cacheTimestampKey
+        )
+    }
+
+    private static func fetchContributorsFromAPI() async throws -> [Contributor] {
         let urlString = "https://api.github.com/repos/\(Constants.GitHub.owner)/\(Constants.GitHub.repo)/contributors"
 
         guard let url = URL(string: urlString) else {
