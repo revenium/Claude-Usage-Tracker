@@ -104,8 +104,14 @@ private struct LaunchSplashView: View {
             Text("launch.splash.running".localized)
                 .font(.system(size: 13))
                 .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(.horizontal, 44)
+        // Fixed width: the panel is sized from a pre-layout fitting pass,
+        // which under-measures free-width text and truncates it. Wide enough
+        // for every locale's subtitle on one or two centered lines.
+        .frame(width: 260)
+        .padding(.horizontal, 30)
         .padding(.vertical, 30)
         .background(
             RoundedRectangle(cornerRadius: 20)
