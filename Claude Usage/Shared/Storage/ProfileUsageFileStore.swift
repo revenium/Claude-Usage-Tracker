@@ -118,7 +118,7 @@ nonisolated final class ProfileUsageFileStore: @unchecked Sendable {
                 .appendingPathComponent("Library/Application Support", isDirectory: true)
             rootURL = applicationSupport
                 .appendingPathComponent(
-                    "Claude Usage" + AppBuildVariant.pathSuffix,
+                    AppIdentity.appSupportFolderName + AppBuildVariant.pathSuffix,
                     isDirectory: true
                 )
                 .appendingPathComponent("profile-data", isDirectory: true)

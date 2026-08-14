@@ -80,6 +80,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         return
 #endif
 
+        // Adopt data written under the app's pre-rename identity before
+        // anything below reads UserDefaults or Application Support — the
+        // status-item position sanitizer and profile migration both consume
+        // values this import provides. A production no-op until the bundle
+        // identifier actually changes (see AppIdentity).
+        LegacyIdentityMigrationService.shared.migrateIfNeeded()
+
         // Disable window restoration for menu bar app
         UserDefaults.standard.set(false, forKey: "NSQuitAlwaysKeepsWindows")
 

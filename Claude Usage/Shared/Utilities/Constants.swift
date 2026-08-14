@@ -23,6 +23,27 @@ enum AppBuildVariant {
     static let pathSuffix: String = isUAT ? " UAT" : ""
 }
 
+/// The app's on-disk identity, and the identity it shipped under before the
+/// RevvyTach rename.
+///
+/// The rename lands by changing `appSupportFolderName` (and the bundle
+/// identifier in the Xcode project) while the `legacy*` values stay frozen
+/// forever — `LegacyIdentityMigrationService` uses them to adopt data written
+/// by pre-rename releases. While `appSupportFolderName` still equals
+/// `legacyAppSupportFolderName` the migration service is a production no-op.
+enum AppIdentity {
+    /// Current Application Support folder name (before the UAT path suffix).
+    static let appSupportFolderName = "Claude Usage"
+
+    /// Bundle identifier base every pre-rename release shipped under
+    /// (the UAT variant appends ".uat"). Frozen; never edit.
+    static let legacyBundleIdentifierBase = "HamedElfayome.Claude-Usage"
+
+    /// Application Support folder name every pre-rename release wrote to
+    /// (before the UAT path suffix). Frozen; never edit.
+    static let legacyAppSupportFolderName = "Claude Usage"
+}
+
 /// Application-wide constants
 enum Constants {
     // App Group identifier for sharing data between app and widgets

@@ -63,7 +63,7 @@ final class NetworkLoggerService: ObservableObject {
             in: .userDomainMask
         ).first!
         let appDirectory = appSupport.appendingPathComponent(
-            "Claude Usage" + AppBuildVariant.pathSuffix
+            AppIdentity.appSupportFolderName + AppBuildVariant.pathSuffix
         )
 
         // Create directory if needed
