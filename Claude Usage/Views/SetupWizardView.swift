@@ -366,13 +366,13 @@ struct SetupProviderChoiceView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Spacer(minLength: 28)
+            Spacer(minLength: 16)
 
             Image("WizardLogo")
                 .resizable()
                 .aspectRatio(contentMode: .fit)
-                .frame(width: 128, height: 128)
-                .padding(.bottom, 30)
+                .frame(width: 180, height: 180)
+                .padding(.bottom, 26)
 
             VStack(spacing: 10) {
                 Text(
@@ -394,7 +394,7 @@ struct SetupProviderChoiceView: View {
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 430)
             }
-            .padding(.bottom, 36)
+            .padding(.bottom, 30)
 
             HStack(spacing: 20) {
                 providerButton(
@@ -448,7 +448,7 @@ struct SetupProviderChoiceView: View {
                 )
             }
 
-            Spacer(minLength: 28)
+            Spacer(minLength: 16)
         }
         .padding(.horizontal, 40)
         .frame(width: 580, height: 680)

@@ -1179,6 +1179,34 @@ final class ProfileProviderCoreTests: HostedAppTestCase {
             return true
         })
         XCTAssertEqual(probeCount, 0)
+
+        // A credential-less Claude profile must not re-enter the wizard once
+        // setup has been completed — it launches to the menu bar's
+        // no-credential state instead. Before completion, the CLI probe
+        // still decides.
+        let credentialLessClaude = Profile(
+            name: "Claude",
+            providerConfiguration: .claude
+        )
+        XCTAssertFalse(SetupWizardDecision.shouldShow(
+            hasShownWizardOnce: true,
+            hasCompletedSetup: true,
+            activeProfile: credentialLessClaude
+        ) {
+            probeCount += 1
+            return false
+        })
+        XCTAssertEqual(probeCount, 0)
+        XCTAssertTrue(SetupWizardDecision.shouldShow(
+            hasShownWizardOnce: true,
+            hasCompletedSetup: false,
+            activeProfile: credentialLessClaude
+        ) {
+            probeCount += 1
+            return false
+        })
+        XCTAssertEqual(probeCount, 1)
+
         XCTAssertFalse(
             SetupWizardDecision.canPresentLegacyWizard(
                 activeProfile: linked

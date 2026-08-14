@@ -28,6 +28,14 @@ struct SetupWizardDecision {
             if activeProfile.hasAnyCredentials {
                 return false
             }
+            // Setup has already been completed once: never force the wizard
+            // again. A credential-less profile launches to the menu bar's
+            // no-credential state (the app-logo status icon), where
+            // credentials can be re-added — being walked back through
+            // first-run setup on every launch is not it.
+            if hasCompletedSetup {
+                return false
+            }
             return !hasValidClaudeCLI()
         }
     }
