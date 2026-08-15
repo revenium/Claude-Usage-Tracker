@@ -926,6 +926,12 @@
 "quit.credentials_unsaved.title" = "認証情報を保存できませんでした";
 "quit.credentials_unsaved.body" = "終了すると再入力が必要になります。";
 "quit.credentials_unsaved.quit" = "終了する";
+"relocation.prompt.title" = "まだ古い名前でインストールされています";
+"relocation.prompt.body" = "このアプリは次の場所に古い名前のままインストールされています:\n%1$@\n\n次の場所に移動できます:\n%2$@\n\n移動後、macOSがアクセシビリティの許可を再度求めることがあります。";
+"relocation.prompt.finish" = "名前の変更を完了";
+"relocation.prompt.not_now" = "今はしない";
+"relocation.abort.title" = "移動を完了できませんでした";
+"relocation.abort.body" = "次の場所には別のアプリがすでにインストールされています:\n%1$@\n\n何も変更されていません。";
 "setup.use_session_only" = "このセッションのみ使用";
 
 /* ==================== */

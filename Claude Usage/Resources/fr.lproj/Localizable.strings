@@ -906,6 +906,12 @@
 "quit.credentials_unsaved.title" = "Impossible d’enregistrer les identifiants";
 "quit.credentials_unsaved.body" = "En quittant, il faudra les saisir à nouveau.";
 "quit.credentials_unsaved.quit" = "Quitter quand même";
+"relocation.prompt.title" = "Toujours installée sous son ancien nom";
+"relocation.prompt.body" = "Cette application est encore installée sous :\n%1$@\n\nElle peut être déplacée vers :\n%2$@\n\nAprès le déplacement, macOS peut vous redemander l'autorisation Accessibilité.";
+"relocation.prompt.finish" = "Terminer le renommage";
+"relocation.prompt.not_now" = "Pas maintenant";
+"relocation.abort.title" = "Impossible de terminer le déplacement";
+"relocation.abort.body" = "Une autre application est déjà installée à :\n%1$@\n\nRien n'a été modifié.";
 "setup.use_session_only" = "Utiliser pour cette session uniquement";
 
 /* ==================== */

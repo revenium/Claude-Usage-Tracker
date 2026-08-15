@@ -1018,6 +1018,12 @@
 "quit.credentials_unsaved.title" = "Credentials couldn’t be saved";
 "quit.credentials_unsaved.body" = "Quitting will require entering them again.";
 "quit.credentials_unsaved.quit" = "Quit Anyway";
+"relocation.prompt.title" = "Still installed under its old name";
+"relocation.prompt.body" = "This app is still installed as:\n%1$@\n\nIt can be moved to:\n%2$@\n\nAfter moving, macOS may ask you to re-grant Accessibility permission.";
+"relocation.prompt.finish" = "Finish Rename";
+"relocation.prompt.not_now" = "Not Now";
+"relocation.abort.title" = "Couldn’t finish the move";
+"relocation.abort.body" = "Another app is already installed at:\n%1$@\n\nNothing was changed.";
 "setup.use_session_only" = "Use for this session only";
 
 /* ==================== */

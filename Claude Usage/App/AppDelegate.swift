@@ -102,6 +102,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         // identifier changes.
         KeychainOwnershipAdoptionService.shared.adoptIfNeeded()
 
+        // Offer to move the app bundle itself if it is still installed
+        // under its pre-rename filename — Sparkle updates install to
+        // host.bundlePath, so an in-place update from a 3.x install never
+        // relocates the .app on disk even though its contents, icon, and
+        // bundle identifier are all correctly RevvyTach. Runs after
+        // identity/keychain adoption above so those complete first, and is
+        // a production no-op until the bundle identifier actually changes
+        // or the app is already at its correct filename.
+        LegacyBundleRelocationService.shared.relocateIfNeeded()
+
         // Disable window restoration for menu bar app
         UserDefaults.standard.set(false, forKey: "NSQuitAlwaysKeepsWindows")
 

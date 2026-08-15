@@ -909,6 +909,12 @@
 "quit.credentials_unsaved.title" = "No se pudieron guardar las credenciales";
 "quit.credentials_unsaved.body" = "Al salir tendrás que volver a introducirlas.";
 "quit.credentials_unsaved.quit" = "Salir de todos modos";
+"relocation.prompt.title" = "Todavía instalada con su nombre anterior";
+"relocation.prompt.body" = "Esta app todavía está instalada como:\n%1$@\n\nSe puede mover a:\n%2$@\n\nDespués de moverla, macOS puede pedirte que vuelvas a conceder el permiso de Accesibilidad.";
+"relocation.prompt.finish" = "Finalizar cambio de nombre";
+"relocation.prompt.not_now" = "Ahora no";
+"relocation.abort.title" = "No se pudo completar el traslado";
+"relocation.abort.body" = "Ya hay otra app instalada en:\n%1$@\n\nNo se cambió nada.";
 "setup.use_session_only" = "Usar solo en esta sesión";
 
 /* ==================== */

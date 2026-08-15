@@ -904,6 +904,12 @@
 "quit.credentials_unsaved.title" = "자격 증명을 저장하지 못했습니다";
 "quit.credentials_unsaved.body" = "종료하면 다시 입력해야 합니다.";
 "quit.credentials_unsaved.quit" = "그래도 종료";
+"relocation.prompt.title" = "아직 이전 이름으로 설치되어 있습니다";
+"relocation.prompt.body" = "이 앱은 여전히 다음 이름으로 설치되어 있습니다:\n%1$@\n\n다음으로 이동할 수 있습니다:\n%2$@\n\n이동 후 macOS가 손쉬운 사용 권한을 다시 요청할 수 있습니다.";
+"relocation.prompt.finish" = "이름 변경 완료";
+"relocation.prompt.not_now" = "나중에";
+"relocation.abort.title" = "이동을 완료할 수 없습니다";
+"relocation.abort.body" = "다음 위치에 이미 다른 앱이 설치되어 있습니다:\n%1$@\n\n아무것도 변경되지 않았습니다.";
 "setup.use_session_only" = "이 세션에만 사용";
 
 /* ==================== */

@@ -924,6 +924,12 @@
 "quit.credentials_unsaved.title" = "无法保存凭据";
 "quit.credentials_unsaved.body" = "退出后需要重新输入。";
 "quit.credentials_unsaved.quit" = "仍然退出";
+"relocation.prompt.title" = "仍以旧名称安装";
+"relocation.prompt.body" = "此应用仍以以下名称安装：\n%1$@\n\n可以将其移动到：\n%2$@\n\n移动后，macOS 可能会要求你重新授予辅助功能权限。";
+"relocation.prompt.finish" = "完成重命名";
+"relocation.prompt.not_now" = "暂不";
+"relocation.abort.title" = "无法完成移动";
+"relocation.abort.body" = "以下位置已安装了另一个应用：\n%1$@\n\n未做任何更改。";
 "setup.use_session_only" = "仅在本次会话中使用";
 
 /* ==================== */

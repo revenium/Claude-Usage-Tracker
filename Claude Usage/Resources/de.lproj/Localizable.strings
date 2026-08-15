@@ -926,6 +926,12 @@
 "quit.credentials_unsaved.title" = "Anmeldedaten konnten nicht gespeichert werden";
 "quit.credentials_unsaved.body" = "Beim Beenden müssen sie erneut eingegeben werden.";
 "quit.credentials_unsaved.quit" = "Trotzdem beenden";
+"relocation.prompt.title" = "Noch unter dem alten Namen installiert";
+"relocation.prompt.body" = "Diese App ist noch installiert als:\n%1$@\n\nSie kann verschoben werden nach:\n%2$@\n\nNach dem Verschieben fragt macOS möglicherweise erneut nach der Bedienungshilfen-Berechtigung.";
+"relocation.prompt.finish" = "Umbenennung abschließen";
+"relocation.prompt.not_now" = "Jetzt nicht";
+"relocation.abort.title" = "Verschieben nicht möglich";
+"relocation.abort.body" = "Unter folgendem Pfad ist bereits eine andere App installiert:\n%1$@\n\nEs wurde nichts geändert.";
 "setup.use_session_only" = "Nur für diese Sitzung verwenden";
 
 /* ==================== */
