@@ -441,33 +441,69 @@ nonisolated final class LegacyBundleRelocationService {
         alert.runModal()
     }
 
+    /// Hands the relaunch to a detached helper that waits for THIS process to
+    /// exit, then opens the moved bundle.
+    ///
+    /// Relaunching directly and then calling `NSApp.terminate` does not work
+    /// here, and fails in a way that looks like success: this app intercepts
+    /// termination (`applicationShouldTerminate` returns `.terminateLater`
+    /// while the menu bar tears down asynchronously, and `.terminateCancel`
+    /// when a profile still holds an unsaved credential). The quit can
+    /// therefore be deferred or refused outright, leaving the old instance
+    /// alive and running from a bundle that no longer exists at that path,
+    /// with the new instance racing it for the same menu bar and preferences.
+    /// Observed exactly that in UAT: the move succeeded, the relaunch reported
+    /// success, and the surviving process was still the old one.
+    ///
+    /// Waiting on process exit inverts that: the new instance starts only once
+    /// the old one is genuinely gone, so there is never more than one, and the
+    /// app's own termination policy is respected rather than fought. If the
+    /// user cancels the quit to save a credential, the app simply keeps running
+    /// from the moved bundle — which is intact and fully functional — and the
+    /// new instance starts whenever they do quit.
     private func relaunch(from url: URL) {
-        let configuration = NSWorkspace.OpenConfiguration()
-        configuration.createsNewApplicationInstance = true
+        // Recorded now: the move is what completed. Tying this to the relaunch
+        // would re-offer relocation on next launch even though the bundle is
+        // already in the right place.
+        defaults.set(true, forKey: Self.relocationCompletedKey)
 
-        NSWorkspace.shared.openApplication(
-            at: url,
-            configuration: configuration
-        ) { [defaults] _, error in
-            if let error {
-                LoggingService.shared.logError(
-                    "Legacy bundle relocation moved the app but could not"
-                        + " relaunch it from the new location; the app"
-                        + " remains runnable from \(url.path)",
-                    error: error
-                )
-                return
-            }
+        let watcher = Process()
+        watcher.executableURL = URL(fileURLWithPath: "/bin/sh")
+        watcher.arguments = [
+            "-c",
+            // Poll rather than wait(1): the helper is not our child, and a
+            // parent that exits mid-poll simply ends the loop.
+            "while kill -0 \(ProcessInfo.processInfo.processIdentifier) "
+                + "2>/dev/null; do sleep 0.2; done; "
+                + "/usr/bin/open \(shellQuoted(url.path))",
+        ]
 
-            defaults.set(true, forKey: Self.relocationCompletedKey)
+        do {
+            try watcher.run()
             LoggingService.shared.logInfo(
-                "Legacy bundle relocation completed; relaunched from"
-                    + " \(url.path)"
+                "Legacy bundle relocation moved the app to \(url.path);"
+                    + " relaunch armed for when this instance exits"
             )
-
-            DispatchQueue.main.async {
-                NSApp.terminate(nil)
-            }
+        } catch {
+            // Non-fatal: the bundle is already correctly in place, so the user
+            // just has to launch it themselves next time.
+            LoggingService.shared.logError(
+                "Legacy bundle relocation could not arm the relaunch helper;"
+                    + " the app is in place at \(url.path) but will not"
+                    + " restart automatically",
+                error: error
+            )
         }
+
+        DispatchQueue.main.async {
+            NSApp.terminate(nil)
+        }
+    }
+
+    /// Single-quotes a path for `/bin/sh`. App paths routinely contain spaces,
+    /// and this one is attacker-irrelevant but user-controlled enough to get
+    /// wrong by accident.
+    private func shellQuoted(_ path: String) -> String {
+        "'" + path.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 }
