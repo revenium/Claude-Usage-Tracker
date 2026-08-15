@@ -19,6 +19,9 @@ env:
   # Pre-rename app filename. Kept in the DMG so Sparkle hosts from 3.x can still
   # locate the update; see the disk image step and RELEASING.md.
   LEGACY_APP_NAME: Claude Usage
+  # Subdirectory holding the legacy copy. Must be a non-dot-prefixed real directory —
+  # see the disk image step for why both halves of that matter.
+  LEGACY_SUPPORT_DIR: Legacy Update Support
   SPARKLE_FEED_URL: https://github.com/revenium/RevvyTach/releases/latest/download/appcast.xml
 
 jobs:
@@ -303,7 +306,21 @@ jobs:
           # A second, identical copy under the legacy filename restores the first rule
           # so 3.x installs can update in place. Both copies are already signed,
           # notarized, and stapled; the copy inherits all of that.
-          cp -R "$app_path" "$stage_dir/$LEGACY_APP_NAME.app"
+          #
+          # It must live in a SUBDIRECTORY, not at the volume root: Sparkle's own
+          # generate_appcast refuses an archive containing more than one bundle at the
+          # root ("Too many bundles", SUSparkleErrorDomain 3000) and then emits no
+          # appcast at all. Nesting satisfies generate_appcast while staying reachable
+          # for the installer, which enumerates the extracted update recursively and
+          # matches on the last path component.
+          #
+          # The directory name must NOT begin with a dot: SUDiskImageUnarchiver skips
+          # hidden entries when copying the mounted image, so a dot-prefixed folder
+          # would never reach the installer. `chflags hidden` keeps it out of the
+          # user's way in Finder without changing the name.
+          mkdir -p "$stage_dir/$LEGACY_SUPPORT_DIR"
+          cp -R "$app_path" "$stage_dir/$LEGACY_SUPPORT_DIR/$LEGACY_APP_NAME.app"
+          chflags hidden "$stage_dir/$LEGACY_SUPPORT_DIR"
           ln -s /Applications "$stage_dir/Applications"
 
           hdiutil create \

@@ -18,7 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rules Sparkle uses to find the app inside a downloaded update, and Sparkle
   reports that "no suitable install was found" using the generic
   improperly-signed error text. The disk image now also carries an identical
-  copy named `Claude Usage.app` so pre-rename installs can find it. Machines
+  copy at `Legacy Update Support/Claude Usage.app` so pre-rename installs can
+  find it. Machines
   updating this way keep the app at `/Applications/Claude Usage.app`; drag a
   fresh copy from the DMG to get the new name and location.
 

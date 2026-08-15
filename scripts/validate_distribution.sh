@@ -183,8 +183,21 @@ contains '--draft=false' "$release_workflow" \
 # step silently strands every remaining 3.x install on a bogus signature error.
 contains 'LEGACY_APP_NAME: Claude Usage' "$release_workflow" \
     || fail 'release workflow does not define the legacy app name used for Sparkle update discovery'
-contains 'cp -R "\$app_path" "\$stage_dir/\$LEGACY_APP_NAME\.app"' "$release_workflow" \
+contains 'LEGACY_SUPPORT_DIR: Legacy Update Support' "$release_workflow" \
+    || fail 'release workflow does not define the subdirectory holding the legacy app copy'
+contains 'cp -R "\$app_path" "\$stage_dir/\$LEGACY_SUPPORT_DIR/\$LEGACY_APP_NAME\.app"' "$release_workflow" \
     || fail 'release workflow does not stage the legacy-named app copy; 3.x in-app updates would break'
+# Two bundles at the volume root make generate_appcast bail with "Too many bundles"
+# and emit no appcast, failing the release outright — as it did on the first v4.0.2
+# attempt. The legacy copy must be staged into the subdirectory, never beside the app.
+if contains 'cp -R "\$app_path" "\$stage_dir/\$LEGACY_APP_NAME\.app"' "$release_workflow"; then
+    fail 'release workflow stages the legacy copy at the DMG root; generate_appcast rejects two root bundles'
+fi
+# A dot-prefixed holder is skipped by SUDiskImageUnarchiver, so the installer would
+# never see the copy even though the release would build and publish cleanly.
+if contains 'LEGACY_SUPPORT_DIR: \.' "$release_workflow"; then
+    fail 'legacy support directory is dot-prefixed; Sparkle skips hidden entries when extracting the DMG'
+fi
 contains 'Claude Usage\.app' "$script_dir/verify_release_artifacts.sh" \
     || fail 'release artifact verification does not check for the legacy-named app copy'
 

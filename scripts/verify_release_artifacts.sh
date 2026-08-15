@@ -90,11 +90,11 @@ info_plist="$app_path/Contents/Info.plist"
 
 if find "$mount_point" -mindepth 1 -maxdepth 1 \
     ! -name 'RevvyTach.app' \
-    ! -name 'Claude Usage.app' \
+    ! -name 'Legacy Update Support' \
     ! -name 'Applications' \
     ! -name '.*' \
     | grep -q .; then
-    echo 'error: DMG contains files outside RevvyTach.app, Claude Usage.app, and the Applications symlink' >&2
+    echo 'error: DMG contains files outside RevvyTach.app, Legacy Update Support, and the Applications symlink' >&2
     exit 65
 fi
 
@@ -105,11 +105,25 @@ fi
 # what keeps in-app updates working for pre-rename installs; if it ever goes
 # missing, that upgrade path breaks silently for exactly the users who cannot
 # report it. Verify it is present and byte-identical to the shipped app.
-legacy_app_path="$mount_point/Claude Usage.app"
+#
+# It lives one level down on purpose: two bundles at the volume root make Sparkle's
+# generate_appcast fail with "Too many bundles" and produce no appcast. The holding
+# directory must not be dot-prefixed either, or SUDiskImageUnarchiver skips it and
+# the installer never sees the copy. Assert both properties, not just presence.
+legacy_support_dir="$mount_point/Legacy Update Support"
+legacy_app_path="$legacy_support_dir/Claude Usage.app"
+[[ -d $legacy_support_dir ]] || {
+    echo 'error: DMG does not contain the Legacy Update Support directory; 3.x in-app updates would break' >&2
+    exit 65
+}
 [[ -d $legacy_app_path && -f "$legacy_app_path/Contents/Info.plist" ]] || {
     echo 'error: DMG does not contain the legacy-named Claude Usage.app; 3.x in-app updates would break' >&2
     exit 65
 }
+if [[ -d "$mount_point/Claude Usage.app" ]]; then
+    echo 'error: legacy copy is at the DMG root; generate_appcast rejects two root bundles ("Too many bundles")' >&2
+    exit 65
+fi
 if ! diff -r "$app_path" "$legacy_app_path" >/dev/null 2>&1; then
     echo 'error: Claude Usage.app in the DMG is not identical to RevvyTach.app' >&2
     exit 65

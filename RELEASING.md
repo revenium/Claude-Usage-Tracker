@@ -37,12 +37,13 @@ service names and need no migration).
 | Source repository | `revenium/RevvyTach` | Current operational ownership |
 | Sparkle feed | `https://github.com/revenium/RevvyTach/releases/latest/download/appcast.xml` | Stable Revenium-owned HTTPS endpoint; pre-rename installs reach it through the GitHub repo-rename redirect |
 | Homebrew cask | `revenium/tap/revvytach` | Existing Revenium tap |
-| Legacy app copy in the DMG | `Claude Usage.app` | Keeps Sparkle in-app updates working for pre-rename (3.x) installs — see below |
+| Legacy app copy in the DMG | `Legacy Update Support/Claude Usage.app` | Keeps Sparkle in-app updates working for pre-rename (3.x) installs — see below |
 
 ### The legacy-named app copy is load-bearing
 
-The DMG ships **two identical copies** of the app: `RevvyTach.app` and
-`Claude Usage.app`. This is deliberate and must not be "cleaned up".
+The DMG ships **two identical copies** of the app: `RevvyTach.app` at the volume
+root and `Legacy Update Support/Claude Usage.app` one level down. This is
+deliberate and must not be "cleaned up".
 
 Sparkle locates the app inside a downloaded archive with
 `SUInstaller installSourcePathInUpdateFolder:forHost:`, which matches on the
@@ -59,6 +60,21 @@ update in place. Sparkle installs to `host.bundlePath`, so a 3.x machine keeps
 the app at `/Applications/Claude Usage.app` while its contents become RevvyTach;
 its `CFBundleName` is then `RevvyTach`, so every subsequent update matches the
 `CFBundleName` rule against `RevvyTach.app` and needs no special handling.
+
+**Why it is nested, and why the folder name has no leading dot.** Both details are
+load-bearing and were each learned by a failed release or a code read:
+
+- **Nested, not at the root.** Sparkle's own `generate_appcast` refuses an archive
+  with more than one bundle at the root — `SUSparkleErrorDomain` code 3000, "Too
+  many bundles" — and then writes no appcast at all, failing the release. This is
+  exactly how the first v4.0.2 attempt died. The installer enumerates the extracted
+  update *recursively* and matches on the last path component, so one level down is
+  still found.
+- **No leading dot.** `SUDiskImageUnarchiver` skips entries whose name begins with
+  `.` when copying the mounted image out, so a `.legacy/` folder would never reach
+  the installer — and nothing would fail loudly; the release would publish green and
+  3.x updates would stay broken. The folder is marked with `chflags hidden` instead,
+  which keeps it out of Finder without changing the name.
 
 A 4.x host may match either copy (the bundle IDs are identical) — harmless,
 because the copies are byte-identical and Sparkle installs to the host's own
