@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.0] - 2026-08-15
+
 ### Changed
 
 - **The app is now RevvyTach.** Same app, new name: it has tracked Codex
@@ -24,6 +26,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The GitHub repository moved to `revenium/RevvyTach` (old links redirect),
   and the Homebrew cask is now `revenium/tap/revvytach` — the old
   `claude-usage` cask is deprecated and points at it.
+
+- **Launching the app is never silent anymore.** When setup is already
+  complete, a small branded card fades in — logo, name, "Running in the
+  menu bar" — and dismisses itself, so a menu-bar-only launch is visibly
+  a launch. It also reappears when you reopen the running app from Finder.
+
+- **The setup wizard no longer hijacks every launch when a profile has no
+  credentials.** Once setup has been completed, the app goes straight to
+  the menu bar (showing the app-logo icon until credentials exist) instead
+  of walking you back through first-run setup.
+
+- **A new app icon**: Revvy at the hub of a rev-counter gauge, needle at
+  the redline.
+
+### Fixed
+
+- The About screen no longer shows "Could not load contributors" when
+  GitHub's anonymous API rate limit is hit — contributors are cached for a
+  day and the last-known list is shown when the network or quota fails.
 
 ## [3.4.0] - 2026-08-11
 
