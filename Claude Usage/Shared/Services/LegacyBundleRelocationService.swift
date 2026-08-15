@@ -495,9 +495,26 @@ nonisolated final class LegacyBundleRelocationService {
             )
         }
 
-        DispatchQueue.main.async {
-            NSApp.terminate(nil)
-        }
+        // Exit hard rather than asking. `NSApp.terminate` is a request this app
+        // does not grant here: by the time an async terminate fires, the menu
+        // bar manager exists, so `applicationShouldTerminate` returns
+        // `.terminateLater` and awaits `refreshRuntime.shutdownAndWait(...)`,
+        // which does not complete during early launch. Observed in UAT twice:
+        // the move and the relaunch hand-off both succeeded, and the old
+        // process simply sat there forever, running from a path that no longer
+        // exists, while the queued relaunch waited on a PID that never died.
+        //
+        // Exiting is safe *specifically here* and would not be later. This runs
+        // early in `applicationDidFinishLaunching`, before the menu bar, status
+        // item, profile hydration, or any network work: nothing is open, and
+        // nothing is held in memory that the normal termination path exists to
+        // protect — the credential guard in `applicationShouldTerminate` covers
+        // credentials a *running* session has not yet written, and no session
+        // has begun. The migrations that ran just above record their completion
+        // in `defaults`, so flush before exiting; each is idempotent and would
+        // simply re-run if a flush were ever lost.
+        defaults.synchronize()
+        exit(0)
     }
 
     /// Single-quotes a path for `/bin/sh`. App paths routinely contain spaces,
