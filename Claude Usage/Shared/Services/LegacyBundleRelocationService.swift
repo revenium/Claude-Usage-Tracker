@@ -47,13 +47,30 @@ nonisolated final class LegacyBundleRelocationService {
     static let relocationDeferredPermanentlyKey =
         "legacyBundleRelocationDeferredPermanently_v1"
 
+    /// Set just before the bundle moves, when launch-at-login was enabled, and
+    /// consumed by the *relaunched* instance.
+    ///
+    /// Re-registering from the process that is about to terminate is not safe:
+    /// `SMAppService.mainApp` resolves against the running bundle, whose path
+    /// has just changed underneath it, so a registration made there can point
+    /// at the location the app no longer occupies. Failing that way is silent —
+    /// the user simply stops being launched at login and has no way to connect
+    /// it to the rename — so the restore is deferred to the new instance, which
+    /// registers a bundle that is genuinely where it claims to be.
+    static let relocationRestoreLaunchAtLoginKey =
+        "legacyBundleRelocationRestoreLaunchAtLogin_v1"
+
     private let defaults: UserDefaults
     private let fileManager: FileManager
     private let currentBundleIdentifier: String?
     private let legacyBundleIdentifier: String
     private let expectedAppFileName: String
     private let bundleURL: URL
-    private let launchAtLoginManager: LaunchAtLoginManager
+    /// Injected as closures rather than the manager itself so tests can
+    /// exercise the launch-at-login hand-off without touching the real
+    /// `SMAppService`, which would register the *test host* as a login item.
+    private let isLaunchAtLoginEnabled: () -> Bool
+    private let setLaunchAtLoginEnabled: (Bool) -> Bool
 
     /// - Parameters:
     ///   - currentBundleIdentifier: Guards against acting while still
@@ -75,7 +92,12 @@ nonisolated final class LegacyBundleRelocationService {
         expectedAppFileName: String = LegacyBundleRelocationService
             .expectedAppFileName(for: .main),
         bundleURL: URL = Bundle.main.bundleURL,
-        launchAtLoginManager: LaunchAtLoginManager = .shared
+        isLaunchAtLoginEnabled: @escaping () -> Bool = {
+            LaunchAtLoginManager.shared.isEnabled
+        },
+        setLaunchAtLoginEnabled: @escaping (Bool) -> Bool = {
+            LaunchAtLoginManager.shared.setEnabled($0)
+        }
     ) {
         self.defaults = defaults
         self.fileManager = fileManager
@@ -83,7 +105,8 @@ nonisolated final class LegacyBundleRelocationService {
         self.legacyBundleIdentifier = legacyBundleIdentifier
         self.expectedAppFileName = expectedAppFileName
         self.bundleURL = bundleURL
-        self.launchAtLoginManager = launchAtLoginManager
+        self.isLaunchAtLoginEnabled = isLaunchAtLoginEnabled
+        self.setLaunchAtLoginEnabled = setLaunchAtLoginEnabled
     }
 
     /// `CFBundleName` (resolved from `PRODUCT_NAME` at build time) plus
@@ -133,8 +156,33 @@ nonisolated final class LegacyBundleRelocationService {
     // MARK: - Entry point
 
     func relocateIfNeeded() {
+        // Runs before the decision guard on purpose: the instance that has to
+        // restore launch-at-login is the relaunched one, which by definition
+        // already sits at the expected filename and so is not a relocation
+        // candidate itself.
+        restoreLaunchAtLoginIfPending()
+
         guard shouldOfferRelocation() else { return }
         promptAndRelocate()
+    }
+
+    /// Re-registers launch-at-login after a completed relocation. Best-effort:
+    /// the flag is cleared either way, so a failure costs the user one login
+    /// item rather than re-attempting on every launch forever.
+    private func restoreLaunchAtLoginIfPending() {
+        guard defaults.bool(forKey: Self.relocationRestoreLaunchAtLoginKey)
+        else { return }
+
+        defaults.set(false, forKey: Self.relocationRestoreLaunchAtLoginKey)
+
+        if !setLaunchAtLoginEnabled(true) {
+            LoggingService.shared.logError(
+                "Legacy bundle relocation could not restore launch at login"
+                    + " from the relocated bundle; the user may need to"
+                    + " re-enable it in Settings",
+                error: nil
+            )
+        }
     }
 
     // MARK: - Prompt
@@ -153,17 +201,23 @@ nonisolated final class LegacyBundleRelocationService {
         alert.addButton(withTitle: "relocation.prompt.not_now".localized)
 
         let response = alert.runModal()
-
-        if alert.suppressionButton?.state == .on {
-            defaults.set(true, forKey: Self.relocationDeferredPermanentlyKey)
-            LoggingService.shared.logInfo(
-                "Legacy bundle relocation permanently deferred by user"
-            )
-            return
-        }
+        let suppressed = alert.suppressionButton?.state == .on
 
         guard response == .alertFirstButtonReturn else {
-            // "Not Now" — re-ask next launch, nothing recorded.
+            // Declined. Suppression only matters on this branch: "don't ask
+            // again" describes future prompts, so honouring it ahead of the
+            // button choice would silently swallow a "Finish Rename" click
+            // from anyone who ticked the box meaning "and stop asking".
+            if suppressed {
+                defaults.set(
+                    true,
+                    forKey: Self.relocationDeferredPermanentlyKey
+                )
+                LoggingService.shared.logInfo(
+                    "Legacy bundle relocation permanently deferred by user"
+                )
+            }
+            // Otherwise "Not Now" — re-ask next launch, nothing recorded.
             return
         }
 
@@ -185,14 +239,14 @@ nonisolated final class LegacyBundleRelocationService {
             }
         }
 
-        let wasLaunchAtLoginEnabled = launchAtLoginManager.isEnabled
+        let wasLaunchAtLoginEnabled = isLaunchAtLoginEnabled()
         if wasLaunchAtLoginEnabled {
-            // Best-effort: SMAppService registrations are keyed to the
-            // bundle path, so unregistering before the move (and
-            // re-registering after) keeps the login item pointed at a
-            // location that still exists. A failure here must never abort
-            // the relocation itself.
-            launchAtLoginManager.setEnabled(false)
+            // Best-effort: SMAppService registrations are keyed to the bundle
+            // path, so the stale registration is dropped before the move and
+            // re-made by the relaunched instance (see the restore key). A
+            // failure here must never abort the relocation itself.
+            _ = setLaunchAtLoginEnabled(false)
+            defaults.set(true, forKey: Self.relocationRestoreLaunchAtLoginKey)
         }
 
         do {
@@ -204,15 +258,18 @@ nonisolated final class LegacyBundleRelocationService {
                 error: error
             )
             if wasLaunchAtLoginEnabled {
-                launchAtLoginManager.setEnabled(true)
+                // Nothing moved, so this process is still the right one to
+                // hold the registration; drop the hand-off flag with it.
+                defaults.set(
+                    false,
+                    forKey: Self.relocationRestoreLaunchAtLoginKey
+                )
+                _ = setLaunchAtLoginEnabled(true)
             }
             return
         }
 
-        relaunch(
-            from: destination,
-            reregisterLaunchAtLogin: wasLaunchAtLoginEnabled
-        )
+        relaunch(from: destination)
     }
 
     /// Handles a destination that already exists. Returns `true` when it is
@@ -260,7 +317,7 @@ nonisolated final class LegacyBundleRelocationService {
         alert.runModal()
     }
 
-    private func relaunch(from url: URL, reregisterLaunchAtLogin: Bool) {
+    private func relaunch(from url: URL) {
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.createsNewApplicationInstance = true
 
@@ -283,10 +340,6 @@ nonisolated final class LegacyBundleRelocationService {
                 "Legacy bundle relocation completed; relaunched from"
                     + " \(url.path)"
             )
-
-            if reregisterLaunchAtLogin {
-                self.launchAtLoginManager.setEnabled(true)
-            }
 
             DispatchQueue.main.async {
                 NSApp.terminate(nil)
