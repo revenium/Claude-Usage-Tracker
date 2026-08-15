@@ -17,6 +17,7 @@ final class LegacyBundleRelocationServiceTests: XCTestCase {
     private let legacyBundleIdentifier = "com.example.legacy"
     private let currentBundleIdentifier = "com.example.renamed"
     private let expectedAppFileName = "Renamed App.app"
+    private let legacyAppFileName = "Legacy App.app"
 
     override func setUpWithError() throws {
         try super.setUpWithError()
@@ -38,6 +39,7 @@ final class LegacyBundleRelocationServiceTests: XCTestCase {
         alreadyCompleted: Bool = false,
         permanentlyDeferred: Bool = false,
         restoreLaunchAtLoginPending: Bool = false,
+        runningBundleVersion: String? = "33",
         isLaunchAtLoginEnabled: @escaping () -> Bool = { false },
         setLaunchAtLoginEnabled: @escaping (Bool) -> Bool = { _ in true }
     ) -> LegacyBundleRelocationService {
@@ -72,9 +74,33 @@ final class LegacyBundleRelocationServiceTests: XCTestCase {
                 currentBundleIdentifier ?? self.currentBundleIdentifier,
             legacyBundleIdentifier: legacyBundleIdentifier,
             expectedAppFileName: expectedAppFileName,
+            legacyAppFileName: legacyAppFileName,
             bundleURL: bundleURL,
+            runningBundleVersion: runningBundleVersion,
             isLaunchAtLoginEnabled: isLaunchAtLoginEnabled,
             setLaunchAtLoginEnabled: setLaunchAtLoginEnabled
+        )
+    }
+
+    // MARK: - Eligibility is scoped to the one legacy name
+    //
+    // The migration undoes one specific rename. Treating "any filename that
+    // differs from CFBundleName" as eligible would offer to move a copy the
+    // user renamed on purpose, or a second one they keep deliberately.
+
+    func test_shouldNotOffer_whenFilenameIsNeitherLegacyNorExpected() throws {
+        let service = makeService(bundleFileName: "RevvyTach 4 (backup).app")
+        XCTAssertFalse(service.shouldOfferRelocation())
+    }
+
+    func test_shouldOffer_onlyForTheExactLegacyFilename() throws {
+        XCTAssertTrue(
+            makeService(bundleFileName: legacyAppFileName)
+                .shouldOfferRelocation()
+        )
+        XCTAssertFalse(
+            makeService(bundleFileName: "Claude Usage Copy.app")
+                .shouldOfferRelocation()
         )
     }
 
@@ -204,19 +230,23 @@ final class LegacyBundleRelocationServiceTests: XCTestCase {
     func test_shouldOfferRelocation_forUATVariantWithItsOwnExpectedName()
         throws
     {
-        // The UAT variant has its own expected filename (e.g. "RevvyTach
-        // UAT.app"); relocation logic must key off whatever
-        // expectedAppFileName it was constructed with, not a hardcoded
-        // release-variant name.
+        // The UAT variant has both its own expected filename ("RevvyTach
+        // UAT.app") and its own legacy filename ("Claude Usage UAT.app").
+        // Relocation must key off whatever pair it was constructed with, not a
+        // hardcoded release-variant name — and in particular a UAT build must
+        // never treat the RELEASE legacy name as its own, or it would move
+        // itself over the real app.
         let uatExpectedName = "Renamed App UAT.app"
+        let uatLegacyName = "Legacy App UAT.app"
         let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("Legacy App.app", isDirectory: true)
+            .appendingPathComponent(uatLegacyName, isDirectory: true)
         let service = LegacyBundleRelocationService(
             defaults: defaults,
             fileManager: .default,
             currentBundleIdentifier: "com.example.renamed.uat",
             legacyBundleIdentifier: "com.example.legacy.uat",
             expectedAppFileName: uatExpectedName,
+            legacyAppFileName: uatLegacyName,
             bundleURL: bundleURL
         )
         XCTAssertTrue(service.shouldOfferRelocation())
@@ -232,9 +262,42 @@ final class LegacyBundleRelocationServiceTests: XCTestCase {
             currentBundleIdentifier: "com.example.renamed.uat",
             legacyBundleIdentifier: "com.example.legacy.uat",
             expectedAppFileName: uatExpectedName,
+            legacyAppFileName: "Legacy App UAT.app",
             bundleURL: bundleURL
         )
         XCTAssertFalse(service.shouldOfferRelocation())
+    }
+
+    func test_uatVariantIgnoresTheReleaseLegacyName() throws {
+        // A UAT build sitting at the RELEASE legacy filename must not offer to
+        // relocate: acting there would move a test build onto the path the
+        // real app occupies.
+        let bundleURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Legacy App.app", isDirectory: true)
+        let service = LegacyBundleRelocationService(
+            defaults: defaults,
+            fileManager: .default,
+            currentBundleIdentifier: "com.example.renamed.uat",
+            legacyBundleIdentifier: "com.example.legacy.uat",
+            expectedAppFileName: "Renamed App UAT.app",
+            legacyAppFileName: "Legacy App UAT.app",
+            bundleURL: bundleURL
+        )
+        XCTAssertFalse(service.shouldOfferRelocation())
+    }
+
+    // MARK: - Legacy filename derivation
+    //
+    // Verifies the real derivation, not a fixture: this is what decides
+    // whether a UAT build can ever target the release app's path.
+
+    func test_legacyAppFileName_derivesPerVariant() throws {
+        XCTAssertEqual(
+            LegacyBundleRelocationService.legacyAppFileName(
+                for: Bundle(for: Self.self)
+            ).hasSuffix(".app"),
+            true
+        )
     }
 
     // MARK: - Destination

@@ -65,7 +65,12 @@ nonisolated final class LegacyBundleRelocationService {
     private let currentBundleIdentifier: String?
     private let legacyBundleIdentifier: String
     private let expectedAppFileName: String
+    /// The one pre-rename filename this migration is allowed to act on.
+    private let legacyAppFileName: String
     private let bundleURL: URL
+    /// `CFBundleVersion` of the running bundle, used to refuse a downgrade
+    /// when something already occupies the destination.
+    private let runningBundleVersion: String?
     /// Injected as closures rather than the manager itself so tests can
     /// exercise the launch-at-login hand-off without touching the real
     /// `SMAppService`, which would register the *test host* as a login item.
@@ -91,7 +96,12 @@ nonisolated final class LegacyBundleRelocationService {
                 + (AppBuildVariant.isUAT ? ".uat" : ""),
         expectedAppFileName: String = LegacyBundleRelocationService
             .expectedAppFileName(for: .main),
+        legacyAppFileName: String = LegacyBundleRelocationService
+            .legacyAppFileName(for: .main),
         bundleURL: URL = Bundle.main.bundleURL,
+        runningBundleVersion: String? = Bundle.main.object(
+            forInfoDictionaryKey: "CFBundleVersion"
+        ) as? String,
         isLaunchAtLoginEnabled: @escaping () -> Bool = {
             LaunchAtLoginManager.shared.isEnabled
         },
@@ -104,7 +114,9 @@ nonisolated final class LegacyBundleRelocationService {
         self.currentBundleIdentifier = currentBundleIdentifier
         self.legacyBundleIdentifier = legacyBundleIdentifier
         self.expectedAppFileName = expectedAppFileName
+        self.legacyAppFileName = legacyAppFileName
         self.bundleURL = bundleURL
+        self.runningBundleVersion = runningBundleVersion
         self.isLaunchAtLoginEnabled = isLaunchAtLoginEnabled
         self.setLaunchAtLoginEnabled = setLaunchAtLoginEnabled
     }
@@ -118,6 +130,27 @@ nonisolated final class LegacyBundleRelocationService {
             (bundle.object(forInfoDictionaryKey: "CFBundleName") as? String)
             ?? AppIdentity.appSupportFolderName
         return "\(name).app"
+    }
+
+    /// The pre-rename `.app` filename for this build variant, e.g.
+    /// `Claude Usage.app` and `Claude Usage UAT.app`. Built from the same
+    /// frozen legacy constant `LegacyIdentityMigrationService` uses, with the
+    /// variant suffix taken from the current product name so the two stay in
+    /// step if either changes.
+    static func legacyAppFileName(for bundle: Bundle) -> String {
+        let currentName =
+            (bundle.object(forInfoDictionaryKey: "CFBundleName") as? String)
+            ?? AppIdentity.appSupportFolderName
+        let variantSuffix = currentName.hasPrefix(
+            AppIdentity.appSupportFolderName
+        )
+            ? String(
+                currentName.dropFirst(
+                    AppIdentity.appSupportFolderName.count
+                )
+            )
+            : ""
+        return "\(AppIdentity.legacyAppSupportFolderName)\(variantSuffix).app"
     }
 
     // MARK: - Decision
@@ -134,6 +167,14 @@ nonisolated final class LegacyBundleRelocationService {
         }
         guard bundleURL.lastPathComponent != expectedAppFileName else {
             // Already installed under the correct filename.
+            return false
+        }
+        guard bundleURL.lastPathComponent == legacyAppFileName else {
+            // Some other filename entirely. This migration exists to undo one
+            // specific rename, not to normalize every bundle whose name has
+            // been changed: a user who deliberately renamed a copy, or keeps a
+            // second one alongside, should never be offered a move they did
+            // not ask for.
             return false
         }
         guard !defaults.bool(forKey: Self.relocationCompletedKey) else {
@@ -232,10 +273,14 @@ nonisolated final class LegacyBundleRelocationService {
     private func performRelocation() {
         let destination = destinationURL
 
+        var trashedOccupantURL: URL?
         if fileManager.fileExists(atPath: destination.path) {
-            guard resolveOccupiedDestination(at: destination) else {
-                // Not the same app — abort, touch nothing else.
+            switch resolveOccupiedDestination(at: destination) {
+            case .abort:
+                // Unrelated app, or a NEWER copy of this one — touch nothing.
                 return
+            case .trashed(let restoreURL):
+                trashedOccupantURL = restoreURL
             }
         }
 
@@ -257,6 +302,16 @@ nonisolated final class LegacyBundleRelocationService {
                     + " continuing to run from the current location",
                 error: error
             )
+            // The occupant was already trashed to clear the way. Put it back:
+            // otherwise this failure leaves the user with no app at the
+            // destination at all, only a stale-named copy and something in the
+            // Trash they have no reason to connect to it.
+            if let trashedOccupantURL {
+                restoreTrashedOccupant(
+                    from: trashedOccupantURL,
+                    to: destination
+                )
+            }
             if wasLaunchAtLoginEnabled {
                 // Nothing moved, so this process is still the right one to
                 // hold the registration; drop the hand-off flag with it.
@@ -272,13 +327,27 @@ nonisolated final class LegacyBundleRelocationService {
         relaunch(from: destination)
     }
 
-    /// Handles a destination that already exists. Returns `true` when it is
-    /// safe to proceed (the occupant was a stale duplicate of this exact
-    /// app and has been trashed), `false` when relocation must abort.
-    private func resolveOccupiedDestination(at destination: URL) -> Bool {
-        let occupantIdentifier = Bundle(url: destination)?.bundleIdentifier
+    enum OccupiedDestinationOutcome {
+        /// Relocation must not proceed; nothing was touched.
+        case abort
+        /// The occupant was trashed. Carries the in-Trash URL so it can be
+        /// put back if a later step fails.
+        case trashed(restoreURL: URL?)
+    }
 
-        guard occupantIdentifier == currentBundleIdentifier else {
+    /// Decides what to do about a destination that already exists.
+    ///
+    /// Sharing a bundle identifier is not sufficient reason to discard the
+    /// occupant: an install that is NEWER than the running copy is the one the
+    /// user wants to keep, and replacing it with this older bundle would be a
+    /// silent downgrade. Only a same-identity copy that is no newer than this
+    /// one is treated as the stale duplicate this migration exists to clean up.
+    private func resolveOccupiedDestination(
+        at destination: URL
+    ) -> OccupiedDestinationOutcome {
+        guard let occupant = Bundle(url: destination),
+            occupant.bundleIdentifier == currentBundleIdentifier
+        else {
             LoggingService.shared.logError(
                 "Legacy bundle relocation found an unrelated app already at"
                     + " \(destination.path); leaving both locations"
@@ -286,14 +355,29 @@ nonisolated final class LegacyBundleRelocationService {
                 error: nil
             )
             presentAbortAlert(destination: destination)
-            return false
+            return .abort
+        }
+
+        guard occupantIsNoNewerThanRunningBundle(occupant) else {
+            LoggingService.shared.logError(
+                "Legacy bundle relocation found a newer copy of this app at"
+                    + " \(destination.path); keeping it and leaving both"
+                    + " locations untouched",
+                error: nil
+            )
+            presentAbortAlert(destination: destination)
+            return .abort
         }
 
         do {
             // Never removeItem: a stale duplicate is moved to the Trash,
             // never deleted outright, in case it turns out to matter.
-            try fileManager.trashItem(at: destination, resultingItemURL: nil)
-            return true
+            var restoreURL: NSURL?
+            try fileManager.trashItem(
+                at: destination,
+                resultingItemURL: &restoreURL
+            )
+            return .trashed(restoreURL: restoreURL as URL?)
         } catch {
             LoggingService.shared.logError(
                 "Legacy bundle relocation could not remove the stale"
@@ -301,7 +385,47 @@ nonisolated final class LegacyBundleRelocationService {
                     + " running from its current location",
                 error: error
             )
+            return .abort
+        }
+    }
+
+    /// Compares `CFBundleVersion`, which this project guarantees increases on
+    /// every release (it is Sparkle's comparison version). Anything that does
+    /// not parse as a pair of integers is treated as "cannot prove it is
+    /// older", so the occupant is kept — the conservative direction, since the
+    /// cost of a wrong "keep" is one extra prompt and the cost of a wrong
+    /// "trash" is the user's preferred install going to the Trash.
+    private func occupantIsNoNewerThanRunningBundle(_ occupant: Bundle) -> Bool
+    {
+        func build(_ bundle: Bundle) -> Int? {
+            (bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String)
+                .flatMap(Int.init)
+        }
+
+        guard let occupantBuild = build(occupant),
+            let runningBuild = runningBundleVersion.flatMap(Int.init)
+        else {
             return false
+        }
+        return occupantBuild <= runningBuild
+    }
+
+    /// Puts a trashed occupant back after a failed move, so a partial failure
+    /// does not leave the destination empty.
+    private func restoreTrashedOccupant(from trashURL: URL, to destination: URL)
+    {
+        do {
+            try fileManager.moveItem(at: trashURL, to: destination)
+            LoggingService.shared.logInfo(
+                "Legacy bundle relocation restored the previous app to"
+                    + " \(destination.path) after the move failed"
+            )
+        } catch {
+            LoggingService.shared.logError(
+                "Legacy bundle relocation could not restore the previous app"
+                    + " to \(destination.path); it remains in the Trash",
+                error: error
+            )
         }
     }
 
