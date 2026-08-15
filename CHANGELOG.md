@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **In-app updates from 3.x now work.** Updating from a pre-rename install
+  failed with "The update is improperly signed and could not be validated."
+  The signature was never the problem: the v4.0.0 rename changed the app
+  filename and the bundle identifier at once, which defeats all three of the
+  rules Sparkle uses to find the app inside a downloaded update, and Sparkle
+  reports that "no suitable install was found" using the generic
+  improperly-signed error text. The disk image now also carries an identical
+  copy named `Claude Usage.app` so pre-rename installs can find it. Machines
+  updating this way keep the app at `/Applications/Claude Usage.app`; drag a
+  fresh copy from the DMG to get the new name and location.
+
 ## [4.0.1] - 2026-08-15
 
 ### Fixed

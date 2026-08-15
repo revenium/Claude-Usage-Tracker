@@ -37,6 +37,36 @@ service names and need no migration).
 | Source repository | `revenium/RevvyTach` | Current operational ownership |
 | Sparkle feed | `https://github.com/revenium/RevvyTach/releases/latest/download/appcast.xml` | Stable Revenium-owned HTTPS endpoint; pre-rename installs reach it through the GitHub repo-rename redirect |
 | Homebrew cask | `revenium/tap/revvytach` | Existing Revenium tap |
+| Legacy app copy in the DMG | `Claude Usage.app` | Keeps Sparkle in-app updates working for pre-rename (3.x) installs — see below |
+
+### The legacy-named app copy is load-bearing
+
+The DMG ships **two identical copies** of the app: `RevvyTach.app` and
+`Claude Usage.app`. This is deliberate and must not be "cleaned up".
+
+Sparkle locates the app inside a downloaded archive with
+`SUInstaller installSourcePathInUpdateFolder:forHost:`, which matches on the
+**host's** bundle filename, the host's `CFBundleName`, or the host's bundle
+identifier. The v4.0.0 rename changed the app filename *and* the bundle ID at
+the same time, so for a 3.x host (`Claude Usage.app` /
+`HamedElfayome.Claude-Usage`) all three rules miss. Sparkle then reports "No
+suitable install is found", which `SPUInstallerDriver` surfaces to the user as
+the badly misleading **"The update is improperly signed and could not be
+validated."** — even though the signature is perfectly valid.
+
+The legacy-named copy restores the first matching rule, so 3.x installs can
+update in place. Sparkle installs to `host.bundlePath`, so a 3.x machine keeps
+the app at `/Applications/Claude Usage.app` while its contents become RevvyTach;
+its `CFBundleName` is then `RevvyTach`, so every subsequent update matches the
+`CFBundleName` rule against `RevvyTach.app` and needs no special handling.
+
+A 4.x host may match either copy (the bundle IDs are identical) — harmless,
+because the copies are byte-identical and Sparkle installs to the host's own
+path either way. `scripts/verify_release_artifacts.sh` enforces both presence
+and byte-identity, and `scripts/validate_distribution.sh` enforces that the
+release workflow still stages the copy. The copy roughly doubles the DMG
+(~13 MB → ~27 MB); it can be dropped once no 3.x installs remain in the wild,
+which is a deliberate future decision, not a cleanup.
 
 The Developer ID team and Sparkle key are distribution credentials, not bundle
 identity. They are injected by the protected release environment and must not

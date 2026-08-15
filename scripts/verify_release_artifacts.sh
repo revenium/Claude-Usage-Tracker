@@ -90,10 +90,28 @@ info_plist="$app_path/Contents/Info.plist"
 
 if find "$mount_point" -mindepth 1 -maxdepth 1 \
     ! -name 'RevvyTach.app' \
+    ! -name 'Claude Usage.app' \
     ! -name 'Applications' \
     ! -name '.*' \
     | grep -q .; then
-    echo 'error: DMG contains files outside RevvyTach.app and the Applications symlink' >&2
+    echo 'error: DMG contains files outside RevvyTach.app, Claude Usage.app, and the Applications symlink' >&2
+    exit 65
+fi
+
+# Sparkle locates the app inside an update archive by matching the host's bundle
+# filename, CFBundleName, or bundle identifier. The v4.0.0 rename changed the
+# filename and the bundle ID together, so every rule misses for a 3.x host and the
+# update is rejected as "improperly signed". This identical legacy-named copy is
+# what keeps in-app updates working for pre-rename installs; if it ever goes
+# missing, that upgrade path breaks silently for exactly the users who cannot
+# report it. Verify it is present and byte-identical to the shipped app.
+legacy_app_path="$mount_point/Claude Usage.app"
+[[ -d $legacy_app_path && -f "$legacy_app_path/Contents/Info.plist" ]] || {
+    echo 'error: DMG does not contain the legacy-named Claude Usage.app; 3.x in-app updates would break' >&2
+    exit 65
+}
+if ! diff -r "$app_path" "$legacy_app_path" >/dev/null 2>&1; then
+    echo 'error: Claude Usage.app in the DMG is not identical to RevvyTach.app' >&2
     exit 65
 fi
 

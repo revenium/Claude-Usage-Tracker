@@ -176,6 +176,18 @@ contains 'cmp -s' "$release_workflow" \
 contains '--draft=false' "$release_workflow" \
     || fail 'release workflow does not explicitly publish the verified draft'
 
+# Pre-rename hosts (bundle ID HamedElfayome.Claude-Usage, app file "Claude Usage.app")
+# can only find an update inside the DMG when a bundle carrying the legacy filename is
+# present, because the v4.0.0 rename changed the filename and bundle ID together and
+# defeats all three of Sparkle's install-source matching rules. Dropping this staging
+# step silently strands every remaining 3.x install on a bogus signature error.
+contains 'LEGACY_APP_NAME: Claude Usage' "$release_workflow" \
+    || fail 'release workflow does not define the legacy app name used for Sparkle update discovery'
+contains 'cp -R "\$app_path" "\$stage_dir/\$LEGACY_APP_NAME\.app"' "$release_workflow" \
+    || fail 'release workflow does not stage the legacy-named app copy; 3.x in-app updates would break'
+contains 'Claude Usage\.app' "$script_dir/verify_release_artifacts.sh" \
+    || fail 'release artifact verification does not check for the legacy-named app copy'
+
 distribution_workflows=(
     '.github/workflows/distribution-validation.yml'
     '.github/workflows/generate-appcast.yml'

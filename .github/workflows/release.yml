@@ -16,6 +16,9 @@ env:
   PRODUCT_NAME: RevvyTach
   PRODUCT_BUNDLE_ID: com.revenium.RevvyTach
   RELEASE_ASSET: RevvyTach.dmg
+  # Pre-rename app filename. Kept in the DMG so Sparkle hosts from 3.x can still
+  # locate the update; see the disk image step and RELEASING.md.
+  LEGACY_APP_NAME: Claude Usage
   SPARKLE_FEED_URL: https://github.com/revenium/RevvyTach/releases/latest/download/appcast.xml
 
 jobs:
@@ -291,6 +294,16 @@ jobs:
 
           stage_dir=$(mktemp -d "$RUNNER_TEMP/revvytach-dmg-stage.XXXXXX")
           cp -R "$app_path" "$stage_dir/"
+          # Sparkle finds the app inside an update archive by matching the *host's*
+          # bundle filename, its CFBundleName, or its bundle identifier
+          # (SUInstaller installSourcePathInUpdateFolder:forHost:). The v4.0.0 rename
+          # changed the filename and the bundle ID at once, so all three rules miss for
+          # a pre-rename host and Sparkle reports "No suitable install is found" —
+          # surfaced to users as the misleading "update is improperly signed".
+          # A second, identical copy under the legacy filename restores the first rule
+          # so 3.x installs can update in place. Both copies are already signed,
+          # notarized, and stapled; the copy inherits all of that.
+          cp -R "$app_path" "$stage_dir/$LEGACY_APP_NAME.app"
           ln -s /Applications "$stage_dir/Applications"
 
           hdiutil create \
