@@ -14,16 +14,21 @@ final class ConsoleAuthCookieDetectionTests: XCTestCase {
         name: String,
         value: String,
         domain: String,
-        expires: Date? = nil
+        expires: Date? = nil,
+        secure: Bool = true,
+        path: String = "/"
     ) -> HTTPCookie {
         var properties: [HTTPCookiePropertyKey: Any] = [
             .name: name,
             .value: value,
             .domain: domain,
-            .path: "/",
+            .path: path,
         ]
         if let expires = expires {
             properties[.expires] = expires
+        }
+        if secure {
+            properties[.secure] = "TRUE"
         }
         return HTTPCookie(properties: properties)!
     }
@@ -69,10 +74,97 @@ final class ConsoleAuthCookieDetectionTests: XCTestCase {
         XCTAssertNil(result)
     }
 
-    func testUserAgentPresentsAsDesktopSafari() {
-        let userAgent = ConsoleAuthWebView.safariUserAgent
-        XCTAssertTrue(userAgent.contains("Safari/"))
-        XCTAssertTrue(userAgent.contains("Version/"))
-        XCTAssertFalse(userAgent.contains("Claude"))
+    func testLoginUsesFreshNonPersistentDataStores() {
+        let first = ConsoleAuthWebView.makeWebsiteDataStore()
+        let second = ConsoleAuthWebView.makeWebsiteDataStore()
+
+        XCTAssertFalse(first.isPersistent)
+        XCTAssertFalse(second.isPersistent)
+        XCTAssertFalse(first === second)
+    }
+
+    func testRejectsLookalikeCookieDomainButAcceptsSubdomainBoundary() {
+        let cookies = [
+            makeCookie(name: "sessionKey", value: "lookalike", domain: "notclaude.ai"),
+            makeCookie(name: "sessionKey", value: "suffixAttack", domain: "claude.ai.attacker.example"),
+            makeCookie(name: "sessionKey", value: "subdomain", domain: "console.claude.ai"),
+        ]
+
+        let result = ConsoleAuthWebView.Coordinator.sessionCookieResult(
+            in: cookies, matching: "claude.ai"
+        )
+
+        XCTAssertEqual(result?.sessionKey, "subdomain")
+    }
+
+    func testRejectsInsecureAndExpiredSessionCookies() {
+        let cookies = [
+            makeCookie(name: "sessionKey", value: "insecure", domain: ".claude.ai", secure: false),
+            makeCookie(
+                name: "sessionKey",
+                value: "expired",
+                domain: ".claude.ai",
+                expires: Date(timeIntervalSinceNow: -60)
+            ),
+        ]
+
+        XCTAssertNil(ConsoleAuthWebView.Coordinator.sessionCookieResult(in: cookies, matching: "claude.ai"))
+    }
+
+    func testSelectsDuplicateCookiesDeterministically() {
+        let cookies = [
+            makeCookie(name: "sessionKey", value: "subdomain", domain: "console.claude.ai", path: "/"),
+            makeCookie(name: "sessionKey", value: "exact", domain: ".claude.ai", path: "/"),
+        ]
+
+        let result = ConsoleAuthWebView.Coordinator.sessionCookieResult(
+            in: cookies, matching: "claude.ai"
+        )
+
+        XCTAssertEqual(result?.sessionKey, "exact")
+    }
+
+    func testRejectsNonRootPathSessionCookie() {
+        let cookie = makeCookie(name: "sessionKey", value: "scoped", domain: ".claude.ai", path: "/settings")
+
+        XCTAssertNil(ConsoleAuthWebView.Coordinator.sessionCookieResult(in: [cookie], matching: "claude.ai"))
+    }
+
+    func testDoesNotCompleteFromBaselineCookie() {
+        let stale = makeCookie(name: "sessionKey", value: "stale", domain: ".claude.ai")
+        let fresh = makeCookie(name: "sessionKey", value: "fresh", domain: ".claude.ai")
+        let baseline = ConsoleAuthWebView.Coordinator.baselineCookieFingerprints(from: [stale])
+
+        let result = ConsoleAuthWebView.Coordinator.sessionCookieResult(
+            in: [stale, fresh],
+            matching: "claude.ai",
+            excluding: baseline
+        )
+
+        XCTAssertEqual(result?.sessionKey, "fresh")
+    }
+
+    func testCompletionCallbackRunsOnlyOnce() {
+        var completionCount = 0
+        let coordinator = ConsoleAuthWebView.Coordinator(cookieDomain: "claude.ai") { _ in
+            completionCount += 1
+        }
+        let result = ConsoleCookieResult(sessionKey: "sk-ant-sid01-abc", expiryDate: nil)
+
+        XCTAssertTrue(coordinator.complete(with: result))
+        XCTAssertFalse(coordinator.complete(with: result))
+        XCTAssertEqual(completionCount, 1)
+    }
+
+    func testAllowsOnlyHTTPSGetPopupRequests() {
+        var httpsGet = URLRequest(url: URL(string: "https://accounts.example.com/login")!)
+        httpsGet.httpMethod = "GET"
+        var httpsPost = httpsGet
+        httpsPost.httpMethod = "POST"
+        let httpGet = URLRequest(url: URL(string: "http://accounts.example.com/login")!)
+
+        XCTAssertTrue(ConsoleAuthWebView.Coordinator.isSafePopupRequest(httpsGet))
+        XCTAssertFalse(ConsoleAuthWebView.Coordinator.isSafePopupRequest(httpsPost))
+        XCTAssertFalse(ConsoleAuthWebView.Coordinator.isSafePopupRequest(httpGet))
     }
 }

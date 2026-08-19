@@ -22,32 +22,31 @@ struct ConsoleAuthWebView: NSViewRepresentable {
     let cookieDomain: String
     let onCookieFound: (ConsoleCookieResult) -> Void
 
-    /// Present as desktop Safari. The default WKWebView user agent identifies
-    /// the app as an embedded web view, which Google's sign-in flow rejects
-    /// outright (403 "disallowed_useragent") and which can trigger extra bot
-    /// challenges on the login page.
-    static let safariUserAgent =
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
-        + "(KHTML, like Gecko) Version/17.6 Safari/605.1.15"
+    /// A fresh store makes every login sheet an isolated authentication attempt.
+    /// This deliberately does not read or alter the user's browser profiles.
+    /// Kept separate from view creation so its privacy properties are testable.
+    static func makeWebsiteDataStore() -> WKWebsiteDataStore {
+        .nonPersistent()
+    }
 
     func makeNSView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
-        config.websiteDataStore = .default()
+        config.websiteDataStore = Self.makeWebsiteDataStore()
 
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
         webView.uiDelegate = context.coordinator
-        webView.customUserAgent = Self.safariUserAgent
 
         // The login page is a single-page app: after the user signs in, the
         // session cookie is set from an API response without a new main-frame
         // navigation, so didFinish alone never sees it. Observe the cookie
-        // store directly so the cookie is detected whenever it lands.
+        // store directly so the cookie is detected whenever it lands. Capture
+        // the baseline before navigation so a pre-existing cookie can never
+        // complete this attempt.
         let cookieStore = config.websiteDataStore.httpCookieStore
-        cookieStore.add(context.coordinator)
-        context.coordinator.observedCookieStore = cookieStore
-
-        webView.load(URLRequest(url: loginURL))
+        context.coordinator.beginAttempt(in: cookieStore) {
+            webView.load(URLRequest(url: loginURL))
+        }
 
         return webView
     }
@@ -55,7 +54,7 @@ struct ConsoleAuthWebView: NSViewRepresentable {
     func updateNSView(_ nsView: WKWebView, context: Context) {}
 
     static func dismantleNSView(_ nsView: WKWebView, coordinator: Coordinator) {
-        coordinator.stopObservingCookieStore()
+        coordinator.cancelAttempt()
     }
 
     func makeCoordinator() -> Coordinator {
@@ -63,33 +62,75 @@ struct ConsoleAuthWebView: NSViewRepresentable {
     }
 
     class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKHTTPCookieStoreObserver {
+        nonisolated struct CookieFingerprint: Hashable {
+            let name: String
+            let value: String
+            let domain: String
+            let path: String
+            let isSecure: Bool
+            let expiresAt: Date?
+        }
+
         let cookieDomain: String
         let onCookieFound: (ConsoleCookieResult) -> Void
         weak var observedCookieStore: WKHTTPCookieStore?
-        private var foundCookie = false
+        private var baselineCookieFingerprints = Set<CookieFingerprint>()
+        private var isAttemptReady = false
+        private var isCompleted = false
+        private var isCancelled = false
 
         init(cookieDomain: String, onCookieFound: @escaping (ConsoleCookieResult) -> Void) {
             self.cookieDomain = cookieDomain
             self.onCookieFound = onCookieFound
         }
 
-        func stopObservingCookieStore() {
+        func cancelAttempt() {
+            runOnMain { [weak self] in
+                guard let self else { return }
+                self.isCancelled = true
+                self.stopObservingCookieStore()
+                self.baselineCookieFingerprints.removeAll(keepingCapacity: false)
+            }
+        }
+
+        private func stopObservingCookieStore() {
             observedCookieStore?.remove(self)
             observedCookieStore = nil
+        }
+
+        /// Establish the cookie baseline before loading the login page. This is
+        /// important even with a non-persistent store because it keeps an
+        /// injected/test store or a future implementation from auto-importing
+        /// an existing credential.
+        func beginAttempt(in cookieStore: WKHTTPCookieStore, load: @escaping () -> Void) {
+            cookieStore.getAllCookies { [weak self] cookies in
+                self?.runOnMain {
+                    guard let self, !self.isCancelled, !self.isCompleted else { return }
+                    self.baselineCookieFingerprints = Self.baselineCookieFingerprints(from: cookies)
+                    self.isAttemptReady = true
+                    self.observedCookieStore = cookieStore
+                    cookieStore.add(self)
+                    load()
+                }
+            }
         }
 
         // MARK: WKHTTPCookieStoreObserver
 
         func cookiesDidChange(in cookieStore: WKHTTPCookieStore) {
-            guard !foundCookie else { return }
-            checkForSessionCookie(in: cookieStore)
+            runOnMain { [weak self] in
+                guard let self, self.isAttemptReady, !self.isCompleted, !self.isCancelled else { return }
+                self.checkForSessionCookie(in: cookieStore)
+            }
         }
 
         // MARK: WKNavigationDelegate
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            guard !foundCookie else { return }
-            checkForSessionCookie(in: webView.configuration.websiteDataStore.httpCookieStore)
+            runOnMain { [weak self] in
+                guard let self, self.isAttemptReady, !self.isCompleted, !self.isCancelled else { return }
+                self.checkForSessionCookie(in: webView.configuration.websiteDataStore.httpCookieStore)
+            }
         }
 
         // MARK: WKUIDelegate
@@ -100,9 +141,12 @@ struct ConsoleAuthWebView: NSViewRepresentable {
             for navigationAction: WKNavigationAction,
             windowFeatures: WKWindowFeatures
         ) -> WKWebView? {
-            // Handle SSO popups by loading in the same webview
-            if let url = navigationAction.request.url {
-                webView.load(URLRequest(url: url))
+            // Keep benign SSO popups in this isolated web view. Never turn a
+            // request into a GET: doing so loses its semantics and can make an
+            // untrusted popup URL executable in the login flow.
+            let request = navigationAction.request
+            if Self.isSafePopupRequest(request) {
+                webView.load(request)
             }
             return nil
         }
@@ -110,36 +154,118 @@ struct ConsoleAuthWebView: NSViewRepresentable {
         // MARK: Cookie detection
 
         /// Pure matcher, kept separate so it is unit-testable.
-        static func sessionCookieResult(
+        nonisolated static func sessionCookieResult(
             in cookies: [HTTPCookie],
-            matching cookieDomain: String
+            matching cookieDomain: String,
+            excluding baseline: Set<CookieFingerprint> = [],
+            now: Date = Date()
         ) -> ConsoleCookieResult? {
-            for cookie in cookies
-            where cookie.name == "sessionKey" && cookie.domain.contains(cookieDomain) {
-                return ConsoleCookieResult(
-                    sessionKey: cookie.value,
-                    expiryDate: cookie.expiresDate
-                )
+            let normalizedTargetDomain = normalizedDomain(cookieDomain)
+            guard !normalizedTargetDomain.isEmpty else { return nil }
+
+            let candidates = cookies.filter { cookie in
+                guard cookie.name == "sessionKey", cookie.isSecure else { return false }
+                guard cookie.expiresDate.map({ $0 > now }) ?? true else { return false }
+                guard domain(cookie.domain, matches: normalizedTargetDomain) else { return false }
+                // The captured key is used for root API requests, so do not
+                // accept a cookie that the browser itself scopes elsewhere.
+                guard cookie.path == "/" else { return false }
+                return !baseline.contains(cookieFingerprint(for: cookie))
             }
-            return nil
+
+            // Cookie stores do not guarantee iteration order. Prefer an exact
+            // domain, then a later expiry. The remaining fields make the
+            // choice stable even for malformed duplicate sets.
+            guard let cookie = candidates.sorted(by: {
+                cookieSortOrder($0, $1, matching: normalizedTargetDomain)
+            }).first else { return nil }
+            return ConsoleCookieResult(sessionKey: cookie.value, expiryDate: cookie.expiresDate)
+        }
+
+        nonisolated static func baselineCookieFingerprints(from cookies: [HTTPCookie]) -> Set<CookieFingerprint> {
+            Set(cookies.map(cookieFingerprint(for:)))
+        }
+
+        nonisolated static func cookieFingerprint(for cookie: HTTPCookie) -> CookieFingerprint {
+            CookieFingerprint(
+                name: cookie.name,
+                value: cookie.value,
+                domain: normalizedDomain(cookie.domain),
+                path: cookie.path,
+                isSecure: cookie.isSecure,
+                expiresAt: cookie.expiresDate
+            )
+        }
+
+        nonisolated static func isSafePopupRequest(_ request: URLRequest) -> Bool {
+            guard request.url?.scheme?.lowercased() == "https" else { return false }
+            return (request.httpMethod ?? "GET").uppercased() == "GET"
         }
 
         private func checkForSessionCookie(in cookieStore: WKHTTPCookieStore) {
             cookieStore.getAllCookies { [weak self] cookies in
-                guard let self = self, !self.foundCookie else { return }
-
-                guard
-                    let result = Coordinator.sessionCookieResult(
+                self?.runOnMain {
+                    guard let self, self.isAttemptReady, !self.isCompleted, !self.isCancelled else { return }
+                    guard let result = Self.sessionCookieResult(
                         in: cookies,
-                        matching: self.cookieDomain
-                    )
-                else { return }
-
-                self.foundCookie = true
-                self.stopObservingCookieStore()
-                DispatchQueue.main.async {
-                    self.onCookieFound(result)
+                        matching: self.cookieDomain,
+                        excluding: self.baselineCookieFingerprints
+                    ) else { return }
+                    self.complete(with: result)
                 }
+            }
+        }
+
+        /// Claims the result exactly once and always invokes the UI callback on
+        /// the main thread. Internal visibility lets focused tests exercise the
+        /// race guard without requiring a live WKWebView.
+        @discardableResult
+        func complete(with result: ConsoleCookieResult) -> Bool {
+            dispatchPrecondition(condition: .onQueue(.main))
+            guard !isCompleted, !isCancelled else { return false }
+            isCompleted = true
+            stopObservingCookieStore()
+            baselineCookieFingerprints.removeAll(keepingCapacity: false)
+            onCookieFound(result)
+            return true
+        }
+
+        private nonisolated static func normalizedDomain(_ domain: String) -> String {
+            domain.trimmingCharacters(in: .whitespacesAndNewlines)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "."))
+                .lowercased()
+        }
+
+        private nonisolated static func domain(_ cookieDomain: String, matches targetDomain: String) -> Bool {
+            let normalizedCookieDomain = normalizedDomain(cookieDomain)
+            return normalizedCookieDomain == targetDomain
+                || normalizedCookieDomain.hasSuffix("." + targetDomain)
+        }
+
+        private nonisolated static func cookieSortOrder(
+            _ lhs: HTTPCookie,
+            _ rhs: HTTPCookie,
+            matching targetDomain: String
+        ) -> Bool {
+            let lhsDomain = normalizedDomain(lhs.domain)
+            let rhsDomain = normalizedDomain(rhs.domain)
+            let lhsIsExact = lhsDomain == targetDomain
+            let rhsIsExact = rhsDomain == targetDomain
+            if lhsIsExact != rhsIsExact { return lhsIsExact }
+            if lhsDomain != rhsDomain { return lhsDomain < rhsDomain }
+            if lhs.path.count != rhs.path.count { return lhs.path.count > rhs.path.count }
+
+            let lhsExpiry = lhs.expiresDate ?? .distantFuture
+            let rhsExpiry = rhs.expiresDate ?? .distantFuture
+            if lhsExpiry != rhsExpiry { return lhsExpiry > rhsExpiry }
+            return lhs.value < rhs.value
+        }
+
+        private func runOnMain(_ work: @escaping () -> Void) {
+            if Thread.isMainThread {
+                work()
+            } else {
+                DispatchQueue.main.async(execute: work)
             }
         }
     }
