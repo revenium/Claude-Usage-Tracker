@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.4] - 2026-08-19
+
+### Fixed
+
+- **Claude sign-in sessions are now isolated per attempt.** Each embedded
+  sign-in starts with a fresh, nonpersistent session and accepts only a newly
+  issued, secure, unexpired, root-scoped session cookie for the intended
+  Claude domain, rejecting stale or wrong-account cookies.
+
 ## [4.0.3] - 2026-08-15
 
 ### Fixed
