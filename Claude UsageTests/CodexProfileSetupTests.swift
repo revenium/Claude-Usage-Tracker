@@ -946,6 +946,96 @@ final class CodexProfileSetupTests: HostedAppTestCase {
         XCTAssertEqual(completion.value, 1)
     }
 
+    func testManualClaudeSetupRejectsExistingTargetAfterActiveProfileSwitch()
+        async throws
+    {
+        let context = makeContext()
+        let first = try context.manager.createInitialProfile(
+            name: "First Claude",
+            providerConfiguration: .claude
+        )
+        let second = try context.manager.createProfileThrowing(
+            name: "Second Claude",
+            providerConfiguration: .claude
+        )
+        await context.manager.activateProfile(second.id)
+        let dependencies = makeDependencies(manager: context.manager)
+
+        do {
+            _ = try await dependencies.completeClaudeManualSetup(
+                sessionKey: "test-session-key",
+                organizationID: "test-org",
+                autoStartSessionEnabled: false,
+                target: .existing(first.id)
+            )
+            XCTFail("Expected captured target switch to be rejected")
+        } catch {
+            XCTAssertEqual(
+                error as? ProviderUIOperationError,
+                .profileChanged
+            )
+        }
+    }
+
+    func testManualClaudeSetupRejectsNewTargetWhenClaudeAppeared()
+        async throws
+    {
+        let context = makeContext()
+        _ = try context.manager.createInitialProfile(
+            name: "Appeared Claude",
+            providerConfiguration: .claude
+        )
+        let dependencies = makeDependencies(manager: context.manager)
+
+        do {
+            _ = try await dependencies.completeClaudeManualSetup(
+                sessionKey: "test-session-key",
+                organizationID: "test-org",
+                autoStartSessionEnabled: false,
+                target: .newProfile
+            )
+            XCTFail("Expected new-profile target to be rejected")
+        } catch {
+            XCTAssertEqual(
+                error as? ProviderUIOperationError,
+                .profileChanged
+            )
+        }
+    }
+
+    func testManualClaudeSetupRetriesTheExactPartiallyCreatedProfile()
+        async throws
+    {
+        let context = makeContext()
+        let home = try makeHome()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let codex = try context.manager.createInitialCodexProfile(
+            name: "Codex",
+            linkedHomePath: home.path
+        )
+        let dependencies = makeDependencies(manager: context.manager)
+        let createdClaude = try dependencies.createProfile(
+            name: "Created Claude",
+            provider: .claude,
+            linkedCodexHome: nil
+        )
+        XCTAssertNil(context.manager.activeClaudeProfile)
+
+        let completed = try await dependencies.completeClaudeManualSetup(
+            sessionKey: "test-session-key",
+            organizationID: "test-org",
+            autoStartSessionEnabled: false,
+            acceptSessionOnlyStorage: true,
+            target: .createdProfile(createdClaude.id)
+        )
+
+        XCTAssertEqual(completed.id, createdClaude.id)
+        XCTAssertEqual(context.manager.activeClaudeProfile?.id, createdClaude.id)
+        XCTAssertEqual(context.manager.activeProfile?.id, createdClaude.id)
+        XCTAssertEqual(context.manager.profiles.count, 2)
+        XCTAssertEqual(dependencies.profile(id: codex.id)?.providerID, .codex)
+    }
+
     func testIncompleteCodexCommitResumesExactExistingProfile()
         async throws
     {

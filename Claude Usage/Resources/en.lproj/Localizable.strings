@@ -1276,3 +1276,21 @@
 
 // Launch splash
 "launch.splash.running" = "Running in the menu bar";
+"chrome_assisted.recommended" = "Recommended: open your Claude account in Chrome";
+"chrome_assisted.description" = "Choose a Chrome profile to open Claude, then manually paste and validate your session key here.";
+"chrome_assisted.no_profiles" = "No eligible Chrome profiles were found. You can still enter a session key manually.";
+"chrome_assisted.profile_picker" = "Chrome profile";
+"chrome_assisted.choose_profile" = "Choose a Chrome profile";
+"chrome_assisted.launch" = "Open selected Chrome profile";
+"chrome_assisted.launch_failed" = "Chrome could not be opened with that profile. Choose a profile and try again, or use a fallback.";
+"chrome_assisted.verify_account" = "Chrome profile %@ opened. Visually verify the intended Claude account in Chrome before pasting a session key.";
+"chrome_assisted.no_extraction" = "Selecting a browser profile does not extract or verify a session key.";
+"chrome_assisted.embedded_fallback" = "Fallback: sign in using the embedded browser instead.";
+"chrome_assisted.validation_success" = "Session key validated. Found %ld organization(s).";
+"chrome_assisted.no_organizations" = "The session key is valid, but no organizations were found. Choose a different account or key.";
+"chrome_assisted.no_active_profile" = "Choose an active Claude profile before validating this session key.";
+"chrome_assisted.profile_changed" = "The active Claude profile changed. Start this setup attempt again.";
+"chrome_assisted.confirm_context" = "I confirmed that Chrome profile %@ is the context I intend to use for RevvyTach profile %@. This is not API-verified.";
+"chrome_assisted.new_claude_profile" = "new Claude profile";
+"personal.session_key_stored" = "Session key stored";
+"personal.session_key_validated" = "Session key validated";

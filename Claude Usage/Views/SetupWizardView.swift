@@ -33,6 +33,11 @@ struct SetupWizardState {
     var autoStartSessionEnabled: Bool = false
     var showInstructions: Bool = false
     var showingAuthSheet: Bool = false
+    var attempt = SessionKeyAttempt()
+    var claudeSetupTarget: ClaudeManualSetupTarget? = nil
+    var targetProfileName: String? = nil
+    var launchedChromeProfileLabel: String? = nil
+    var hasConfirmedChromeContext = false
 }
 
 /// Professional, native macOS setup wizard with 3-step flow
@@ -282,7 +287,11 @@ struct SetupWizardView: View {
             Group {
                 switch wizardState.currentStep {
                 case .enterKey:
-                    EnterKeyStepSetup(wizardState: $wizardState, apiService: apiService)
+                    EnterKeyStepSetup(
+                        wizardState: $wizardState,
+                        apiService: apiService,
+                        dependencies: dependencies
+                    )
                 case .selectOrg:
                     SelectOrgStepSetup(wizardState: $wizardState)
                 case .confirm:
@@ -981,6 +990,7 @@ struct EnterKeyStepSetup: View {
     @Environment(\.dismiss) var dismiss
     @Binding var wizardState: SetupWizardState
     let apiService: ClaudeAPIService
+    let dependencies: ProviderUIDependencies
 
     var body: some View {
         VStack(spacing: 0) {
@@ -993,13 +1003,30 @@ struct EnterKeyStepSetup: View {
                         .font(.system(size: 13))
                         .foregroundColor(.secondary)
 
-                    // Primary: Sign in via embedded browser
+                    ChromeAssistedSessionKeyEntry(
+                        sessionKey: $wizardState.sessionKey,
+                        validationState: wizardState.validationState,
+                        onSessionKeyChanged: retireAttemptForKeyEdit,
+                        onValidationRequested: testConnection,
+                        onLaunchStarted: beginChromeLaunch,
+                        isLaunchCurrent: { generation in
+                            wizardState.attempt.matches(generation)
+                                && capturedTargetIsStillCurrent()
+                        },
+                        onChromeProfileLaunched: { label in
+                            wizardState.launchedChromeProfileLabel = label
+                            wizardState.hasConfirmedChromeContext = false
+                        }
+                    )
+
+                    // Fallback: the hardened embedded sign-in remains an
+                    // alternative to browser-assisted manual setup.
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("personal.signin_description".localized)
+                        Text("chrome_assisted.embedded_fallback".localized)
                             .font(.system(size: 12))
                             .foregroundColor(.secondary)
 
-                        Button(action: { wizardState.showingAuthSheet = true }) {
+                        Button(action: beginEmbeddedAuth) {
                             HStack(spacing: 6) {
                                 Image(systemName: "globe")
                                     .font(.system(size: 12))
@@ -1019,106 +1046,18 @@ struct EnterKeyStepSetup: View {
                             cookieDomain: "claude.ai",
                             onSuccess: { result in
                                 wizardState.showingAuthSheet = false
-                                wizardState.sessionKey = result.sessionKey
-                                testConnectionAfterAuth()
+                                replaceSessionKey(
+                                    result.sessionKey,
+                                    preserveCapturedTarget: true
+                                )
+                                testConnection()
                             },
                             onCancel: {
                                 wizardState.showingAuthSheet = false
+                                retireAttempt(clearKey: false)
                             }
                         )
                     }
-
-                    // Fallback: Manual session key entry
-                    DisclosureGroup("personal.advanced_manual_key".localized) {
-                        VStack(alignment: .leading, spacing: 12) {
-                            // Action buttons
-                            HStack(spacing: 10) {
-                                Button(action: {
-                                    if let url = URL(string: "https://claude.ai") {
-                                        NSWorkspace.shared.open(url)
-                                    }
-                                }) {
-                                    HStack {
-                                        Image(systemName: "safari")
-                                        Text("setup.open_claude_ai".localized)
-                                    }
-                                    .font(.system(size: 12))
-                                    .frame(maxWidth: .infinity)
-                                }
-                                .buttonStyle(.bordered)
-
-                                Button(action: { wizardState.showInstructions.toggle() }) {
-                                    HStack {
-                                        Image(systemName: wizardState.showInstructions ? "chevron.up" : "chevron.down")
-                                        Text(wizardState.showInstructions ? "setup.hide_instructions".localized : "setup.show_instructions".localized)
-                                    }
-                                    .font(.system(size: 12))
-                                    .frame(maxWidth: .infinity)
-                                }
-                                .buttonStyle(.bordered)
-                            }
-
-                            // Instructions (expandable)
-                            if wizardState.showInstructions {
-                                VStack(alignment: .leading, spacing: 8) {
-                                    InstructionRow(text: "setup.instruction.step1".localized)
-                                    InstructionRow(text: "setup.instruction.step2".localized)
-                                    InstructionRow(text: "setup.instruction.step3".localized)
-                                    InstructionRow(text: "setup.instruction.step4".localized)
-                                }
-                                .padding(16)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .fill(Color(nsColor: .controlBackgroundColor))
-                                )
-                            }
-
-                            Divider()
-
-                            // Session key input
-                            VStack(alignment: .leading, spacing: 12) {
-                                Text("personal.label_session_key".localized)
-                                    .font(.system(size: 13, weight: .medium))
-
-                                TextField("personal.placeholder_session_key".localized, text: $wizardState.sessionKey)
-                                    .textFieldStyle(.plain)
-                                    .font(.system(size: 12, design: .monospaced))
-                                    .padding(10)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 6)
-                                            .fill(Color(nsColor: .textBackgroundColor))
-                                            .overlay(
-                                                RoundedRectangle(cornerRadius: 6)
-                                                    .strokeBorder(Color.gray.opacity(0.2), lineWidth: 1)
-                                            )
-                                    )
-
-                                Text("setup.paste_session_key".localized)
-                                    .font(.system(size: 11))
-                                    .foregroundColor(.secondary)
-                            }
-
-                            HStack {
-                                Spacer()
-
-                                Button(action: testConnection) {
-                                    if case .validating = wizardState.validationState {
-                                        ProgressView()
-                                            .scaleEffect(0.6)
-                                            .frame(width: 100)
-                                    } else {
-                                        Text("wizard.test_connection".localized)
-                                            .frame(width: 100)
-                                    }
-                                }
-                                .buttonStyle(.borderedProminent)
-                                .disabled(wizardState.sessionKey.isEmpty || wizardState.validationState == .validating)
-                            }
-                        }
-                        .padding(.top, 8)
-                    }
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.secondary)
 
                     // Validation Status
                     if case .success(let message) = wizardState.validationState {
@@ -1135,40 +1074,14 @@ struct EnterKeyStepSetup: View {
             // Footer
             HStack {
                 Button("common.cancel".localized) {
-                    // Dismiss handled by parent
+                    retireAttempt(clearKey: true)
+                    dismiss()
                 }
                 .buttonStyle(.bordered)
 
                 Spacer()
             }
             .padding(20)
-        }
-    }
-
-    private func testConnectionAfterAuth() {
-        wizardState.validationState = .validating
-
-        Task {
-            do {
-                let organizations = try await apiService.testSessionKey(wizardState.sessionKey)
-
-                await MainActor.run {
-                    wizardState.testedOrganizations = organizations
-                    wizardState.validationState = .success("Connection successful! Found \(organizations.count) organization(s)")
-
-                    withAnimation {
-                        wizardState.currentStep = .selectOrg
-                    }
-                }
-            } catch {
-                let appError = AppError.wrap(error)
-                ErrorLogger.shared.log(appError, severity: .error)
-
-                await MainActor.run {
-                    let errorMessage = SetupErrorMessage.text(for: appError)
-                    wizardState.validationState = .error(errorMessage)
-                }
-            }
         }
     }
 
@@ -1181,16 +1094,48 @@ struct EnterKeyStepSetup: View {
             return
         }
 
+        retireAttempt(
+            clearKey: false,
+            clearChromeContext: false,
+            clearTarget: false
+        )
+        if wizardState.claudeSetupTarget == nil {
+            captureNewTarget()
+        }
+        guard capturedTargetIsStillCurrent() else {
+            wizardState.validationState = .error(
+                "chrome_assisted.profile_changed".localized
+            )
+            return
+        }
+        let generation = wizardState.attempt.generation
+        let key = wizardState.sessionKey
         wizardState.validationState = .validating
 
         Task {
             do {
                 // READ-ONLY TEST - does NOT save to Keychain
-                let organizations = try await apiService.testSessionKey(wizardState.sessionKey)
+                let organizations = try await apiService.testSessionKey(key)
 
                 await MainActor.run {
+                    guard isCurrent(generation: generation, key: key) else {
+                        return
+                    }
+                    guard SessionKeyAttemptPolicy.hasSelectableOrganization(
+                        organizations.count
+                    ) else {
+                        wizardState.validationState = .error(
+                            "chrome_assisted.no_organizations".localized
+                        )
+                        return
+                    }
                     wizardState.testedOrganizations = organizations
-                    wizardState.validationState = .success("Connection successful! Found \(organizations.count) organization(s)")
+                    wizardState.validationState = .success(
+                        String(
+                            format: "chrome_assisted.validation_success".localized,
+                            organizations.count
+                        )
+                    )
 
                     // Auto-advance to next step
                     withAnimation {
@@ -1203,10 +1148,111 @@ struct EnterKeyStepSetup: View {
                 ErrorLogger.shared.log(appError, severity: .error)
 
                 await MainActor.run {
+                    guard isCurrent(generation: generation, key: key) else {
+                        return
+                    }
                     let errorMessage = SetupErrorMessage.text(for: appError)
                     wizardState.validationState = .error(errorMessage)
                 }
             }
+        }
+    }
+
+    private func replaceSessionKey(
+        _ key: String,
+        preserveCapturedTarget: Bool = false
+    ) {
+        wizardState.sessionKey = key
+        retireAttempt(
+            clearKey: false,
+            clearTarget: !preserveCapturedTarget
+        )
+    }
+
+    private func beginEmbeddedAuth() {
+        _ = beginChromeLaunch()
+        wizardState.showingAuthSheet = true
+    }
+
+    private func beginChromeLaunch() -> UUID {
+        retireAttempt(clearKey: false)
+        captureNewTarget()
+        return wizardState.attempt.generation
+    }
+
+    private func retireAttemptForKeyEdit() {
+        retireAttempt(
+            clearKey: false,
+            clearChromeContext: false,
+            clearTarget: false
+        )
+    }
+
+    private func retireAttempt(
+        clearKey: Bool,
+        clearChromeContext: Bool = true,
+        clearTarget: Bool = true
+    ) {
+        wizardState.attempt.invalidate()
+        wizardState.validationState = .idle
+        wizardState.testedOrganizations = []
+        wizardState.selectedOrgId = nil
+        if clearTarget {
+            wizardState.claudeSetupTarget = nil
+            wizardState.targetProfileName = nil
+        }
+        if clearChromeContext {
+            wizardState.launchedChromeProfileLabel = nil
+            wizardState.hasConfirmedChromeContext = false
+        }
+        if clearKey { wizardState.sessionKey = "" }
+    }
+
+    private func isCurrent(generation: UUID, key: String) -> Bool {
+        SessionKeyAttemptPolicy.acceptsCompletion(
+            generation: generation,
+            currentGeneration: wizardState.attempt.generation,
+            keyMatches: wizardState.sessionKey == key,
+            targetMatches: capturedTargetIsStillCurrent()
+        )
+    }
+
+    private func captureNewTarget() {
+        if let profile = dependencies.profileManager.activeClaudeProfile {
+            wizardState.claudeSetupTarget = .existing(profile.id)
+            wizardState.targetProfileName = profile.name
+        } else {
+            wizardState.claudeSetupTarget = .newProfile
+            wizardState.targetProfileName =
+                "chrome_assisted.new_claude_profile".localized
+        }
+    }
+
+    private func capturedTargetIsStillCurrent() -> Bool {
+        guard let target = wizardState.claudeSetupTarget else {
+            return false
+        }
+        switch target {
+        case .compatibilityCurrent:
+            return false
+        case .existing(let profileID):
+            return dependencies.profileManager.activeClaudeProfile?.id == profileID
+                && dependencies.profileManager.profiles.contains(where: {
+                    $0.id == profileID && $0.providerID == .claude
+                })
+        case .createdProfile(let profileID):
+            let claudeProfiles = dependencies.profileManager.profiles.filter {
+                $0.providerID == .claude
+            }
+            return claudeProfiles.map(\.id) == [profileID]
+                && (dependencies.profileManager.activeClaudeProfile == nil
+                    || dependencies.profileManager.activeClaudeProfile?.id
+                        == profileID)
+        case .newProfile:
+            return dependencies.profileManager.activeClaudeProfile == nil
+                && !dependencies.profileManager.profiles.contains(where: {
+                    $0.providerID == .claude
+                })
         }
     }
 }
@@ -1290,13 +1336,6 @@ struct SelectOrgStepSetup: View {
             }
             .padding(20)
         }
-        .onAppear {
-            // Auto-select first org if none selected
-            if wizardState.selectedOrgId == nil,
-               let firstOrg = wizardState.testedOrganizations.first {
-                wizardState.selectedOrgId = firstOrg.uuid
-            }
-        }
     }
 }
 
@@ -1324,13 +1363,33 @@ struct ConfirmStepSetup: View {
                         Text("wizard.config_summary".localized)
                             .font(.system(size: 14, weight: .semibold))
 
-                        // Session Key (masked)
+                        // The key itself is never shown after entry.
                         VStack(alignment: .leading, spacing: 6) {
                             Text("wizard.session_key".localized)
                                 .font(.system(size: 12, weight: .medium))
                                 .foregroundColor(.secondary)
-                            Text(maskSessionKey(wizardState.sessionKey))
-                                .font(.system(size: 11, design: .monospaced))
+                            Text("personal.session_key_validated".localized)
+                                .font(.system(size: 11))
+                        }
+
+                        if let chromeLabel = wizardState.launchedChromeProfileLabel {
+                            Divider()
+                            Toggle(
+                                isOn: $wizardState.hasConfirmedChromeContext
+                            ) {
+                                Text(
+                                    String(
+                                        format:
+                                            "chrome_assisted.confirm_context"
+                                                .localized,
+                                        chromeLabel,
+                                        targetProfileName
+                                    )
+                                )
+                                .font(.system(size: 11))
+                            }
+                            .toggleStyle(.checkbox)
+                            .accessibilityIdentifier("chrome.context_confirmation")
                         }
 
                         Divider()
@@ -1435,32 +1494,52 @@ struct ConfirmStepSetup: View {
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(isSaving)
+                .disabled(isSaving || !canSave)
             }
             .padding(20)
         }
     }
 
     private func saveConfiguration(acceptSessionOnly: Bool = false) {
+        guard isSaveAllowed(acceptSessionOnly: acceptSessionOnly),
+              let target = wizardState.claudeSetupTarget,
+              capturedTargetIsStillCurrent() else {
+            wizardState.validationState = .error(
+                "chrome_assisted.profile_changed".localized
+            )
+            return
+        }
+        let generation = wizardState.attempt.generation
+        let key = wizardState.sessionKey
+        let organizationID = wizardState.selectedOrgId
         isSaving = true
 
         Task {
             do {
-                _ = try await dependencies
+                let completedProfile = try await dependencies
                     .completeClaudeManualSetup(
-                        sessionKey: wizardState.sessionKey,
-                        organizationID:
-                            wizardState.selectedOrgId,
+                        sessionKey: key,
+                        organizationID: organizationID,
                         autoStartSessionEnabled:
                             wizardState
                                 .autoStartSessionEnabled,
-                        acceptSessionOnlyStorage: acceptSessionOnly
+                        acceptSessionOnlyStorage: acceptSessionOnly,
+                        target: target
                     )
                 LoggingService.shared.log(
                     "SetupWizard: Updated profile setup preferences"
                 )
 
                 await MainActor.run {
+                    guard isSuccessfulCompletionCurrent(
+                        generation: generation,
+                        key: key,
+                        target: target,
+                        completedProfile: completedProfile
+                    ) else {
+                        isSaving = false
+                        return
+                    }
                     // Reset circuit breaker on successful credential save
                     ErrorRecovery.shared.recordSuccess(for: .api)
 
@@ -1473,6 +1552,31 @@ struct ConfirmStepSetup: View {
                 ErrorLogger.shared.log(appError, severity: .error)
 
                 await MainActor.run {
+                    guard isAttemptCurrent(
+                        generation: generation,
+                        key: key,
+                        target: target
+                    ) else {
+                        isSaving = false
+                        return
+                    }
+                    let retryTarget = SessionKeyAttemptPolicy
+                        .retryTargetAfterFailedSetup(
+                            capturedTarget: target,
+                            claudeProfileIDs: dependencies.profileManager
+                                .profiles.filter {
+                                    $0.providerID == .claude
+                                }.map(\.id)
+                        )
+                    if retryTarget != target {
+                        wizardState.claudeSetupTarget = retryTarget
+                        if case .createdProfile(let profileID) = retryTarget {
+                            wizardState.targetProfileName = dependencies
+                                .profileManager.profiles.first {
+                                    $0.id == profileID
+                                }?.name
+                        }
+                    }
                     wizardState.validationState = .error(
                         SetupErrorMessage.text(for: appError)
                     )
@@ -1489,11 +1593,82 @@ struct ConfirmStepSetup: View {
         }
     }
 
-    private func maskSessionKey(_ key: String) -> String {
-        guard key.count > 20 else { return "•••••••••" }
-        let prefix = String(key.prefix(12))
-        let suffix = String(key.suffix(4))
-        return "\(prefix)•••••\(suffix)"
+    private var targetProfileName: String {
+        wizardState.targetProfileName
+            ?? "chrome_assisted.new_claude_profile".localized
+    }
+
+    private var canSave: Bool {
+        isSaveAllowed(acceptSessionOnly: false)
+    }
+
+    private func isSaveAllowed(acceptSessionOnly: Bool) -> Bool {
+        SessionKeyAttemptPolicy.permitsSave(
+            validationSucceeded: wizardState.validationState.isSuccess,
+            isSessionOnlyRetry: acceptSessionOnly && offerSessionOnly,
+            selectedOrganizationID: wizardState.selectedOrgId,
+            chromeProfileLabel: wizardState.launchedChromeProfileLabel,
+            chromeContextConfirmed: wizardState.hasConfirmedChromeContext,
+            targetMatches: capturedTargetIsStillCurrent()
+        )
+    }
+
+    private func isSuccessfulCompletionCurrent(
+        generation: UUID,
+        key: String,
+        target: ClaudeManualSetupTarget,
+        completedProfile: Profile
+    ) -> Bool {
+        SessionKeyAttemptPolicy.acceptsSetupCompletion(
+            generation: generation,
+            currentGeneration: wizardState.attempt.generation,
+            keyMatches: wizardState.sessionKey == key,
+            capturedTarget: wizardState.claudeSetupTarget == target
+                ? target : nil,
+            completedProfileID: completedProfile.id,
+            completedProfileIsClaude: completedProfile.providerID == .claude,
+            activeClaudeProfileID:
+                dependencies.profileManager.activeClaudeProfile?.id
+        )
+    }
+
+    private func isAttemptCurrent(
+        generation: UUID,
+        key: String,
+        target: ClaudeManualSetupTarget
+    ) -> Bool {
+        SessionKeyAttemptPolicy.acceptsCompletion(
+            generation: generation,
+            currentGeneration: wizardState.attempt.generation,
+            keyMatches: wizardState.sessionKey == key,
+            targetMatches: wizardState.claudeSetupTarget == target
+        )
+    }
+
+    private func capturedTargetIsStillCurrent() -> Bool {
+        guard let target = wizardState.claudeSetupTarget else { return false }
+        switch target {
+        case .compatibilityCurrent:
+            return false
+        case .existing(let profileID):
+            return dependencies.profileManager.activeClaudeProfile?.id == profileID
+                && dependencies.profileManager.profiles.contains(where: {
+                    $0.id == profileID && $0.providerID == .claude
+                })
+        case .createdProfile(let profileID):
+            let claudeProfiles = dependencies.profileManager.profiles.filter {
+                $0.providerID == .claude
+            }
+            return claudeProfiles.map(\.id) == [profileID]
+                && (dependencies.profileManager.activeClaudeProfile == nil
+                    || dependencies.profileManager.activeClaudeProfile?.id
+                        == profileID)
+        case .newProfile:
+            return dependencies.profileManager.activeClaudeProfile == nil
+                && !dependencies.profileManager.profiles.contains(where: {
+                    $0.providerID == .claude
+                })
+        }
     }
 }
 

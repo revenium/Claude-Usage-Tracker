@@ -1262,3 +1262,21 @@
 
 // Launch splash
 "launch.splash.running" = "Läuft in der Menüleiste";
+"chrome_assisted.recommended" = "Empfohlen: Ihr Claude-Konto in Chrome öffnen";
+"chrome_assisted.description" = "Wählen Sie ein Chrome-Profil, um Claude zu öffnen, und fügen Sie Ihren Sitzungsschlüssel hier manuell ein und validieren Sie ihn.";
+"chrome_assisted.no_profiles" = "Keine geeigneten Chrome-Profile gefunden. Sie können den Sitzungsschlüssel weiterhin manuell eingeben.";
+"chrome_assisted.profile_picker" = "Chrome-Profil";
+"chrome_assisted.choose_profile" = "Chrome-Profil auswählen";
+"chrome_assisted.launch" = "Ausgewähltes Chrome-Profil öffnen";
+"chrome_assisted.launch_failed" = "Chrome konnte nicht mit diesem Profil geöffnet werden. Wählen Sie ein Profil und versuchen Sie es erneut, oder verwenden Sie eine Alternative.";
+"chrome_assisted.verify_account" = "Chrome-Profil %@ wurde geöffnet. Prüfen Sie vor dem Einfügen eines Sitzungsschlüssels visuell das gewünschte Claude-Konto in Chrome.";
+"chrome_assisted.no_extraction" = "Die Auswahl eines Browserprofils extrahiert oder überprüft keinen Sitzungsschlüssel.";
+"chrome_assisted.embedded_fallback" = "Alternative: Melden Sie sich stattdessen im eingebetteten Browser an.";
+"chrome_assisted.validation_success" = "Sitzungsschlüssel validiert. %ld Organisation(en) gefunden.";
+"chrome_assisted.no_organizations" = "Der Sitzungsschlüssel ist gültig, aber es wurden keine Organisationen gefunden. Wählen Sie ein anderes Konto oder einen anderen Schlüssel.";
+"chrome_assisted.no_active_profile" = "Wählen Sie vor der Validierung dieses Sitzungsschlüssels ein aktives Claude-Profil.";
+"chrome_assisted.profile_changed" = "Das aktive Claude-Profil wurde geändert. Starten Sie diesen Einrichtungsvorgang erneut.";
+"chrome_assisted.confirm_context" = "Ich bestätige, dass das Chrome-Profil %@ der Kontext ist, den ich für das RevvyTach-Profil %@ verwenden möchte. Dies ist nicht API-verifiziert.";
+"chrome_assisted.new_claude_profile" = "neues Claude-Profil";
+"personal.session_key_stored" = "Sitzungsschlüssel gespeichert";
+"personal.session_key_validated" = "Sitzungsschlüssel validiert";

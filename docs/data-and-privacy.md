@@ -67,6 +67,14 @@ fragments from interrupted writes are swept automatically, restricted to files t
 Nothing outside these paths is written. The app does not edit your shell configuration, your
 `settings.json`, or any Codex file.
 
+### Chrome-assisted manual setup
+
+When you choose the recommended Chrome-assisted manual session-key path, RevvyTach reads only
+Chrome's `Local State` profile labels and directory names to offer a profile picker. It never
+reads Chrome cookies, login databases, browser history, or account identifiers. Selecting a
+profile opens that profile at Claude so you can visually verify the account and manually paste a
+session key; browser selection does not extract or verify a session key.
+
 ---
 
 ## Usage history
@@ -145,6 +153,8 @@ See [Codex subscription support](codex-subscriptions.md) for what is and isn't r
 - **No third-party services.** The only hosts contacted are the ones listed above.
 - **No credential exfiltration.** Credentials go to the provider that issued them, over HTTPS,
   and nowhere else.
+- **No browser credential access.** Chrome-assisted setup never reads cookies or login databases,
+  and does not use remote debugging, extensions, or browser automation.
 - **No account access beyond reading usage.** The app cannot send messages, spend credits, or
   redeem anything. Codex reset credits are display-only.
 

@@ -1242,3 +1242,21 @@
 
 // Launch splash
 "launch.splash.running" = "En cours d'exécution dans la barre de menus";
+"chrome_assisted.recommended" = "Recommandé : ouvrez votre compte Claude dans Chrome";
+"chrome_assisted.description" = "Choisissez un profil Chrome pour ouvrir Claude, puis collez et validez ici votre clé de session manuellement.";
+"chrome_assisted.no_profiles" = "Aucun profil Chrome admissible n’a été trouvé. Vous pouvez toujours saisir une clé de session manuellement.";
+"chrome_assisted.profile_picker" = "Profil Chrome";
+"chrome_assisted.choose_profile" = "Choisir un profil Chrome";
+"chrome_assisted.launch" = "Ouvrir le profil Chrome sélectionné";
+"chrome_assisted.launch_failed" = "Chrome n’a pas pu être ouvert avec ce profil. Choisissez un profil et réessayez, ou utilisez une autre méthode.";
+"chrome_assisted.verify_account" = "Le profil Chrome %@ est ouvert. Vérifiez visuellement le compte Claude voulu dans Chrome avant de coller une clé de session.";
+"chrome_assisted.no_extraction" = "La sélection d’un profil de navigateur n’extrait ni ne vérifie une clé de session.";
+"chrome_assisted.embedded_fallback" = "Alternative : connectez-vous avec le navigateur intégré.";
+"chrome_assisted.validation_success" = "Clé de session validée. %ld organisation(s) trouvée(s).";
+"chrome_assisted.no_organizations" = "La clé de session est valide, mais aucune organisation n’a été trouvée. Choisissez un autre compte ou une autre clé.";
+"chrome_assisted.no_active_profile" = "Choisissez un profil Claude actif avant de valider cette clé de session.";
+"chrome_assisted.profile_changed" = "Le profil Claude actif a changé. Recommencez cette configuration.";
+"chrome_assisted.confirm_context" = "Je confirme que le profil Chrome %@ est le contexte à utiliser pour le profil RevvyTach %@. Cela n’est pas vérifié par l’API.";
+"chrome_assisted.new_claude_profile" = "nouveau profil Claude";
+"personal.session_key_stored" = "Clé de session enregistrée";
+"personal.session_key_validated" = "Clé de session validée";

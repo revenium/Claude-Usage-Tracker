@@ -15,6 +15,16 @@ nonisolated struct ProviderUIRequestIdentity: Equatable, Sendable {
     let codexHomeIdentity: CodexHomeFilesystemIdentity?
 }
 
+/// An immutable target selected before a manual Claude setup attempt begins.
+/// `.compatibilityCurrent` exists for older callers; new UI must capture and
+/// supply either an exact existing profile or the explicit no-profile state.
+nonisolated enum ClaudeManualSetupTarget: Equatable, Sendable {
+    case compatibilityCurrent
+    case existing(UUID)
+    case newProfile
+    case createdProfile(UUID)
+}
+
 /// Provider-correct profile status shared by settings pickers and CRUD rows.
 ///
 /// Claude CLI metadata is intentionally ignored for Codex profiles, even if
@@ -508,20 +518,21 @@ final class ProviderUIDependencies {
         sessionKey: String,
         organizationID: String?,
         autoStartSessionEnabled: Bool,
-        acceptSessionOnlyStorage: Bool = false
+        acceptSessionOnlyStorage: Bool = false,
+        target: ClaudeManualSetupTarget = .compatibilityCurrent
     ) async throws -> Profile {
-        let target = try claudeSetupProfile()
+        let targetProfile = try resolvedClaudeManualSetupTarget(target)
         var credentials = try profileManager.loadCredentials(
-            for: target.id
+            for: targetProfile.id
         )
         credentials.claudeSessionKey = sessionKey
         credentials.organizationId = organizationID
         try profileManager.saveCredentials(
-            for: target.id,
+            for: targetProfile.id,
             credentials: credentials,
             acceptingSessionOnly: acceptSessionOnlyStorage
         )
-        var profile = try requiredProfile(target.id)
+        var profile = try requiredProfile(targetProfile.id)
         profile.autoStartSessionEnabled =
             autoStartSessionEnabled
         try profileManager.updateProfileThrowing(profile)
@@ -667,6 +678,48 @@ final class ProviderUIDependencies {
         guard profileManager.activeProfile?.id == profileID,
               profile(id: profileID) != nil else {
             throw ProviderUIOperationError.activationFailed
+        }
+    }
+
+    /// Resolves only the target captured by the UI. In particular, a setup
+    /// started with no Claude profile must not silently attach to one that
+    /// appeared while validation was in flight.
+    private func resolvedClaudeManualSetupTarget(
+        _ target: ClaudeManualSetupTarget
+    ) throws -> Profile {
+        switch target {
+        case .compatibilityCurrent:
+            return try claudeSetupProfile()
+        case .existing(let profileID):
+            guard let profile = profile(id: profileID),
+                  profile.providerID == .claude,
+                  profileManager.activeClaudeProfile?.id == profileID else {
+                throw ProviderUIOperationError.profileChanged
+            }
+            return profile
+        case .newProfile:
+            guard profileManager.activeClaudeProfile == nil,
+                  !profileManager.profiles.contains(where: {
+                      $0.providerID == .claude
+                  }) else {
+                throw ProviderUIOperationError.profileChanged
+            }
+            return try createProfile(
+                name: nil,
+                provider: .claude,
+                linkedCodexHome: nil
+            )
+        case .createdProfile(let profileID):
+            let claudeProfiles = profileManager.profiles.filter {
+                $0.providerID == .claude
+            }
+            guard claudeProfiles.map(\.id) == [profileID],
+                  let profile = claudeProfiles.first,
+                  profileManager.activeClaudeProfile == nil
+                    || profileManager.activeClaudeProfile?.id == profileID else {
+                throw ProviderUIOperationError.profileChanged
+            }
+            return profile
         }
     }
 

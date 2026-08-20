@@ -1262,3 +1262,21 @@
 
 // Launch splash
 "launch.splash.running" = "メニューバーで実行中";
+"chrome_assisted.recommended" = "推奨：Chrome で Claude アカウントを開く";
+"chrome_assisted.description" = "Chrome プロファイルを選んで Claude を開き、ここでセッションキーを手動で貼り付けて検証します。";
+"chrome_assisted.no_profiles" = "利用可能な Chrome プロファイルが見つかりませんでした。セッションキーは手動で入力できます。";
+"chrome_assisted.profile_picker" = "Chrome プロファイル";
+"chrome_assisted.choose_profile" = "Chrome プロファイルを選択";
+"chrome_assisted.launch" = "選択した Chrome プロファイルを開く";
+"chrome_assisted.launch_failed" = "このプロファイルで Chrome を開けませんでした。プロファイルを選び直すか、別の方法を使用してください。";
+"chrome_assisted.verify_account" = "Chrome プロファイル %@ を開きました。セッションキーを貼り付ける前に、Chrome で目的の Claude アカウントを目視で確認してください。";
+"chrome_assisted.no_extraction" = "ブラウザプロファイルを選択しても、セッションキーの取得や検証は行われません。";
+"chrome_assisted.embedded_fallback" = "代替手段：埋め込みブラウザでサインインします。";
+"chrome_assisted.validation_success" = "セッションキーを検証しました。%ld 件の組織が見つかりました。";
+"chrome_assisted.no_organizations" = "セッションキーは有効ですが、組織が見つかりませんでした。別のアカウントまたはキーを選択してください。";
+"chrome_assisted.no_active_profile" = "このセッションキーを検証する前に、アクティブな Claude プロファイルを選択してください。";
+"chrome_assisted.profile_changed" = "アクティブな Claude プロファイルが変更されました。設定をやり直してください。";
+"chrome_assisted.confirm_context" = "Chrome プロファイル %@ が RevvyTach プロファイル %@ に使用するコンテキストであることを確認しました。これは API で検証されていません。";
+"chrome_assisted.new_claude_profile" = "新しい Claude プロファイル";
+"personal.session_key_stored" = "セッションキーを保存しました";
+"personal.session_key_validated" = "セッションキーを検証しました";

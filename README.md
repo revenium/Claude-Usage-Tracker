@@ -107,8 +107,9 @@ Pick whichever of these you already have:
 | | How | Notes |
 |---|---|---|
 | **Claude Code** | Nothing to do — if the CLI is installed and logged in, the app finds it | Easiest |
-| **Browser sign-in** | Settings → Claude.AI → **Sign in to Claude.ai** | Embedded browser; the session key is extracted and stored for you |
-| **Manual key** | Settings → Claude.AI → *Advanced: Manual Session Key* | Paste the `sessionKey` cookie from claude.ai, test, pick your org |
+| **Chrome-assisted manual key** | Settings → Claude.AI → choose a Chrome profile | Opens that profile at Claude for visual account verification; you paste and validate the key manually. RevvyTach reads only Chrome profile labels/directories, never cookies. |
+| **Browser sign-in** | Settings → Claude.AI → **Sign in to Claude.ai** | Embedded-browser fallback; the session key is extracted and stored for you |
+| **Manual key** | Settings → Claude.AI → session key entry | Paste the `sessionKey` cookie from claude.ai, test, pick your org |
 
 Optionally add Settings → API Console to track Anthropic Console spend, prepaid credits, and
 per-key cost breakdown alongside subscription usage.

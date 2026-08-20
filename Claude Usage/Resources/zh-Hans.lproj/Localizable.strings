@@ -1258,3 +1258,21 @@
 
 // Launch splash
 "launch.splash.running" = "正在菜单栏中运行";
+"chrome_assisted.recommended" = "推荐：在 Chrome 中打开您的 Claude 帐户";
+"chrome_assisted.description" = "选择一个 Chrome 配置文件以打开 Claude，然后在此处手动粘贴并验证您的会话密钥。";
+"chrome_assisted.no_profiles" = "未找到符合条件的 Chrome 配置文件。您仍可手动输入会话密钥。";
+"chrome_assisted.profile_picker" = "Chrome 配置文件";
+"chrome_assisted.choose_profile" = "选择 Chrome 配置文件";
+"chrome_assisted.launch" = "打开所选 Chrome 配置文件";
+"chrome_assisted.launch_failed" = "无法使用该配置文件打开 Chrome。请选择配置文件后重试，或使用备用方法。";
+"chrome_assisted.verify_account" = "已打开 Chrome 配置文件 %@。粘贴会话密钥前，请在 Chrome 中目视确认目标 Claude 帐户。";
+"chrome_assisted.no_extraction" = "选择浏览器配置文件不会提取或验证会话密钥。";
+"chrome_assisted.embedded_fallback" = "备用方法：使用内嵌浏览器登录。";
+"chrome_assisted.validation_success" = "会话密钥已验证。找到 %ld 个组织。";
+"chrome_assisted.no_organizations" = "会话密钥有效，但未找到组织。请选择其他帐户或密钥。";
+"chrome_assisted.no_active_profile" = "验证此会话密钥前，请选择一个活跃的 Claude 配置文件。";
+"chrome_assisted.profile_changed" = "活跃的 Claude 配置文件已更改。请重新开始此设置。";
+"chrome_assisted.confirm_context" = "我确认 Chrome 配置文件 %@ 是我希望用于 RevvyTach 配置文件 %@ 的上下文。这未经 API 验证。";
+"chrome_assisted.new_claude_profile" = "新的 Claude 配置文件";
+"personal.session_key_stored" = "会话密钥已存储";
+"personal.session_key_validated" = "会话密钥已验证";
