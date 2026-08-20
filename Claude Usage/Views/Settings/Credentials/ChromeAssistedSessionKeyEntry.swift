@@ -213,6 +213,26 @@ struct ChromeAssistedSessionKeyEntry: View {
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(.secondary)
 
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(
+                        Array([
+                            "setup.instruction.step1",
+                            "setup.instruction.step2",
+                            "setup.instruction.step3",
+                            "setup.instruction.step4"
+                        ].enumerated()),
+                        id: \.offset
+                    ) { index, localizationKey in
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text("\(index + 1).")
+                            Text(localizationKey.localized)
+                        }
+                    }
+                }
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+                .accessibilityIdentifier("session_key.instructions")
+
                 SecureField(
                     "personal.placeholder_session_key".localized,
                     text: Binding(
@@ -237,10 +257,6 @@ struct ChromeAssistedSessionKeyEntry: View {
                         )
                 )
                 .accessibilityIdentifier("session_key.secure_field")
-
-                Text("personal.help_session_key".localized)
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
 
                 HStack {
                     Spacer()

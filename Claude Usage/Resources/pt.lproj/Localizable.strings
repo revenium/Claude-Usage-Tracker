@@ -140,7 +140,7 @@
 "setup.show_instructions" = "Mostrar Instruções";
 "setup.hide_instructions" = "Ocultar";
 "setup.instruction.step1" = "Abra as Ferramentas do Desenvolvedor (F12 ou Cmd+Option+I)";
-"setup.instruction.step2" = "Vá para Application/Storage → Cookies → https://claude.ai";
+"setup.instruction.step2" = "Vá para Application → Storage → Cookies → https://claude.ai";
 "setup.instruction.step3" = "Encontre o cookie 'sessionKey'";
 "setup.instruction.step4" = "Clique duas vezes no seu Valor e copie (Cmd+C)";
 "setup.paste_session_key" = "Cole o valor de sessionKey que você copiou";

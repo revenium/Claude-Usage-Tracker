@@ -142,7 +142,7 @@
 "setup.show_instructions" = "显示说明";
 "setup.hide_instructions" = "隐藏";
 "setup.instruction.step1" = "打开开发者工具 (F12 或 Cmd+Option+I)";
-"setup.instruction.step2" = "前往 应用/存储 → Cookies → https://claude.ai";
+"setup.instruction.step2" = "前往 应用 → 存储 → Cookies → https://claude.ai";
 "setup.instruction.step3" = "找到 'sessionKey' cookie";
 "setup.instruction.step4" = "双击其值并复制 (Cmd+C)";
 "setup.paste_session_key" = "粘贴您复制的 sessionKey 值";

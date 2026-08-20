@@ -142,7 +142,7 @@
 "setup.show_instructions" = "手順を表示";
 "setup.hide_instructions" = "非表示";
 "setup.instruction.step1" = "開発者ツールを開く（F12またはCmd+Option+I）";
-"setup.instruction.step2" = "アプリケーション/ストレージ → Cookie → https://claude.aiに移動";
+"setup.instruction.step2" = "アプリケーション → ストレージ → Cookie → https://claude.aiに移動";
 "setup.instruction.step3" = "'sessionKey' Cookieを見つける";
 "setup.instruction.step4" = "値をダブルクリックしてコピー（Cmd+C）";
 "setup.paste_session_key" = "コピーしたsessionKey値を貼り付け";

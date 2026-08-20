@@ -497,7 +497,7 @@
 "setup.show_instructions" = "지침 표시";
 "setup.hide_instructions" = "숨기기";
 "setup.instruction.step1" = "개발자 도구 열기 (F12 또는 Cmd+Option+I)";
-"setup.instruction.step2" = "Application/Storage → Cookies → https://claude.ai로 이동";
+"setup.instruction.step2" = "Application → Storage → Cookies → https://claude.ai로 이동";
 "setup.instruction.step3" = "'sessionKey' 쿠키 찾기";
 "setup.instruction.step4" = "값을 더블클릭하고 복사 (Cmd+C)";
 "setup.paste_session_key" = "복사한 sessionKey 값을 붙여넣기";

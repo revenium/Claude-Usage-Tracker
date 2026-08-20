@@ -218,7 +218,7 @@
 "setup.step.get_session_key.description" = "Necesitarás extraer tu clave de sesión de claude.ai";
 "setup.step.enter_session_key" = "Ingresa tu Clave de Sesión";
 "setup.instruction.step1" = "Abre Herramientas de Desarrollador (F12 o Cmd+Option+I)";
-"setup.instruction.step2" = "Ve a Aplicación/Almacenamiento → Cookies → https://claude.ai";
+"setup.instruction.step2" = "Ve a Aplicación → Almacenamiento → Cookies → https://claude.ai";
 "setup.instruction.step3" = "Encuentra la cookie 'sessionKey'";
 "setup.instruction.step4" = "Haz doble clic en su Valor y copia (Cmd+C)";
 "setup.paste_session_key" = "Pega el valor de sessionKey que copiaste";
