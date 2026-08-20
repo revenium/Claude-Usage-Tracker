@@ -116,6 +116,11 @@ final class ChromeProfileServiceTests: XCTestCase {
                 & kSecCSCheckAllArchitectures,
             0
         )
+        XCTAssertNotEqual(
+            ChromeProfileLauncher.signingInformationFlags.rawValue
+                & kSecCSSigningInformation,
+            0
+        )
     }
 
     func testLauncherRevalidatesProfileAndChromeIdentityBeforeWorkspace() async {

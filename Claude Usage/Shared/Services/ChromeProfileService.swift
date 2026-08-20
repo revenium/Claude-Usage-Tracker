@@ -255,6 +255,9 @@ nonisolated struct ChromeProfileLauncher: Sendable {
     static let signatureValidationFlags = SecCSFlags(
         rawValue: kSecCSCheckAllArchitectures
     )
+    static let signingInformationFlags = SecCSFlags(
+        rawValue: kSecCSSigningInformation
+    )
 
     typealias ApplicationResolver = @Sendable (String) -> ChromeApplication?
     typealias SignatureVerifier = @Sendable (URL) -> ChromeCodeSignature?
@@ -351,7 +354,7 @@ nonisolated struct ChromeProfileLauncher: Sendable {
         var information: CFDictionary?
         guard SecCodeCopySigningInformation(
             code,
-            SecCSFlags(),
+            Self.signingInformationFlags,
             &information
         ) == errSecSuccess,
               let values = information as? [String: Any] else {
