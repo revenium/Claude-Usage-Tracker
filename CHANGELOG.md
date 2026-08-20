@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.5] - 2026-08-20
+
+### Added
+
+- **Claude setup can now open the exact Google Chrome profile you choose.**
+  RevvyTach reads only Chrome's bounded profile labels, verifies the installed
+  browser is Apple-issued and Google-signed, and opens Claude in that profile
+  so you can confirm the account before manually pasting its session key. The
+  key remains masked, is never read from Chrome, and is saved only after
+  validation, organization selection, and account-context confirmation.
+
 ## [4.0.4] - 2026-08-19
 
 ### Fixed
