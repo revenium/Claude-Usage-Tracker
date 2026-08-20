@@ -49,8 +49,8 @@ final class ChromeProfileServiceTests: XCTestCase {
         XCTAssertFalse(ChromeProfilePathPolicy.isValidDirectoryName("Profile\\evil"))
         XCTAssertFalse(ChromeProfilePathPolicy.isValidDirectoryName("Profile\u{0001}"))
 
-        XCTAssertTrue(makeDiscoverer(FakeFilesystem(localState: data, localStateIsSymlink: true)).discoverProfiles().isEmpty)
-        XCTAssertTrue(makeDiscoverer(FakeFilesystem(localState: data, localStateOwner: 999)).discoverProfiles().isEmpty)
+        XCTAssertTrue(makeDiscoverer(FakeFilesystem(localState: data, directories: ["Profile 1"], localStateIsSymlink: true)).discoverProfiles().isEmpty)
+        XCTAssertTrue(makeDiscoverer(FakeFilesystem(localState: data, directories: ["Profile 1"], localStateOwner: 999)).discoverProfiles().isEmpty)
         XCTAssertTrue(makeDiscoverer(FakeFilesystem(localState: data, directories: ["Profile 1"], rootIsSymlink: true)).discoverProfiles().isEmpty)
         XCTAssertTrue(makeDiscoverer(FakeFilesystem(localState: data, directories: ["Profile 1"], rootOwner: 999)).discoverProfiles().isEmpty)
         XCTAssertTrue(makeDiscoverer(FakeFilesystem(localState: Data(repeating: 0, count: ChromeProfileDiscoverer.maximumLocalStateSize + 1), localStateSize: ChromeProfileDiscoverer.maximumLocalStateSize + 1)).discoverProfiles().isEmpty)

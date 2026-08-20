@@ -40,6 +40,39 @@ struct WizardState {
     var hasConfirmedChromeContext = false
 }
 
+@MainActor
+private enum PersonalUsageAttemptGate {
+    static func targetIsStillCurrent(
+        wizardState: WizardState,
+        profileManager: ProfileManager
+    ) -> Bool {
+        guard let targetID = wizardState.targetProfileID else { return false }
+        return profileManager.activeClaudeProfile?.id == targetID
+            && profileManager.profiles.contains(where: {
+                $0.id == targetID && $0.providerID == .claude
+            })
+    }
+
+    static func acceptsCompletion(
+        wizardState: WizardState,
+        targetID: UUID,
+        generation: UUID,
+        key: String,
+        profileManager: ProfileManager
+    ) -> Bool {
+        SessionKeyAttemptPolicy.acceptsCompletion(
+            generation: generation,
+            currentGeneration: wizardState.attempt.generation,
+            keyMatches: wizardState.sessionKey == key,
+            targetMatches: wizardState.targetProfileID == targetID
+                && targetIsStillCurrent(
+                    wizardState: wizardState,
+                    profileManager: profileManager
+                )
+        )
+    }
+}
+
 /// Claude.ai personal usage tracking (free tier)
 struct PersonalUsageView: View {
     @StateObject private var profileManager = ProfileManager.shared
@@ -413,10 +446,12 @@ struct EnterKeyStep: View {
                 let organizations = try await apiService.testSessionKey(key)
 
                 await MainActor.run {
-                    guard isCurrent(
+                    guard PersonalUsageAttemptGate.acceptsCompletion(
+                        wizardState: wizardState,
                         targetID: target.id,
                         generation: generation,
-                        key: key
+                        key: key,
+                        profileManager: .shared
                     ) else { return }
                     guard SessionKeyAttemptPolicy.hasSelectableOrganization(
                         organizations.count
@@ -445,10 +480,12 @@ struct EnterKeyStep: View {
                 ErrorLogger.shared.log(appError, severity: .error)
 
                 await MainActor.run {
-                    guard isCurrent(
+                    guard PersonalUsageAttemptGate.acceptsCompletion(
+                        wizardState: wizardState,
                         targetID: target.id,
                         generation: generation,
-                        key: key
+                        key: key,
+                        profileManager: .shared
                     ) else { return }
                     let errorMessage = SetupErrorMessage.text(for: appError)
                     wizardState.validationState = .error(errorMessage)
@@ -515,19 +552,12 @@ struct EnterKeyStep: View {
         if clearKey { wizardState.sessionKey = "" }
     }
 
-    private func isCurrent(targetID: UUID, generation: UUID, key: String) -> Bool {
-        SessionKeyAttemptPolicy.acceptsCompletion(
-            generation: generation,
-            currentGeneration: wizardState.attempt.generation,
-            keyMatches: wizardState.sessionKey == key,
-            targetMatches: wizardState.targetProfileID == targetID
-                && ProfileManager.shared.activeClaudeProfile?.id == targetID
-        )
-    }
-
     private func capturedTargetIfStillCurrent() -> Profile? {
         if let targetID = wizardState.targetProfileID {
-            guard targetIsStillCurrent(), let target = ProfileManager.shared.profiles.first(where: {
+            guard PersonalUsageAttemptGate.targetIsStillCurrent(
+                wizardState: wizardState,
+                profileManager: .shared
+            ), let target = ProfileManager.shared.profiles.first(where: {
                 $0.id == targetID && $0.providerID == .claude
             }) else {
                 wizardState.validationState = .error(
@@ -546,14 +576,6 @@ struct EnterKeyStep: View {
         wizardState.targetProfileID = target.id
         wizardState.targetProfileName = target.name
         return target
-    }
-
-    private func targetIsStillCurrent() -> Bool {
-        guard let targetID = wizardState.targetProfileID else { return false }
-        return ProfileManager.shared.activeClaudeProfile?.id == targetID
-            && ProfileManager.shared.profiles.contains(where: {
-                $0.id == targetID && $0.providerID == .claude
-            })
     }
 }
 
@@ -874,10 +896,12 @@ struct ConfirmStep: View {
                 // Keychain mutation; a queued profile switch must not write
                 // this attempt into a different active profile.
                 guard await MainActor.run(body: {
-                    isCurrent(
+                    PersonalUsageAttemptGate.acceptsCompletion(
+                        wizardState: wizardState,
                         targetID: target.id,
                         generation: generation,
-                        key: key
+                        key: key,
+                        profileManager: .shared
                     )
                 }) else {
                     await MainActor.run { isSaving = false }
@@ -951,30 +975,11 @@ struct ConfirmStep: View {
             selectedOrganizationID: wizardState.selectedOrgId,
             chromeProfileLabel: wizardState.launchedChromeProfileLabel,
             chromeContextConfirmed: wizardState.hasConfirmedChromeContext,
-            targetMatches: targetIsStillCurrent()
+            targetMatches: PersonalUsageAttemptGate.targetIsStillCurrent(
+                wizardState: wizardState,
+                profileManager: .shared
+            )
         )
-    }
-
-    private func isCurrent(
-        targetID: UUID,
-        generation: UUID,
-        key: String
-    ) -> Bool {
-        SessionKeyAttemptPolicy.acceptsCompletion(
-            generation: generation,
-            currentGeneration: wizardState.attempt.generation,
-            keyMatches: wizardState.sessionKey == key,
-            targetMatches: wizardState.targetProfileID == targetID
-                && targetIsStillCurrent()
-        )
-    }
-
-    private func targetIsStillCurrent() -> Bool {
-        guard let targetID = wizardState.targetProfileID else { return false }
-        return ProfileManager.shared.activeClaudeProfile?.id == targetID
-            && ProfileManager.shared.profiles.contains(where: {
-                $0.id == targetID && $0.providerID == .claude
-            })
     }
 }
 

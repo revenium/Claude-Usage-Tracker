@@ -40,6 +40,37 @@ struct SetupWizardState {
     var hasConfirmedChromeContext = false
 }
 
+@MainActor
+private enum SetupTargetFreshness {
+    static func isCurrent(
+        _ target: ClaudeManualSetupTarget?,
+        profileManager: ProfileManager
+    ) -> Bool {
+        guard let target else { return false }
+        switch target {
+        case .compatibilityCurrent:
+            return false
+        case .existing(let profileID):
+            return profileManager.activeClaudeProfile?.id == profileID
+                && profileManager.profiles.contains(where: {
+                    $0.id == profileID && $0.providerID == .claude
+                })
+        case .createdProfile(let profileID):
+            let claudeProfiles = profileManager.profiles.filter {
+                $0.providerID == .claude
+            }
+            return claudeProfiles.map(\.id) == [profileID]
+                && (profileManager.activeClaudeProfile == nil
+                    || profileManager.activeClaudeProfile?.id == profileID)
+        case .newProfile:
+            return profileManager.activeClaudeProfile == nil
+                && !profileManager.profiles.contains(where: {
+                    $0.providerID == .claude
+                })
+        }
+    }
+}
+
 /// Professional, native macOS setup wizard with 3-step flow
 struct SetupWizardView: View {
     @Environment(\.dismiss) var dismiss
@@ -1229,31 +1260,10 @@ struct EnterKeyStepSetup: View {
     }
 
     private func capturedTargetIsStillCurrent() -> Bool {
-        guard let target = wizardState.claudeSetupTarget else {
-            return false
-        }
-        switch target {
-        case .compatibilityCurrent:
-            return false
-        case .existing(let profileID):
-            return dependencies.profileManager.activeClaudeProfile?.id == profileID
-                && dependencies.profileManager.profiles.contains(where: {
-                    $0.id == profileID && $0.providerID == .claude
-                })
-        case .createdProfile(let profileID):
-            let claudeProfiles = dependencies.profileManager.profiles.filter {
-                $0.providerID == .claude
-            }
-            return claudeProfiles.map(\.id) == [profileID]
-                && (dependencies.profileManager.activeClaudeProfile == nil
-                    || dependencies.profileManager.activeClaudeProfile?.id
-                        == profileID)
-        case .newProfile:
-            return dependencies.profileManager.activeClaudeProfile == nil
-                && !dependencies.profileManager.profiles.contains(where: {
-                    $0.providerID == .claude
-                })
-        }
+        SetupTargetFreshness.isCurrent(
+            wizardState.claudeSetupTarget,
+            profileManager: dependencies.profileManager
+        )
     }
 }
 
@@ -1646,29 +1656,10 @@ struct ConfirmStepSetup: View {
     }
 
     private func capturedTargetIsStillCurrent() -> Bool {
-        guard let target = wizardState.claudeSetupTarget else { return false }
-        switch target {
-        case .compatibilityCurrent:
-            return false
-        case .existing(let profileID):
-            return dependencies.profileManager.activeClaudeProfile?.id == profileID
-                && dependencies.profileManager.profiles.contains(where: {
-                    $0.id == profileID && $0.providerID == .claude
-                })
-        case .createdProfile(let profileID):
-            let claudeProfiles = dependencies.profileManager.profiles.filter {
-                $0.providerID == .claude
-            }
-            return claudeProfiles.map(\.id) == [profileID]
-                && (dependencies.profileManager.activeClaudeProfile == nil
-                    || dependencies.profileManager.activeClaudeProfile?.id
-                        == profileID)
-        case .newProfile:
-            return dependencies.profileManager.activeClaudeProfile == nil
-                && !dependencies.profileManager.profiles.contains(where: {
-                    $0.providerID == .claude
-                })
-        }
+        SetupTargetFreshness.isCurrent(
+            wizardState.claudeSetupTarget,
+            profileManager: dependencies.profileManager
+        )
     }
 }
 

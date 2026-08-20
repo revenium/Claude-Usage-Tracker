@@ -39,8 +39,20 @@ nonisolated enum SessionKeyAttemptPolicy {
         currentNonce: UUID,
         currentGeneration: UUID
     ) -> Bool {
-        launch.nonce == currentNonce
-            && launch.parentGeneration == currentGeneration
+        acceptsChromeLaunch(
+            launch,
+            currentNonce: currentNonce,
+            parentGenerationIsCurrent:
+                launch.parentGeneration == currentGeneration
+        )
+    }
+
+    static func acceptsChromeLaunch(
+        _ launch: ChromeLaunchAttempt,
+        currentNonce: UUID,
+        parentGenerationIsCurrent: Bool
+    ) -> Bool {
+        launch.nonce == currentNonce && parentGenerationIsCurrent
     }
 
     static func acceptsSetupCompletion(
@@ -292,8 +304,9 @@ struct ChromeAssistedSessionKeyEntry: View {
                 guard SessionKeyAttemptPolicy.acceptsChromeLaunch(
                     attempt,
                     currentNonce: launchNonce,
-                    currentGeneration: parentGeneration
-                ), isLaunchCurrent(parentGeneration) else {
+                    parentGenerationIsCurrent:
+                        isLaunchCurrent(attempt.parentGeneration)
+                ) else {
                     if attempt.nonce == launchNonce { isLaunching = false }
                     return
                 }
