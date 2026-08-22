@@ -21,10 +21,25 @@ struct Profile: Codable, Identifiable, Equatable {
     // MARK: - Credentials (runtime values hydrated from secure storage)
     var claudeSessionKey: String?
     var organizationId: String?
+    /// Display name of the claude.ai organization, cached alongside its
+    /// classification so the lookup happens once per profile.
+    var organizationName: String?
+    /// Whether `organizationId` is a single-person organization (a personal
+    /// Max/Pro subscription) rather than a shared Team/Enterprise one.
+    /// `nil` means not yet determined; callers must treat that as shared.
+    var organizationIsPersonal: Bool?
     var apiSessionKey: String?
     var apiOrganizationId: String?
     var apiSessionKeyExpiry: Date?
     var cliCredentialsJSON: String?
+    /// UUID of the organization the stored CLI credential belongs to.
+    ///
+    /// The CLI login and the claude.ai session key are separate credentials
+    /// and can belong to different organizations for the same person, so a
+    /// member-scoped figure fetched with the CLI token only describes this
+    /// profile when this matches `organizationId`. Cached here because
+    /// resolving it costs a request; `nil` means not yet resolved.
+    var cliOrganizationId: String?
 
     // MARK: - CLI Account Sync Metadata
     var hasCliAccount: Bool
@@ -83,10 +98,13 @@ struct Profile: Codable, Identifiable, Equatable {
         providerRevision: UInt64 = 0,
         claudeSessionKey: String? = nil,
         organizationId: String? = nil,
+        organizationName: String? = nil,
+        organizationIsPersonal: Bool? = nil,
         apiSessionKey: String? = nil,
         apiOrganizationId: String? = nil,
         apiSessionKeyExpiry: Date? = nil,
         cliCredentialsJSON: String? = nil,
+        cliOrganizationId: String? = nil,
         hasCliAccount: Bool = false,
         cliAccountSyncedAt: Date? = nil,
         cliAccountName: String? = nil,
@@ -110,10 +128,13 @@ struct Profile: Codable, Identifiable, Equatable {
         self.providerRevision = providerRevision
         self.claudeSessionKey = claudeSessionKey
         self.organizationId = organizationId
+        self.organizationName = organizationName
+        self.organizationIsPersonal = organizationIsPersonal
         self.apiSessionKey = apiSessionKey
         self.apiOrganizationId = apiOrganizationId
         self.apiSessionKeyExpiry = apiSessionKeyExpiry
         self.cliCredentialsJSON = cliCredentialsJSON
+        self.cliOrganizationId = cliOrganizationId
         self.hasCliAccount = hasCliAccount
         self.cliAccountSyncedAt = cliAccountSyncedAt
         self.cliAccountName = cliAccountName
@@ -139,10 +160,13 @@ struct Profile: Codable, Identifiable, Equatable {
         case providerRevision
         case claudeSessionKey
         case organizationId
+        case organizationName
+        case organizationIsPersonal
         case apiSessionKey
         case apiOrganizationId
         case apiSessionKeyExpiry
         case cliCredentialsJSON
+        case cliOrganizationId
         case hasCliAccount
         case cliAccountSyncedAt
         case cliAccountName
@@ -191,8 +215,17 @@ struct Profile: Codable, Identifiable, Equatable {
             ) ?? 0
         }
         organizationId = try container.decodeIfPresent(String.self, forKey: .organizationId)
+        organizationName = try container.decodeIfPresent(String.self, forKey: .organizationName)
+        organizationIsPersonal = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .organizationIsPersonal
+        )
         apiOrganizationId = try container.decodeIfPresent(String.self, forKey: .apiOrganizationId)
         apiSessionKeyExpiry = try container.decodeIfPresent(Date.self, forKey: .apiSessionKeyExpiry)
+        cliOrganizationId = try container.decodeIfPresent(
+            String.self,
+            forKey: .cliOrganizationId
+        )
         hasCliAccount = try container.decodeIfPresent(Bool.self, forKey: .hasCliAccount) ?? false
         cliAccountSyncedAt = try container.decodeIfPresent(Date.self, forKey: .cliAccountSyncedAt)
         cliAccountName = try container.decodeIfPresent(String.self, forKey: .cliAccountName)
@@ -286,8 +319,14 @@ struct Profile: Codable, Identifiable, Equatable {
         try container.encode(providerConfiguration, forKey: .provider)
         try container.encode(providerRevision, forKey: .providerRevision)
         try container.encodeIfPresent(organizationId, forKey: .organizationId)
+        try container.encodeIfPresent(organizationName, forKey: .organizationName)
+        try container.encodeIfPresent(
+            organizationIsPersonal,
+            forKey: .organizationIsPersonal
+        )
         try container.encodeIfPresent(apiOrganizationId, forKey: .apiOrganizationId)
         try container.encodeIfPresent(apiSessionKeyExpiry, forKey: .apiSessionKeyExpiry)
+        try container.encodeIfPresent(cliOrganizationId, forKey: .cliOrganizationId)
         try container.encode(hasCliAccount, forKey: .hasCliAccount)
         try container.encodeIfPresent(cliAccountSyncedAt, forKey: .cliAccountSyncedAt)
         try container.encodeIfPresent(cliAccountName, forKey: .cliAccountName)
@@ -356,10 +395,13 @@ struct Profile: Codable, Identifiable, Equatable {
         let containsClaudeState =
             claudeSessionKey != nil
             || organizationId != nil
+            || organizationName != nil
+            || organizationIsPersonal != nil
             || apiSessionKey != nil
             || apiOrganizationId != nil
             || apiSessionKeyExpiry != nil
             || cliCredentialsJSON != nil
+            || cliOrganizationId != nil
             || hasCliAccount
             || cliAccountSyncedAt != nil
             || cliAccountName != nil

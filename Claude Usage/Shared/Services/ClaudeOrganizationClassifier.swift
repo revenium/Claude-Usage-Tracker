@@ -1,0 +1,186 @@
+import Foundation
+
+/// Determines whether a claude.ai organization is a single-person
+/// organization (a personal Max/Pro subscription, where the org IS the user)
+/// or a shared one (Team/Enterprise, where org-scoped figures belong to the
+/// company rather than to the signed-in member).
+///
+/// Only the extra-usage scope depends on this today: `/organizations/{id}/
+/// overage_spend_limit` reports the whole organization's spend, which is the
+/// individual's own spend precisely when the organization has one member.
+///
+/// Shapes observed on a live five-organization account (2026-08-22):
+///
+/// | kind             | `capabilities`                            | `raven_type`   |
+/// |------------------|-------------------------------------------|----------------|
+/// | personal Max     | `["chat", "claude_max"]`                  | `nil`          |
+/// | Team             | `["chat", "raven"]`                       | `"team"`       |
+/// | Enterprise       | `["raven_enterprise", "raven", "chat", …]`| `"enterprise"` |
+/// | console/API only | `["api"]`                                 | `nil`          |
+///
+/// "raven" is Anthropic's internal name for Team/Enterprise. Note that the
+/// equivalent field on `api.anthropic.com/api/oauth/profile` is spelled
+/// differently — `organization_type`, with values `"claude_max"` and
+/// `"claude_team"` — so do not assume one endpoint's vocabulary applies to
+/// the other.
+enum ClaudeOrganizationClassifier {
+    /// The capability every Team and Enterprise organization carries.
+    private static let sharedCapability = "raven"
+
+    /// The extra capability only Enterprise organizations carry.
+    private static let enterpriseCapability = "raven_enterprise"
+
+    /// Capabilities that mark an organization as shared (Team/Enterprise).
+    private static let sharedCapabilities: Set<String> = [
+        sharedCapability, enterpriseCapability
+    ]
+
+    /// Capabilities that mark an organization as one person's subscription.
+    private static let maxCapability = "claude_max"
+    private static let proCapability = "claude_pro"
+    private static let personalCapabilities: Set<String> = [
+        maxCapability, proCapability
+    ]
+
+    /// `raven_type` values observed on shared organizations.
+    private static let teamRavenType = "team"
+    private static let enterpriseRavenType = "enterprise"
+
+    /// The capability an organization must have for any Claude subscription
+    /// usage to exist against it. Console/API-only organizations lack it.
+    static let chatCapability = "chat"
+
+    /// - Returns: `true` personal, `false` shared, `nil` indeterminate.
+    ///
+    /// Both `nil` and `false` must be treated as organization-wide by callers:
+    /// showing a company figure labelled as one person's is the failure this
+    /// exists to prevent, so "unknown" errs toward the wider label.
+    static func isPersonal(_ info: ClaudeAPIService.AccountInfo) -> Bool? {
+        // Shared organizations are identified by `raven_type` when present,
+        // and by the "raven" capabilities otherwise. Checked first so an
+        // Enterprise org that also lists a personal-looking capability is
+        // never misread as an individual's.
+        if info.ravenType != nil {
+            return false
+        }
+        if !sharedCapabilities.isDisjoint(with: info.capabilities) {
+            return false
+        }
+        if !personalCapabilities.isDisjoint(with: info.capabilities) {
+            return true
+        }
+        // Console/API-only organizations (`["api"]`) and anything unrecognized:
+        // no personal Claude subscription is known to sit behind them.
+        return nil
+    }
+
+    /// Whether the organization can carry Claude subscription usage at all.
+    ///
+    /// The `/organizations` list mixes Claude organizations with console/API
+    /// organizations. The latter have no usage, no limits and no extra-usage
+    /// budget, so binding a profile to one produces nothing but failed
+    /// requests.
+    static func isChatCapable(_ info: ClaudeAPIService.AccountInfo) -> Bool {
+        info.capabilities.contains(chatCapability)
+    }
+
+    /// Short human label for an organization, so a picker never shows two
+    /// identically-named entries distinguishable only by UUID.
+    ///
+    /// Driven by the same signals as `isPersonal`: an account can hold several
+    /// organizations sharing one company name, and the kind is the only thing
+    /// that tells a person which row is the one carrying their subscription.
+    static func descriptor(_ info: ClaudeAPIService.AccountInfo) -> String {
+        // Enterprise first: an Enterprise organization also carries "raven",
+        // so checking Team first would mislabel it.
+        if info.ravenType == enterpriseRavenType
+            || info.capabilities.contains(enterpriseCapability) {
+            return ProviderUILocalization.text(
+                "wizard.org_kind.enterprise",
+                fallback: "Enterprise"
+            )
+        }
+        if info.ravenType == teamRavenType
+            || info.capabilities.contains(sharedCapability) {
+            return ProviderUILocalization.text(
+                "wizard.org_kind.team",
+                fallback: "Team"
+            )
+        }
+        // Console/API organizations reach here; say why they cannot be picked
+        // rather than leaving the row unexplained.
+        if !isChatCapable(info) {
+            return ProviderUILocalization.text(
+                "wizard.org_kind.api_only",
+                fallback: "API only · no Claude subscription"
+            )
+        }
+        if info.capabilities.contains(maxCapability) {
+            return ProviderUILocalization.text(
+                "wizard.org_kind.personal_max",
+                fallback: "Personal · Max"
+            )
+        }
+        if info.capabilities.contains(proCapability) {
+            return ProviderUILocalization.text(
+                "wizard.org_kind.personal_pro",
+                fallback: "Personal · Pro"
+            )
+        }
+        return ProviderUILocalization.text(
+            "wizard.org_kind.unknown",
+            fallback: "Unknown"
+        )
+    }
+
+    // MARK: - Picker policy
+    //
+    // Both organization pickers (the setup wizard and the credentials pane)
+    // call these, so the two cannot drift apart.
+
+    /// Chat-capable organizations first, each group keeping the server's own
+    /// order. Nothing is hidden: an unusable organization stays visible, and
+    /// its descriptor explains why it cannot be chosen.
+    static func pickerOrder(
+        _ organizations: [ClaudeAPIService.AccountInfo]
+    ) -> [ClaudeAPIService.AccountInfo] {
+        organizations.filter { isChatCapable($0) }
+            + organizations.filter { !isChatCapable($0) }
+    }
+
+    /// The organization a picker should start on: the first one that can
+    /// actually report usage, in server order. `nil` when the account has no
+    /// Claude subscription organization at all — the picker must then select
+    /// nothing rather than fall back to a console organization.
+    static func defaultSelection(
+        _ organizations: [ClaudeAPIService.AccountInfo]
+    ) -> String? {
+        organizations.first(where: { isChatCapable($0) })?.uuid
+    }
+
+    /// Whether an account has any organization worth selecting.
+    static func hasSelectableOrganization(
+        _ organizations: [ClaudeAPIService.AccountInfo]
+    ) -> Bool {
+        defaultSelection(organizations) != nil
+    }
+
+    /// The last line of defence before a selection is persisted.
+    ///
+    /// Binding a profile to a console/API organization produces a permanently
+    /// unavailable popover, so this must not depend on the UI having disabled
+    /// the row. An id with no matching organization is refused too: the only
+    /// legitimate source of the id is the list being checked against.
+    static func permitsSelection(
+        of organizationID: String?,
+        from organizations: [ClaudeAPIService.AccountInfo]
+    ) -> Bool {
+        guard
+            let organizationID,
+            let organization = organizations.first(
+                where: { $0.uuid == organizationID }
+            )
+        else { return false }
+        return isChatCapable(organization)
+    }
+}

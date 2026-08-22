@@ -29,6 +29,40 @@ extension ClaudeAPIService {
         let uuid: String
         let name: String
         let capabilities: [String]
+        /// `"team"` / `"enterprise"` for shared organizations, absent for
+        /// individual subscriptions and for console/API-only organizations.
+        /// See `ClaudeOrganizationClassifier` for the observed values.
+        let ravenType: String?
+
+        enum CodingKeys: String, CodingKey {
+            case uuid
+            case name
+            case capabilities
+            case ravenType = "raven_type"
+        }
+
+        init(
+            uuid: String,
+            name: String,
+            capabilities: [String],
+            ravenType: String? = nil
+        ) {
+            self.uuid = uuid
+            self.name = name
+            self.capabilities = capabilities
+            self.ravenType = ravenType
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            uuid = try container.decode(String.self, forKey: .uuid)
+            name = try container.decode(String.self, forKey: .name)
+            capabilities = try container.decodeIfPresent(
+                [String].self,
+                forKey: .capabilities
+            ) ?? []
+            ravenType = try container.decodeIfPresent(String.self, forKey: .ravenType)
+        }
     }
 
     struct OverageSpendLimitResponse: Codable {
@@ -42,6 +76,46 @@ extension ClaudeAPIService {
             case currency
             case usedCredits = "used_credits"
             case isEnabled = "is_enabled"
+        }
+    }
+
+    /// `GET api.anthropic.com/api/oauth/usage`, authenticated with the CLI
+    /// OAuth token. Unlike claude.ai's `overage_spend_limit` this describes
+    /// the signed-in *member*: on the same team at the same moment the
+    /// organization reported 26118 of 100000 while the member reported 0.0
+    /// of 5000.
+    struct OAuthUsageResponse: Codable {
+        let extraUsage: ExtraUsage?
+
+        enum CodingKeys: String, CodingKey {
+            case extraUsage = "extra_usage"
+        }
+
+        struct ExtraUsage: Codable {
+            let isEnabled: Bool?
+            /// Minor currency units, like `OverageSpendLimitResponse`
+            /// (5000 is $50.00).
+            let monthlyLimit: Double?
+            let usedCredits: Double?
+            let currency: String?
+
+            enum CodingKeys: String, CodingKey {
+                case isEnabled = "is_enabled"
+                case monthlyLimit = "monthly_limit"
+                case usedCredits = "used_credits"
+                case currency
+            }
+        }
+    }
+
+    /// `GET api.anthropic.com/api/oauth/profile`. Only the organization is
+    /// read: it is what decides whether the CLI login's member figures
+    /// describe the profile being displayed.
+    struct OAuthProfileResponse: Codable {
+        let organization: Organization?
+
+        struct Organization: Codable {
+            let uuid: String?
         }
     }
 

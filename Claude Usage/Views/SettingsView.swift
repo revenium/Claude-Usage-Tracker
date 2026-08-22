@@ -185,7 +185,7 @@ final class SettingsNavigationModel: ObservableObject {
         }
         let needsActivation: Bool
         switch destination {
-        case .providerAccount, .appearance, .general, .history:
+        case .providerAccount, .appearance, .general, .history, .cliAccount:
             needsActivation = true
             isResolvingProfile = true
         case .defaultView, .manageProfiles:
@@ -285,6 +285,10 @@ final class SettingsNavigationModel: ObservableObject {
         case .history(let profileID):
             selectedProfileID = profileID
             selectedSection = .history
+            isResolvingProfile = true
+        case .cliAccount(let profileID):
+            selectedProfileID = profileID
+            selectedSection = .cliAccount
             isResolvingProfile = true
         case .manageProfiles:
             selectedProfileID = nil

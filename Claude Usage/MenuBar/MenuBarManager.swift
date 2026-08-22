@@ -1946,6 +1946,12 @@ class MenuBarManager: NSObject, ObservableObject {
                 self.openPopoverSettings(
                     target: self.popoverActionTarget()
                 )
+            },
+            onCLIAccount: { [weak self] in
+                guard let self else { return }
+                self.openPopoverCLIAccount(
+                    target: self.popoverActionTarget()
+                )
             }
         )
 
@@ -2005,6 +2011,16 @@ class MenuBarManager: NSObject, ObservableObject {
         guard let target else { return }
         capturedTargetRouter().route(
             .popoverSettings,
+            target: target
+        )
+    }
+
+    private func openPopoverCLIAccount(
+        target: ProviderStatusItemIdentity?
+    ) {
+        guard let target else { return }
+        capturedTargetRouter().route(
+            .cliAccount,
             target: target
         )
     }
@@ -4207,6 +4223,9 @@ extension MenuBarManager: NSPopoverDelegate {
                     },
                     onPreferences: { [weak self] in
                         self?.openPopoverSettings(target: target)
+                    },
+                    onCLIAccount: { [weak self] in
+                        self?.openPopoverCLIAccount(target: target)
                     }
                 )
                 let hostingController = NSHostingController(

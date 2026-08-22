@@ -37,10 +37,70 @@ struct ClaudeUsage: Codable, Equatable {
     /// whose response does not include a Fable limit.
     var fableWeeklyLimitAvailable: Bool
 
+    /// Who the extra-usage figures below actually belong to.
+    ///
+    /// claude.ai reports extra usage from an organization-scoped endpoint, so
+    /// on a Team or Enterprise account the amounts are the whole company's
+    /// spend rather than the signed-in member's. On a personal Max/Pro
+    /// subscription the organization *is* the person, so the same numbers are
+    /// individual. The UI needs the distinction to avoid presenting a
+    /// company-wide figure as the viewer's own.
+    enum ExtraUsageScope: String, Codable, Equatable {
+        /// Shared organization (Team/Enterprise): the amounts cover everyone.
+        case organization
+        /// Single-person organization: the amounts are this person's.
+        case personal
+    }
+
     // Extra usage data
     var costUsed: Double?
     var costLimit: Double?
     var costCurrency: String?
+    /// Nil on records written before this field existed. Treat nil as
+    /// `.organization` at every point of use: that is what the endpoint has
+    /// always returned.
+    var costScope: ExtraUsageScope?
+
+    /// The signed-in member's own extra usage, from the CLI-authenticated
+    /// `/api/oauth/usage` endpoint rather than the organization-scoped
+    /// claude.ai one. Nil whenever the member figure could not be obtained:
+    /// no CLI credential, a credential belonging to a different organization,
+    /// or extra usage switched off for that member. Stored in minor currency
+    /// units like `costUsed`/`costLimit`.
+    var personalCostUsed: Double?
+    var personalCostLimit: Double?
+    var personalCostCurrency: String?
+
+    /// Why the member's own extra usage is missing, when it is.
+    ///
+    /// A profile holds two independent connections: the claude.ai sign-in
+    /// that returns the organization's figures, and the Claude Code sign-in
+    /// that returns the member's own. The first working while the second does
+    /// not is the ordinary case, and the reasons are not interchangeable —
+    /// one needs an account linked, another needs an existing link renewed.
+    /// Saying only "connect an account" sent people who already had one to a
+    /// screen with nothing to do, so the reason travels to the UI.
+    enum PersonalExtraUsageIssue: String, Codable, Equatable {
+        /// No Claude Code account is linked to this profile.
+        case notLinked
+        /// One is linked, but its sign-in is too old to renew. Only signing
+        /// in to that Claude Code account again fixes this — re-syncing
+        /// copies a login, it does not renew one, so advising a re-sync here
+        /// sends someone round a loop that appears to work and changes
+        /// nothing.
+        case signInExpired
+        /// One is linked and its sign-in is current, but it could not be
+        /// used this time. Re-syncing is the right remedy here.
+        case signInUnusable
+        /// The linked account is signed in to a different organization than
+        /// the one being displayed, so its figures describe someone else's
+        /// context.
+        case differentOrganization
+    }
+
+    /// Nil when the member's figure is present, or when there is no
+    /// organization figure for it to sit beneath.
+    var personalExtraUsageIssue: PersonalExtraUsageIssue?
 
     // Overage credit grant balance
     var overageBalance: Double?
@@ -71,6 +131,11 @@ struct ClaudeUsage: Codable, Equatable {
         costUsed: Double?,
         costLimit: Double?,
         costCurrency: String?,
+        costScope: ExtraUsageScope? = nil,
+        personalCostUsed: Double? = nil,
+        personalCostLimit: Double? = nil,
+        personalCostCurrency: String? = nil,
+        personalExtraUsageIssue: PersonalExtraUsageIssue? = nil,
         overageBalance: Double? = nil,
         overageBalanceCurrency: String? = nil,
         lastUpdated: Date,
@@ -96,6 +161,11 @@ struct ClaudeUsage: Codable, Equatable {
         self.costUsed = costUsed
         self.costLimit = costLimit
         self.costCurrency = costCurrency
+        self.costScope = costScope
+        self.personalCostUsed = personalCostUsed
+        self.personalCostLimit = personalCostLimit
+        self.personalCostCurrency = personalCostCurrency
+        self.personalExtraUsageIssue = personalExtraUsageIssue
         self.overageBalance = overageBalance
         self.overageBalanceCurrency = overageBalanceCurrency
         self.lastUpdated = lastUpdated
@@ -128,6 +198,17 @@ struct ClaudeUsage: Codable, Equatable {
         costUsed = try container.decodeIfPresent(Double.self, forKey: .costUsed)
         costLimit = try container.decodeIfPresent(Double.self, forKey: .costLimit)
         costCurrency = try container.decodeIfPresent(String.self, forKey: .costCurrency)
+        costScope = try container.decodeIfPresent(ExtraUsageScope.self, forKey: .costScope)
+        personalCostUsed = try container.decodeIfPresent(Double.self, forKey: .personalCostUsed)
+        personalCostLimit = try container.decodeIfPresent(Double.self, forKey: .personalCostLimit)
+        personalCostCurrency = try container.decodeIfPresent(
+            String.self,
+            forKey: .personalCostCurrency
+        )
+        personalExtraUsageIssue = try container.decodeIfPresent(
+            PersonalExtraUsageIssue.self,
+            forKey: .personalExtraUsageIssue
+        )
         overageBalance = try container.decodeIfPresent(Double.self, forKey: .overageBalance)
         overageBalanceCurrency = try container.decodeIfPresent(String.self, forKey: .overageBalanceCurrency)
         lastUpdated = try container.decode(Date.self, forKey: .lastUpdated)

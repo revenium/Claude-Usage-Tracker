@@ -1286,13 +1286,17 @@ final class NormalizedUsagePresentationTests: HostedAppTestCase {
             },
             preferences: {
                 routed.append("preferences")
+            },
+            cliAccount: {
+                routed.append("cli-account")
             }
         )
 
         actions.manageProfiles()
         actions.preferences()
+        actions.cliAccount()
 
-        XCTAssertEqual(routed, ["profiles", "preferences"])
+        XCTAssertEqual(routed, ["profiles", "preferences", "cli-account"])
     }
 
     func testClaudeAdapterKeepsLegacyCardsAndAPIBillingSeparate()

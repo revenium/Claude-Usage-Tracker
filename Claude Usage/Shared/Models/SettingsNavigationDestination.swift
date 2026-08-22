@@ -11,5 +11,8 @@ enum SettingsNavigationDestination: Equatable, Hashable, Sendable {
     case appearance(profileID: UUID)
     case general(profileID: UUID)
     case history(profileID: UUID)
+    /// Settings → CLI Account for one profile. The popover's invitation to
+    /// connect a Claude Code account lands here.
+    case cliAccount(profileID: UUID)
     case manageProfiles
 }

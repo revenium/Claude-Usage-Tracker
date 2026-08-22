@@ -1090,6 +1090,22 @@ struct NormalizedUsageView: View {
     let displayPreferences: NormalizedUsageDisplayPreferences
     let timeDisplay: PopoverTimeDisplay
     let now: Date
+    /// Opens Settings → CLI Account. Absent in surfaces that have nowhere to
+    /// navigate to, which also hides the invitation to connect an account.
+    var onConnectCLIAccount: (() -> Void)?
+
+    /// The organization's extra usage is on screen and the viewer's own is
+    /// not, so the popover explains whose number this is and what is missing.
+    /// Claude-specific, and driven by the data rather than by provider
+    /// identity.
+    private var personalExtraUsageIssue: ClaudeUsage.PersonalExtraUsageIssue? {
+        guard onConnectCLIAccount != nil,
+              let usage = presentation.legacyClaudeUsage else {
+            return nil
+        }
+        return ClaudeUsageProviderAdapter
+            .personalExtraUsageIssueToExplain(for: usage)
+    }
 
     var body: some View {
         VStack(
@@ -1139,6 +1155,12 @@ struct NormalizedUsageView: View {
                     now: now
                 )
             }
+            if let personalExtraUsageIssue, let onConnectCLIAccount {
+                PersonalExtraUsageNoticeView(
+                    issue: personalExtraUsageIssue,
+                    action: onConnectCLIAccount
+                )
+            }
             if let summary = presentation.summary {
                 NormalizedUsageSummaryView(
                     summary: summary,
@@ -1154,6 +1176,83 @@ struct NormalizedUsageView: View {
                 )
             }
         }
+    }
+}
+
+/// Sits directly beneath the organization's extra-usage row, in the same
+/// inline-notice style as the empty states, and opens the screen where a
+/// Claude Code account gets connected.
+private struct PersonalExtraUsageNoticeView: View {
+    let issue: ClaudeUsage.PersonalExtraUsageIssue
+    let action: () -> Void
+
+    /// Each case names the connection that is missing and where to fix it.
+    /// A profile signs in twice — once to claude.ai in a browser, which is
+    /// what produced the organization figure above, and once to Claude Code,
+    /// which is the only source of the member's own. Saying just "connect
+    /// your account" left people unable to tell which of the two was meant.
+    private var message: String {
+        switch issue {
+        case .notLinked:
+            return NormalizedUsageStrings.localized(
+                "popover.extra_usage.cli_not_linked",
+                default: "This is your organization's total. Your own extra "
+                    + "usage comes from Claude Code, which isn't linked to "
+                    + "this account yet — add it in Settings → CLI Account."
+            )
+        case .signInExpired:
+            return NormalizedUsageStrings.localized(
+                "popover.extra_usage.cli_sign_in_expired",
+                default: "This is your organization's total. The Claude Code "
+                    + "sign-in for this account has expired — sign in to it "
+                    + "again to see your own extra usage. Settings → CLI "
+                    + "Account shows you how."
+            )
+        case .signInUnusable:
+            return NormalizedUsageStrings.localized(
+                "popover.extra_usage.cli_sign_in_unusable",
+                default: "This is your organization's total. Your own extra "
+                    + "usage couldn't be read just now — re-sync your Claude "
+                    + "Code account in Settings → CLI Account."
+            )
+        case .differentOrganization:
+            return NormalizedUsageStrings.localized(
+                "popover.extra_usage.cli_other_organization",
+                default: "This is your organization's total. Your linked "
+                    + "Claude Code account belongs to a different "
+                    + "organization, so its usage isn't shown here."
+            )
+        }
+    }
+
+    private var icon: String {
+        switch issue {
+        case .notLinked:
+            return "person.crop.circle.badge.plus"
+        case .signInExpired, .signInUnusable:
+            return "exclamationmark.triangle"
+        case .differentOrganization:
+            return "person.2.slash"
+        }
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                    .foregroundColor(.secondary)
+                Text(message)
+                    .font(PopoverDesign.metaFont)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            }
+            .popoverCard()
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("popover.extra_usage.personal_notice")
     }
 }
 

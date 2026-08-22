@@ -126,31 +126,32 @@ enum ClaudeUsageProviderAdapter {
             )
         }
 
-        if let used = usage.costUsed,
-           let limit = usage.costLimit,
-           let rawCurrency = usage.costCurrency,
-           limit > 0 {
-            let currency = try UsageCurrencyCode(rawCurrency)
-            groups.append(
-                try UsageLimitGroup(
-                    id: UsageLimitGroupID("extra-usage"),
-                    windows: [
-                        try UsageWindow(
-                            id: UsageWindowID("current"),
-                            usedPercentage: used / limit * 100,
-                            quantity: try UsageQuantity(
-                                // ClaudeUsage stores monetary values in minor
-                                // currency units; UsageCore carries display
-                                // values in major units with an explicit code.
-                                used: used / 100,
-                                limit: limit / 100,
-                                unit: .currency,
-                                currencyCode: currency
-                            )
-                        )
-                    ]
-                )
-            )
+        // The viewer's own extra usage leads, because it is the figure they
+        // came to read. The organization's follows only when we have it.
+        let personalGroup = try extraUsageGroup(
+            id: "extra-usage",
+            displayName: extraUsageDisplayName(for: .personal),
+            used: usage.personalCostUsed,
+            limit: usage.personalCostLimit,
+            rawCurrency: usage.personalCostCurrency
+        )
+        if let personalGroup {
+            groups.append(personalGroup)
+        }
+
+        // Alone, the organization's figure keeps the identifier and the
+        // scope-driven name it has always had. Beneath a personal one it is
+        // the organization's by construction, so it says so outright.
+        if let organizationGroup = try extraUsageGroup(
+            id: personalGroup == nil ? "extra-usage" : "extra-usage-organization",
+            displayName: personalGroup == nil
+                ? extraUsageDisplayName(for: usage.costScope)
+                : extraUsageDisplayName(for: .organization),
+            used: usage.costUsed,
+            limit: usage.costLimit,
+            rawCurrency: usage.costCurrency
+        ) {
+            groups.append(organizationGroup)
         }
 
         var credits: [UsageCredit] = []
@@ -159,6 +160,7 @@ enum ClaudeUsageProviderAdapter {
             credits.append(
                 try UsageCredit(
                     id: UsageMetricID("overage-balance"),
+                    displayName: overageBalanceDisplayName(for: usage.costScope),
                     balance: balance / 100,
                     unit: .currency,
                     currencyCode: UsageCurrencyCode(rawCurrency)
@@ -176,6 +178,111 @@ enum ClaudeUsageProviderAdapter {
             fetchedAt: context.fetchedAt,
             staleAt: context.staleAt
         )
+    }
+
+    /// Why the popover should explain a missing personal figure, if it should.
+    ///
+    /// Returned only when the organization's spend is on screen and the
+    /// viewer's own is not — someone reading a company-wide number with no
+    /// way to find their own. The reason comes back with it because the
+    /// remedies differ: one person has no Claude Code account linked, another
+    /// has one whose sign-in stopped working, and a third is linked to a
+    /// different organization entirely. A single "connect your account" line
+    /// was wrong for two of the three.
+    static func personalExtraUsageIssueToExplain(
+        for usage: ClaudeUsage
+    ) -> ClaudeUsage.PersonalExtraUsageIssue? {
+        let hasOrganizationFigure = usage.costUsed != nil
+            && (usage.costLimit ?? 0) > 0
+            && usage.costCurrency != nil
+            && usage.costScope != .personal
+        let hasPersonalFigure = usage.personalCostUsed != nil
+            && (usage.personalCostLimit ?? 0) > 0
+            && usage.personalCostCurrency != nil
+        guard hasOrganizationFigure, !hasPersonalFigure else { return nil }
+        return usage.personalExtraUsageIssue
+    }
+
+    /// One extra-usage group, or nil when the figure is absent or unusable.
+    private static func extraUsageGroup(
+        id: String,
+        displayName: String,
+        used: Double?,
+        limit: Double?,
+        rawCurrency: String?
+    ) throws -> UsageLimitGroup? {
+        guard let used, let limit, let rawCurrency, limit > 0 else {
+            return nil
+        }
+        return try UsageLimitGroup(
+            id: UsageLimitGroupID(id),
+            displayName: displayName,
+            windows: [
+                try UsageWindow(
+                    id: UsageWindowID("current"),
+                    usedPercentage: used / limit * 100,
+                    quantity: try UsageQuantity(
+                        // ClaudeUsage stores monetary values in minor currency
+                        // units; UsageCore carries display values in major
+                        // units with an explicit code.
+                        used: used / 100,
+                        limit: limit / 100,
+                        unit: .currency,
+                        currencyCode: try UsageCurrencyCode(rawCurrency)
+                    )
+                )
+            ]
+        )
+    }
+
+    /// Header for the extra-usage group.
+    ///
+    /// The amounts come from an organization-scoped endpoint, so on a Team or
+    /// Enterprise account they are the company's spend and not the viewer's.
+    /// An unclassified organization (`nil`) gets the same wider label: saying
+    /// "organization" about one person is mildly wrong, saying nothing about a
+    /// whole company's spend sitting under someone's personal bars is not.
+    /// The organization's own name is deliberately absent — the popover keeps
+    /// names out of prose and has no width for them.
+    static func extraUsageDisplayName(
+        for scope: ClaudeUsage.ExtraUsageScope?
+    ) -> String {
+        switch scope {
+        case .personal:
+            return ProviderUILocalization.text(
+                "menubar.extra_usage",
+                fallback: "Extra Usage"
+            )
+        case .organization, nil:
+            return ProviderUILocalization.text(
+                "menubar.extra_usage_organization",
+                fallback: "Extra Usage · Organization"
+            )
+        }
+    }
+
+    /// Label for the overage credit balance.
+    ///
+    /// `overage_credit_grant` is organization-scoped for the same reason
+    /// `overage_spend_limit` is, so the remaining balance shown to a member of
+    /// a Team or Enterprise account is the company's pool, not theirs. Scope
+    /// wording is kept identical to the extra-usage group header so the two
+    /// read as one fact rather than two.
+    static func overageBalanceDisplayName(
+        for scope: ClaudeUsage.ExtraUsageScope?
+    ) -> String {
+        switch scope {
+        case .personal:
+            return ProviderUILocalization.text(
+                "menubar.overage_balance",
+                fallback: "Credit Balance"
+            )
+        case .organization, nil:
+            return ProviderUILocalization.text(
+                "menubar.overage_balance_organization",
+                fallback: "Credit Balance · Organization"
+            )
+        }
     }
 
     private static func modelGroup(

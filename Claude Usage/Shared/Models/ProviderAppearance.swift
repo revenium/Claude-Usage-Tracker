@@ -311,6 +311,7 @@ struct ProviderCapturedTargetActionRouter {
         case activate
         case providerAccount
         case appearance
+        case cliAccount
         case manageProfiles
         case legacySettings
         case popoverSettings
@@ -383,6 +384,12 @@ struct ProviderCapturedTargetActionRouter {
         case .appearance:
             sinks.settings(
                 .appearance(profileID: target.profileID),
+                target,
+                profile
+            )
+        case .cliAccount:
+            sinks.settings(
+                .cliAccount(profileID: target.profileID),
                 target,
                 profile
             )

@@ -40,6 +40,16 @@ struct CLIAccountView: View {
                     subtitle: "cli.subtitle".localized
                 )
 
+                // Says what linking an account buys, since the popover's
+                // extra-usage row is where most people notice it is missing.
+                Text("cli.connect_extra_usage_hint".localized)
+                    .font(DesignTokens.Typography.caption)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier(
+                        "cli.connect_extra_usage_hint"
+                    )
+
                 if let profile = profileManager.activeClaudeProfile {
                     if profileManager.displayMode == .multi {
                         // Multi-profile mode: show linking flow
@@ -196,7 +206,10 @@ struct CLIAccountView: View {
                 Spacer()
             }
 
-            if hasCredentials {
+            if hasCredentials, isStoredLoginExpired {
+                Divider()
+                expiredLoginNotice(accountName: accountName)
+            } else if hasCredentials {
                 Divider()
 
                 HStack(spacing: DesignTokens.Spacing.small) {
@@ -216,6 +229,70 @@ struct CLIAccountView: View {
             RoundedRectangle(cornerRadius: DesignTokens.Radius.card)
                 .strokeBorder(DesignTokens.Colors.cardBorder, lineWidth: 1)
         )
+    }
+
+    /// Whether the copy of the login this profile holds is past its expiry.
+    ///
+    /// Re-syncing cannot fix this and the button appears to work anyway, so
+    /// the screen has to say what actually does: sign in to that account
+    /// again. Re-sync is only the remedy when this copy is stale but the
+    /// account's own login is current.
+    private var isStoredLoginExpired: Bool {
+        guard let credentials = profileManager
+            .activeClaudeProfile?
+            .cliCredentialsJSON
+        else { return false }
+        return ClaudeCodeSyncService.shared.isTokenExpired(credentials)
+    }
+
+    /// The sign-in step, offered rather than described: the command is right
+    /// here with a copy button, because the alternative is a sentence telling
+    /// someone to go and construct it themselves.
+    private func expiredLoginNotice(accountName: String) -> some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.small) {
+            HStack(spacing: DesignTokens.Spacing.small) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundColor(.orange)
+                    .font(.system(size: DesignTokens.Icons.standard))
+                Text("cli.login_expired_title".localized)
+                    .font(DesignTokens.Typography.bodyMedium)
+            }
+
+            Text("cli.login_expired_explain".localized)
+                .font(DesignTokens.Typography.caption)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: DesignTokens.Spacing.small) {
+                Text("CLAUDE_CONFIG_DIR=~/.claude-accounts/\(accountName) claude")
+                    .font(DesignTokens.Typography.monospaced)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Spacer(minLength: 0)
+
+                Button(action: {
+                    let command = "CLAUDE_CONFIG_DIR="
+                        + "~/.claude-accounts/\(accountName) claude"
+                    copyToClipboard(command)
+                }) {
+                    Text(
+                        copiedToClipboard
+                            ? "cli.copied".localized
+                            : "cli.copy_command".localized
+                    )
+                    .font(DesignTokens.Typography.caption)
+                }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("cli.login_expired_copy")
+            }
+
+            Text("cli.login_expired_then_resync".localized)
+                .font(DesignTokens.Typography.caption)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .accessibilityIdentifier("cli.login_expired")
     }
 
     // MARK: - Link Button Card

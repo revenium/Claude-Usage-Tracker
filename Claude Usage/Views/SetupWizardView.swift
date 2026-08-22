@@ -1161,6 +1161,12 @@ struct EnterKeyStepSetup: View {
                         return
                     }
                     wizardState.testedOrganizations = organizations
+                    // Never start on a console/API organization: that is the
+                    // choice that leaves the popover permanently unavailable.
+                    wizardState.selectedOrgId =
+                        ClaudeOrganizationClassifier.defaultSelection(
+                            organizations
+                        )
                     wizardState.validationState = .success(
                         String(
                             format: "chrome_assisted.validation_success".localized,
@@ -1272,6 +1278,19 @@ struct EnterKeyStepSetup: View {
 struct SelectOrgStepSetup: View {
     @Binding var wizardState: SetupWizardState
 
+    /// Chat-capable organizations first, server order preserved within each
+    /// group. Shared with the credentials pane's picker so the two cannot
+    /// drift.
+    private var organizations: [ClaudeAPIService.AccountInfo] {
+        ClaudeOrganizationClassifier.pickerOrder(wizardState.testedOrganizations)
+    }
+
+    private var hasSelectableOrganization: Bool {
+        ClaudeOrganizationClassifier.hasSelectableOrganization(
+            wizardState.testedOrganizations
+        )
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             ScrollView {
@@ -1286,20 +1305,32 @@ struct SelectOrgStepSetup: View {
                         .font(.system(size: 12))
                         .foregroundColor(.secondary)
 
-                    // Organization list with radio buttons
+                    // Organization list with radio buttons. Chat-capable
+                    // organizations come first; console/API ones stay visible
+                    // with an explanation but cannot be chosen.
                     VStack(alignment: .leading, spacing: 12) {
-                        ForEach(wizardState.testedOrganizations, id: \.uuid) { org in
+                        ForEach(organizations, id: \.uuid) { org in
+                            let isSelectable = ClaudeOrganizationClassifier
+                                .isChatCapable(org)
+                            let isSelected = wizardState.selectedOrgId == org.uuid
                             HStack(spacing: 12) {
-                                Image(systemName: wizardState.selectedOrgId == org.uuid ? "circle.fill" : "circle")
-                                    .foregroundColor(wizardState.selectedOrgId == org.uuid ? .accentColor : .secondary)
+                                Image(systemName: isSelected ? "circle.fill" : "circle")
+                                    .foregroundColor(isSelected ? .accentColor : .secondary)
                                     .font(.system(size: 14))
 
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text(org.name)
                                         .font(.system(size: 13, weight: .medium))
-                                    Text(org.uuid)
-                                        .font(.system(size: 11, design: .monospaced))
+                                    Text(ClaudeOrganizationClassifier.descriptor(org))
+                                        .font(.system(size: 11))
                                         .foregroundColor(.secondary)
+                                    // Several organizations can share both a
+                                    // name and a kind; the id prefix is the
+                                    // last thing that separates them.
+                                    Text(String(org.uuid.prefix(8)))
+                                        .font(.system(size: 10, design: .monospaced))
+                                        .foregroundColor(.secondary)
+                                        .lineLimit(1)
                                 }
 
                                 Spacer()
@@ -1307,17 +1338,30 @@ struct SelectOrgStepSetup: View {
                             .padding(12)
                             .background(
                                 RoundedRectangle(cornerRadius: 8)
-                                    .fill(wizardState.selectedOrgId == org.uuid ? Color.accentColor.opacity(0.1) : Color.clear)
+                                    .fill(isSelected ? Color.accentColor.opacity(0.1) : Color.clear)
                             )
                             .overlay(
                                 RoundedRectangle(cornerRadius: 8)
-                                    .stroke(wizardState.selectedOrgId == org.uuid ? Color.accentColor : Color.gray.opacity(0.3), lineWidth: 1)
+                                    .stroke(isSelected ? Color.accentColor : Color.gray.opacity(0.3), lineWidth: 1)
                             )
+                            .opacity(isSelectable ? 1 : 0.5)
                             .contentShape(Rectangle())
                             .onTapGesture {
+                                guard isSelectable else { return }
                                 wizardState.selectedOrgId = org.uuid
                             }
+                            .accessibilityIdentifier("wizard.org_row.\(org.uuid)")
                         }
+                    }
+
+                    // An account can hold nothing but console organizations.
+                    // Say so, rather than leaving every row dimmed and Next
+                    // dead with no explanation.
+                    if !hasSelectableOrganization {
+                        WizardStatusBox(
+                            message: "wizard.no_claude_organizations".localized,
+                            type: .error
+                        )
                     }
                 }
                 .padding(32)
@@ -1522,6 +1566,12 @@ struct ConfirmStepSetup: View {
         let generation = wizardState.attempt.generation
         let key = wizardState.sessionKey
         let organizationID = wizardState.selectedOrgId
+        // Captured up front so the profile records the same organization name
+        // and personal/shared classification an auto-selected organization
+        // would get.
+        let selectedOrganization = wizardState.testedOrganizations.first(
+            where: { $0.uuid == organizationID }
+        )
         isSaving = true
 
         Task {
@@ -1552,6 +1602,22 @@ struct ConfirmStepSetup: View {
                     }
                     // Reset circuit breaker on successful credential save
                     ErrorRecovery.shared.recordSuccess(for: .api)
+
+                    if let selectedOrganization {
+                        dependencies.profileManager.updateOrganizationName(
+                            selectedOrganization.name,
+                            for: completedProfile.id
+                        )
+                        // Written even when indeterminate: a stale `true`
+                        // left over from a previously bound organization
+                        // would mislabel this one's figures.
+                        dependencies.profileManager.updateOrganizationIsPersonal(
+                            ClaudeOrganizationClassifier.isPersonal(
+                                selectedOrganization
+                            ),
+                            for: completedProfile.id
+                        )
+                    }
 
                     isSaving = false
                     dismiss()
@@ -1613,7 +1679,13 @@ struct ConfirmStepSetup: View {
     }
 
     private func isSaveAllowed(acceptSessionOnly: Bool) -> Bool {
-        SessionKeyAttemptPolicy.permitsSave(
+        // Last line of defence: a console/API organization must never be
+        // persisted, whatever the picker did or did not disable.
+        guard ClaudeOrganizationClassifier.permitsSelection(
+            of: wizardState.selectedOrgId,
+            from: wizardState.testedOrganizations
+        ) else { return false }
+        return SessionKeyAttemptPolicy.permitsSave(
             validationSucceeded: wizardState.validationState.isSuccess,
             isSessionOnlyRetry: acceptSessionOnly && offerSessionOnly,
             selectedOrganizationID: wizardState.selectedOrgId,

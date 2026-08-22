@@ -225,6 +225,152 @@ final class ClaudeUsageProviderAdapterTests: XCTestCase {
         XCTAssertEqual(capabilities[.automaticSessionStart], .available)
     }
 
+    /// The overage endpoint is organization-scoped, so a Team account's whole
+    /// company spend was rendering under one member's own bars with nothing
+    /// saying so. The header has to carry the scope.
+    func testExtraUsageHeaderNamesTheOrganizationScope() throws {
+        let report = try makeReport(
+            usage: makeUsage(
+                costUsed: 259_316,
+                costLimit: 500_000,
+                costCurrency: "USD",
+                costScope: .organization
+            )
+        )
+
+        let extraUsage = try XCTUnwrap(
+            report.limitGroups.first { $0.id.rawValue == "extra-usage" }
+        )
+        XCTAssertEqual(
+            extraUsage.displayName,
+            "menubar.extra_usage_organization".localized
+        )
+    }
+
+    /// An unclassified organization gets the same wider label: silence would
+    /// re-create the bug for every account whose classification is unknown.
+    func testUnclassifiedExtraUsageHeaderStillNamesTheOrganizationScope() throws {
+        let report = try makeReport(
+            usage: makeUsage(
+                costUsed: 259_316,
+                costLimit: 500_000,
+                costCurrency: "USD",
+                costScope: nil
+            )
+        )
+
+        let extraUsage = try XCTUnwrap(
+            report.limitGroups.first { $0.id.rawValue == "extra-usage" }
+        )
+        XCTAssertEqual(
+            extraUsage.displayName,
+            "menubar.extra_usage_organization".localized
+        )
+    }
+
+    /// A personal Max/Pro organization is the signed-in person, so the plain
+    /// header is accurate there and the scope word would only add noise.
+    func testPersonalExtraUsageHeaderOmitsTheScopeWord() throws {
+        let report = try makeReport(
+            usage: makeUsage(
+                costUsed: 259_316,
+                costLimit: 500_000,
+                costCurrency: "USD",
+                costScope: .personal
+            )
+        )
+
+        let extraUsage = try XCTUnwrap(
+            report.limitGroups.first { $0.id.rawValue == "extra-usage" }
+        )
+        XCTAssertEqual(extraUsage.displayName, "menubar.extra_usage".localized)
+        XCTAssertNotEqual(
+            extraUsage.displayName,
+            "menubar.extra_usage_organization".localized
+        )
+    }
+
+    /// The customer's reported figures. Labelling the scope must not disturb
+    /// the minor-to-major currency conversion underneath it.
+    func testCustomerReportedExtraUsageAmountsConvertUnchanged() throws {
+        let report = try makeReport(
+            usage: makeUsage(
+                costUsed: 259_316,
+                costLimit: 500_000,
+                costCurrency: "USD",
+                costScope: .organization
+            )
+        )
+
+        let window = try XCTUnwrap(
+            report.limitGroups
+                .first { $0.id.rawValue == "extra-usage" }?
+                .windows
+                .first
+        )
+        let quantity = try XCTUnwrap(window.quantity)
+        XCTAssertEqual(quantity.used, 2_593.16, accuracy: 0.000_1)
+        XCTAssertEqual(try XCTUnwrap(quantity.limit), 5_000, accuracy: 0.000_1)
+        let percentage = try XCTUnwrap(window.usedPercentage)
+        XCTAssertEqual(percentage, 51.8632, accuracy: 0.000_1)
+        XCTAssertEqual((percentage * 100).rounded() / 100, 51.86)
+    }
+
+    /// When the member's own CLI-authenticated figure and the organization's
+    /// claude.ai figure are both present, the viewer's own leads and the
+    /// organization's follows underneath — as two distinct groups, not one
+    /// overwriting the other.
+    func testPersonalAndOrganizationExtraUsageBothAppearAsDistinctGroups() throws {
+        let report = try makeReport(
+            usage: makeUsage(
+                costUsed: 26_118,
+                costLimit: 100_000,
+                costCurrency: "USD",
+                costScope: .organization,
+                personalCostUsed: 1_250,
+                personalCostLimit: 5_000,
+                personalCostCurrency: "USD",
+                overageBalance: 875,
+                overageBalanceCurrency: "EUR"
+            )
+        )
+
+        XCTAssertEqual(
+            report.limitGroups.map(\.id.rawValue),
+            ["subscription", "extra-usage", "extra-usage-organization"]
+        )
+
+        let personal = try XCTUnwrap(
+            report.limitGroups.first { $0.id.rawValue == "extra-usage" }
+        )
+        XCTAssertEqual(personal.displayName, "menubar.extra_usage".localized)
+        XCTAssertEqual(personal.windows[0].usedPercentage, 25)
+        XCTAssertEqual(personal.windows[0].quantity?.used, 12.5)
+        XCTAssertEqual(personal.windows[0].quantity?.limit, 50)
+        XCTAssertEqual(personal.windows[0].quantity?.currencyCode?.rawValue, "USD")
+
+        let organization = try XCTUnwrap(
+            report.limitGroups.first { $0.id.rawValue == "extra-usage-organization" }
+        )
+        XCTAssertEqual(
+            organization.displayName,
+            "menubar.extra_usage_organization".localized
+        )
+        let organizationPercentage = try XCTUnwrap(organization.windows[0].usedPercentage)
+        XCTAssertEqual(organizationPercentage, 26.118, accuracy: 0.000_1)
+        let organizationQuantity = try XCTUnwrap(organization.windows[0].quantity)
+        XCTAssertEqual(organizationQuantity.used, 261.18, accuracy: 0.000_1)
+        XCTAssertEqual(try XCTUnwrap(organizationQuantity.limit), 1_000, accuracy: 0.000_1)
+        XCTAssertEqual(organization.windows[0].quantity?.currencyCode?.rawValue, "USD")
+
+        XCTAssertEqual(report.credits.map(\.id.rawValue), ["overage-balance"])
+        XCTAssertEqual(
+            report.credits[0].displayName,
+            "menubar.overage_balance_organization".localized
+        )
+        XCTAssertEqual(report.credits[0].balance, 8.75)
+    }
+
     private func makeReport(usage: ClaudeUsage) throws -> UsageReport {
         try ClaudeUsageProviderAdapter.makeReport(
             from: usage,
@@ -252,6 +398,11 @@ final class ClaudeUsageProviderAdapterTests: XCTestCase {
         costUsed: Double? = nil,
         costLimit: Double? = nil,
         costCurrency: String? = nil,
+        costScope: ClaudeUsage.ExtraUsageScope? = nil,
+        personalCostUsed: Double? = nil,
+        personalCostLimit: Double? = nil,
+        personalCostCurrency: String? = nil,
+        personalExtraUsageIssue: ClaudeUsage.PersonalExtraUsageIssue? = nil,
         overageBalance: Double? = nil,
         overageBalanceCurrency: String? = nil
     ) -> ClaudeUsage {
@@ -276,6 +427,11 @@ final class ClaudeUsageProviderAdapterTests: XCTestCase {
             costUsed: costUsed,
             costLimit: costLimit,
             costCurrency: costCurrency,
+            costScope: costScope,
+            personalCostUsed: personalCostUsed,
+            personalCostLimit: personalCostLimit,
+            personalCostCurrency: personalCostCurrency,
+            personalExtraUsageIssue: personalExtraUsageIssue,
             overageBalance: overageBalance,
             overageBalanceCurrency: overageBalanceCurrency,
             lastUpdated: sourceUpdatedAt,

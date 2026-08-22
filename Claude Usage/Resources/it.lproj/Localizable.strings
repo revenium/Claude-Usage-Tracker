@@ -59,6 +59,7 @@
 "menubar.sonnet_usage" = "Sonnet";
 "menubar.fable_usage" = "Fable";
 "menubar.extra_usage" = "Utilizzo Extra";
+"menubar.extra_usage_organization" = "Utilizzo Extra · Organizzazione";
 "menubar.api_credits" = "Crediti API";
 "menubar.5_hour_window" = "finestra mobile di 5 ore";
 "menubar.all_models" = "Tutti i modelli";
@@ -611,6 +612,13 @@
 "wizard.organization_id" = "ID: %@";
 "wizard.select_organization" = "Seleziona Organizzazione";
 "wizard.choose_organization" = "Scegli quale organizzazione monitorare";
+"wizard.org_kind.team" = "Team";
+"wizard.org_kind.enterprise" = "Enterprise";
+"wizard.org_kind.personal_max" = "Personale · Max";
+"wizard.org_kind.personal_pro" = "Personale · Pro";
+"wizard.org_kind.api_only" = "Solo API · nessun abbonamento Claude";
+"wizard.org_kind.unknown" = "Sconosciuto";
+"wizard.no_claude_organizations" = "Questo account non ha organizzazioni con un abbonamento Claude da monitorare.";
 "wizard.review_config" = "Rivedi Configurazione";
 "wizard.confirm_settings" = "Conferma le tue impostazioni prima di salvare";
 "wizard.key_will_update" = "La chiave di sessione verrà aggiornata";
@@ -1280,3 +1288,13 @@
 "chrome_assisted.new_claude_profile" = "nuovo profilo Claude";
 "personal.session_key_stored" = "Chiave di sessione salvata";
 "personal.session_key_validated" = "Chiave di sessione convalidata";
+"menubar.overage_balance" = "Saldo Crediti";
+"menubar.overage_balance_organization" = "Saldo Crediti · Organizzazione";
+"popover.extra_usage.cli_not_linked" = "Questo è il totale della tua organizzazione. Il tuo utilizzo aggiuntivo proviene da Claude Code, che non è ancora collegato a questo account: aggiungilo in Impostazioni → Account CLI.";
+"popover.extra_usage.cli_sign_in_expired" = "Questo è il totale della tua organizzazione. L'accesso a Claude Code per questo account è scaduto: accedi di nuovo per vedere il tuo utilizzo aggiuntivo. Impostazioni → Account CLI ti spiega come.";
+"popover.extra_usage.cli_sign_in_unusable" = "Questo è il totale della tua organizzazione. Non è stato possibile leggere il tuo utilizzo aggiuntivo in questo momento: risincronizza il tuo account Claude Code in Impostazioni → Account CLI.";
+"cli.login_expired_title" = "Accesso scaduto";
+"cli.login_expired_explain" = "Risincronizzare non serve: copia l'accesso di questo account, e quell'accesso è scaduto. Esegui questo nel Terminale per accedere di nuovo.";
+"cli.login_expired_then_resync" = "Una volta effettuato l'accesso, torna qui e premi Risincronizza.";
+"popover.extra_usage.cli_other_organization" = "Questo è il totale della tua organizzazione. L'account Claude Code collegato appartiene a un'altra organizzazione, quindi il suo utilizzo non viene mostrato qui.";
+"cli.connect_extra_usage_hint" = "Collega il tuo account Claude Code per vedere il tuo utilizzo extra. Se sei un amministratore, per impostazione predefinita vedrai quello della tua organizzazione.";

@@ -61,6 +61,7 @@
 "menubar.sonnet_usage" = "Sonnet";
 "menubar.fable_usage" = "Fable";
 "menubar.extra_usage" = "Zusätzliche Nutzung";
+"menubar.extra_usage_organization" = "Zusätzliche Nutzung · Organisation";
 "menubar.api_credits" = "API-Guthaben";
 "menubar.5_hour_window" = "5-Stunden-Gleitfenster";
 "menubar.all_models" = "Alle Modelle";
@@ -613,6 +614,13 @@
 "wizard.organization_id" = "ID: %@";
 "wizard.select_organization" = "Organisation Auswählen";
 "wizard.choose_organization" = "Wählen Sie die zu verfolgende Organisation";
+"wizard.org_kind.team" = "Team";
+"wizard.org_kind.enterprise" = "Enterprise";
+"wizard.org_kind.personal_max" = "Persönlich · Max";
+"wizard.org_kind.personal_pro" = "Persönlich · Pro";
+"wizard.org_kind.api_only" = "Nur API · kein Claude-Abonnement";
+"wizard.org_kind.unknown" = "Unbekannt";
+"wizard.no_claude_organizations" = "Dieses Konto hat keine Organisationen mit einem Claude-Abonnement, die verfolgt werden können.";
 "wizard.review_config" = "Konfiguration Überprüfen";
 "wizard.confirm_settings" = "Bestätigen Sie Ihre Einstellungen vor dem Speichern";
 "wizard.key_will_update" = "Sitzungsschlüssel wird aktualisiert";
@@ -1280,3 +1288,13 @@
 "chrome_assisted.new_claude_profile" = "neues Claude-Profil";
 "personal.session_key_stored" = "Sitzungsschlüssel gespeichert";
 "personal.session_key_validated" = "Sitzungsschlüssel validiert";
+"menubar.overage_balance" = "Guthaben";
+"menubar.overage_balance_organization" = "Guthaben · Organisation";
+"popover.extra_usage.cli_not_linked" = "Dies ist die Gesamtsumme Ihrer Organisation. Ihre eigene Zusatznutzung stammt aus Claude Code, das mit diesem Konto noch nicht verknüpft ist – fügen Sie es unter Einstellungen → CLI-Konto hinzu.";
+"popover.extra_usage.cli_sign_in_expired" = "Dies ist die Gesamtsumme Ihrer Organisation. Die Claude Code-Anmeldung für dieses Konto ist abgelaufen – melden Sie sich erneut an, um Ihre eigene Zusatznutzung zu sehen. Einstellungen → CLI-Konto zeigt Ihnen wie.";
+"popover.extra_usage.cli_sign_in_unusable" = "Dies ist die Gesamtsumme Ihrer Organisation. Ihre eigene Zusatznutzung konnte gerade nicht gelesen werden – synchronisieren Sie Ihr Claude Code-Konto unter Einstellungen → CLI-Konto erneut.";
+"cli.login_expired_title" = "Anmeldung abgelaufen";
+"cli.login_expired_explain" = "Erneutes Synchronisieren hilft nicht: Es kopiert die Anmeldung dieses Kontos, und diese ist abgelaufen. Führen Sie dies im Terminal aus, um sich erneut anzumelden.";
+"cli.login_expired_then_resync" = "Sobald Sie angemeldet sind, kehren Sie zurück und klicken Sie auf Erneut synchronisieren.";
+"popover.extra_usage.cli_other_organization" = "Dies ist die Gesamtsumme Ihrer Organisation. Ihr verknüpftes Claude Code-Konto gehört zu einer anderen Organisation, daher wird dessen Nutzung hier nicht angezeigt.";
+"cli.connect_extra_usage_hint" = "Verbinden Sie Ihr Claude Code-Konto, um Ihre eigene zusätzliche Nutzung zu sehen. Als Administrator sehen Sie standardmäßig die Ihrer Organisation.";

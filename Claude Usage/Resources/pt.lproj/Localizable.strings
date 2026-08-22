@@ -59,6 +59,7 @@
 "menubar.sonnet_usage" = "Sonnet";
 "menubar.fable_usage" = "Fable";
 "menubar.extra_usage" = "Uso Extra";
+"menubar.extra_usage_organization" = "Uso Extra · Organização";
 "menubar.api_credits" = "Créditos da API";
 "menubar.5_hour_window" = "Janela móvel de 5 horas";
 "menubar.all_models" = "Todos os modelos";
@@ -611,6 +612,13 @@
 "wizard.organization_id" = "ID: %@";
 "wizard.select_organization" = "Selecionar Organização";
 "wizard.choose_organization" = "Escolha qual organização rastrear";
+"wizard.org_kind.team" = "Team";
+"wizard.org_kind.enterprise" = "Enterprise";
+"wizard.org_kind.personal_max" = "Pessoal · Max";
+"wizard.org_kind.personal_pro" = "Pessoal · Pro";
+"wizard.org_kind.api_only" = "Apenas API · sem assinatura Claude";
+"wizard.org_kind.unknown" = "Desconhecido";
+"wizard.no_claude_organizations" = "Esta conta não tem organizações com uma assinatura Claude para monitorar.";
 "wizard.review_config" = "Revisar Configuração";
 "wizard.confirm_settings" = "Confirme suas configurações antes de salvar";
 "wizard.key_will_update" = "A chave de sessão será atualizada";
@@ -1280,3 +1288,13 @@
 "chrome_assisted.new_claude_profile" = "novo perfil Claude";
 "personal.session_key_stored" = "Chave de sessão armazenada";
 "personal.session_key_validated" = "Chave de sessão validada";
+"menubar.overage_balance" = "Saldo de Créditos";
+"menubar.overage_balance_organization" = "Saldo de Créditos · Organização";
+"popover.extra_usage.cli_not_linked" = "Este é o total da sua organização. O seu uso adicional vem do Claude Code, que ainda não está vinculado a esta conta — adicione-o em Configurações → Conta CLI.";
+"popover.extra_usage.cli_sign_in_expired" = "Este é o total da sua organização. O login do Claude Code desta conta expirou — entre novamente para ver o seu uso adicional. Configurações → Conta CLI mostra como.";
+"popover.extra_usage.cli_sign_in_unusable" = "Este é o total da sua organização. Não foi possível ler o seu uso adicional agora — sincronize novamente a sua conta do Claude Code em Configurações → Conta CLI.";
+"cli.login_expired_title" = "Login expirado";
+"cli.login_expired_explain" = "Sincronizar novamente não resolve: isso copia o login desta conta, e esse login expirou. Execute isto no Terminal para entrar de novo.";
+"cli.login_expired_then_resync" = "Depois de entrar, volte aqui e clique em Sincronizar novamente.";
+"popover.extra_usage.cli_other_organization" = "Este é o total da sua organização. A conta do Claude Code vinculada pertence a outra organização, portanto o uso dela não é mostrado aqui.";
+"cli.connect_extra_usage_hint" = "Conecte a sua conta do Claude Code para ver o seu próprio uso extra. Se você for administrador, verá o da sua organização por padrão.";

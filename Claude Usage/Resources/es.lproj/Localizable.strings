@@ -61,6 +61,7 @@
 "menubar.sonnet_usage" = "Sonnet";
 "menubar.fable_usage" = "Fable";
 "menubar.extra_usage" = "Uso Extra";
+"menubar.extra_usage_organization" = "Uso Extra · Organización";
 "menubar.api_credits" = "Créditos API";
 "menubar.5_hour_window" = "Ventana móvil de 5 horas";
 "menubar.all_models" = "Todos los modelos";
@@ -596,6 +597,13 @@
 "wizard.organization_id" = "ID: %@";
 "wizard.select_organization" = "Seleccionar Organización";
 "wizard.choose_organization" = "Elige qué organización rastrear";
+"wizard.org_kind.team" = "Team";
+"wizard.org_kind.enterprise" = "Enterprise";
+"wizard.org_kind.personal_max" = "Personal · Max";
+"wizard.org_kind.personal_pro" = "Personal · Pro";
+"wizard.org_kind.api_only" = "Solo API · sin suscripción a Claude";
+"wizard.org_kind.unknown" = "Desconocido";
+"wizard.no_claude_organizations" = "Esta cuenta no tiene organizaciones con una suscripción a Claude para monitorizar.";
 "wizard.review_config" = "Revisar Configuración";
 "wizard.confirm_settings" = "Confirma tu configuración antes de guardar";
 "wizard.key_will_update" = "La clave de sesión será actualizada";
@@ -1263,3 +1271,13 @@
 "chrome_assisted.new_claude_profile" = "nuevo perfil de Claude";
 "personal.session_key_stored" = "Clave de sesión almacenada";
 "personal.session_key_validated" = "Clave de sesión validada";
+"menubar.overage_balance" = "Saldo de Créditos";
+"menubar.overage_balance_organization" = "Saldo de Créditos · Organización";
+"popover.extra_usage.cli_not_linked" = "Este es el total de tu organización. Tu uso adicional proviene de Claude Code, que aún no está vinculado a esta cuenta: añádelo en Ajustes → Cuenta CLI.";
+"popover.extra_usage.cli_sign_in_expired" = "Este es el total de tu organización. El inicio de sesión de Claude Code de esta cuenta ha caducado: vuelve a iniciar sesión para ver tu uso adicional. Ajustes → Cuenta CLI te explica cómo.";
+"popover.extra_usage.cli_sign_in_unusable" = "Este es el total de tu organización. No se ha podido leer tu uso adicional ahora mismo: vuelve a sincronizar tu cuenta de Claude Code en Ajustes → Cuenta CLI.";
+"cli.login_expired_title" = "Sesión caducada";
+"cli.login_expired_explain" = "Volver a sincronizar no ayudará: copia el inicio de sesión de esta cuenta, y ese inicio de sesión ha caducado. Ejecuta esto en el Terminal para iniciar sesión de nuevo.";
+"cli.login_expired_then_resync" = "Cuando hayas iniciado sesión, vuelve y pulsa Volver a sincronizar.";
+"popover.extra_usage.cli_other_organization" = "Este es el total de tu organización. Tu cuenta de Claude Code vinculada pertenece a otra organización, por lo que su uso no se muestra aquí.";
+"cli.connect_extra_usage_hint" = "Conecta tu cuenta de Claude Code para ver tu propio uso extra. Si eres administrador, verás el de tu organización de forma predeterminada.";

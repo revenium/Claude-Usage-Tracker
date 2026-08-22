@@ -24,6 +24,8 @@ struct VisualEffectBackground: NSViewRepresentable {
 struct PopoverNavigationActions {
     let manageProfiles: () -> Void
     let preferences: () -> Void
+    /// Settings → CLI Account, where a Claude Code account gets linked.
+    let cliAccount: () -> Void
 }
 
 enum LegacyPopoverBanner: Equatable {
@@ -215,7 +217,8 @@ struct PopoverContentView: View {
         profileManager: ProfileManager,
         onRefresh: @escaping () -> Void,
         onManageProfiles: @escaping () -> Void,
-        onPreferences: @escaping () -> Void
+        onPreferences: @escaping () -> Void,
+        onCLIAccount: @escaping () -> Void
     ) {
         self.manager = manager
         _profileManager = ObservedObject(
@@ -224,7 +227,8 @@ struct PopoverContentView: View {
         self.onRefresh = onRefresh
         navigationActions = PopoverNavigationActions(
             manageProfiles: onManageProfiles,
-            preferences: onPreferences
+            preferences: onPreferences,
+            cliAccount: onCLIAccount
         )
     }
 
@@ -388,7 +392,13 @@ struct PopoverContentView: View {
                         ),
                     displayPreferences: displayPreferences,
                     timeDisplay: timeDisplay,
-                    now: now
+                    now: now,
+                    // Always available: every reason a member's figure is
+                    // missing is resolved on the same screen, and hiding the
+                    // notice from an already-linked profile would bury a
+                    // broken sign-in rather than surface it. Which of the
+                    // three explanations appears is decided from the data.
+                    onConnectCLIAccount: navigationActions.cliAccount
                 )
             }
         }

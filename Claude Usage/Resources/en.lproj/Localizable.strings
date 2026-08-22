@@ -61,6 +61,7 @@
 "menubar.sonnet_usage" = "Sonnet";
 "menubar.fable_usage" = "Fable";
 "menubar.extra_usage" = "Extra Usage";
+"menubar.extra_usage_organization" = "Extra Usage · Organization";
 "menubar.api_credits" = "API Credits";
 "menubar.api_cost" = "API Cost";
 "menubar.this_month" = "This Month";
@@ -618,6 +619,13 @@
 "wizard.organization_id" = "ID: %@";
 "wizard.select_organization" = "Select Organization";
 "wizard.choose_organization" = "Choose which organization to track";
+"wizard.org_kind.team" = "Team";
+"wizard.org_kind.enterprise" = "Enterprise";
+"wizard.org_kind.personal_max" = "Personal · Max";
+"wizard.org_kind.personal_pro" = "Personal · Pro";
+"wizard.org_kind.api_only" = "API only · no Claude subscription";
+"wizard.org_kind.unknown" = "Unknown";
+"wizard.no_claude_organizations" = "This account has no organizations with a Claude subscription to track.";
 "wizard.review_config" = "Review Configuration";
 "wizard.confirm_settings" = "Confirm your settings before saving";
 "wizard.key_will_update" = "Session key will be updated";
@@ -1294,3 +1302,13 @@
 "chrome_assisted.new_claude_profile" = "new Claude profile";
 "personal.session_key_stored" = "Session key stored";
 "personal.session_key_validated" = "Session key validated";
+"menubar.overage_balance" = "Credit Balance";
+"menubar.overage_balance_organization" = "Credit Balance · Organization";
+"popover.extra_usage.cli_not_linked" = "This is your organization's total. Your own extra usage comes from Claude Code, which isn't linked to this account yet — add it in Settings → CLI Account.";
+"popover.extra_usage.cli_sign_in_expired" = "This is your organization's total. The Claude Code sign-in for this account has expired — sign in to it again to see your own extra usage. Settings → CLI Account shows you how.";
+"popover.extra_usage.cli_sign_in_unusable" = "This is your organization's total. Your own extra usage couldn't be read just now — re-sync your Claude Code account in Settings → CLI Account.";
+"cli.login_expired_title" = "Sign-in expired";
+"cli.login_expired_explain" = "Re-syncing won't help: it copies this account's sign-in, and that sign-in has expired. Run this in Terminal to sign in again.";
+"cli.login_expired_then_resync" = "Once you're signed in, come back and press Re-sync.";
+"popover.extra_usage.cli_other_organization" = "This is your organization's total. Your linked Claude Code account belongs to a different organization, so its usage isn't shown here.";
+"cli.connect_extra_usage_hint" = "Connect your Claude Code account to see your own extra usage. If you're an admin, you'll see your organization's by default.";
